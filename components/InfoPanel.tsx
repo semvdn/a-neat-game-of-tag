@@ -10,8 +10,8 @@ interface InfoPanelProps {
   isSimulating: boolean;
   showTrails: boolean;
   onToggleTrails: () => void;
-  showLidar: boolean;
-  onToggleLidar: () => void;
+  showSenses: boolean;
+  onToggleSenses: () => void;
   onOpenDiagnostics: () => void;
   chaserElo?: number;
   evaderElo?: number;
@@ -191,8 +191,8 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
   isSimulating,
   showTrails,
   onToggleTrails,
-  showLidar,
-  onToggleLidar,
+  showSenses,
+  onToggleSenses,
   onOpenDiagnostics,
   chaserElo,
   evaderElo,
@@ -210,9 +210,12 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
       <div className="flex justify-between items-center p-3 bg-gray-700 rounded-md">
         <div className="flex items-center gap-2">
           <Radar className="w-4 h-4 text-cyan-400" />
-          <h3 className="font-semibold text-gray-300">Lidar Spatial Rays</h3>
+          <div>
+            <h3 className="font-semibold text-gray-300">Agent Senses</h3>
+            <p className="text-[10px] text-gray-400">39-D brain inputs + 8 live raycasts · press S</p>
+          </div>
         </div>
-        <ToggleSwitch id="lidar-toggle" checked={showLidar} onChange={onToggleLidar} />
+        <ToggleSwitch id="senses-toggle" checked={showSenses} onChange={onToggleSenses} />
       </div>
 
       {chaserElo !== undefined && evaderElo !== undefined && (

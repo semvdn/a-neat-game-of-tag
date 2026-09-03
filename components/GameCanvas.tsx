@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import type { GameState } from '../types';
-import { drawPlatform, drawAgent, drawAgentTrail, drawTagEffect, drawAgentLidarRays } from './drawing';
+import { drawPlatform, drawAgent, drawAgentTrail, drawTagEffect, drawAgentSenses } from './drawing';
 import { AGENT_WIDTH, WORLD_REF_WIDTH, WORLD_REF_HEIGHT } from '../constants';
 
 interface GameCanvasProps {
@@ -9,7 +9,7 @@ interface GameCanvasProps {
   viewportHeight: number;
   onFrameReady: (dataUrl: string) => void;
   showTrails: boolean;
-  showLidar: boolean;
+  showSenses: boolean;
 }
 
 /**
@@ -25,7 +25,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   viewportHeight,
   onFrameReady,
   showTrails,
-  showLidar,
+  showSenses,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { agents, platforms, cameraPosition, tagEffects } = gameState;
@@ -85,14 +85,28 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       agents.forEach(agent => drawAgentTrail(ctx, agent));
     }
 
-    if (showLidar) {
-      agents.forEach(agent => drawAgentLidarRays(ctx, agent));
+    if (showSenses) {
+      agents.forEach(agent => drawAgentSenses(ctx, agent, gameState, cameraScale));
     }
 
     agents.forEach(agent => drawAgent(ctx, agent));
     tagEffects.forEach(effect => drawTagEffect(ctx, effect));
 
     ctx.restore();
+
+    if (showSenses) {
+      const legendX = offsetX + 10;
+      const legendY = offsetY + 10;
+      const legendW = Math.min(renderedWorldWidth - 20, 535);
+      ctx.fillStyle = 'rgba(3, 7, 18, 0.82)';
+      ctx.fillRect(legendX, legendY, Math.max(0, legendW), 44);
+      ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = '#d1d5db';
+      ctx.fillText('SENSES · 39 policy inputs · T target/threat · M teammate · P1–P3 nearest platforms', legendX + 7, legendY + 7);
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillText('R0–R7 lidar hits platforms + camera side walls only · S toggles view', legendX + 7, legendY + 24);
+    }
 
     // Camera-frame collision indicator. These are drawn in CSS pixels but line up with
     // the uniformly scaled logical camera edges rather than the outer canvas letterbox.
@@ -128,7 +142,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.fillStyle = '#ef4444';
       ctx.fillRect(rightEdge - edgeThickness, offsetY, edgeThickness, renderedWorldHeight);
     }
-  }, [gameState, viewportWidth, viewportHeight, onFrameReady, showTrails, showLidar]);
+  }, [gameState, viewportWidth, viewportHeight, onFrameReady, showTrails, showSenses]);
 
   return <canvas ref={canvasRef} className="block" />;
 };

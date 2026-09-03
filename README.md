@@ -205,3 +205,9 @@ Diagnostics also report per-generation tag rate, runner survival rate and mean t
 
 ### Fixed world geometry
 The champion arena now uses fixed world geometry independent of the responsive canvas. Agents remain 40×60 world/CSS pixels, platform heights remain 20 pixels, generated platform widths remain within their fixed configured range, and the initial course is based on the 1200×800 world reference. Resizing the UI changes only the visible viewport/camera framing; it does not rescale or regenerate the world. Background NEAT evaluation likewise stays on the fixed 1200×800 training world.
+
+## Agent senses overlay
+
+The champion arena includes an **Agent Senses** overlay (sidebar toggle or `S` key). It is generated from the same `getAgentStateVector()` observation pass that feeds the NEAT policy, so the visualization follows the current 39-input schema rather than a duplicated approximation.
+
+The overlay shows, per agent: normalized self velocity/energy/status, camera-left/right and fall-boundary distances, current/nearest-platform ledge distances and alert, the three nearest platform slots (`dx`, `dy`, width), target/threat dynamics plus opponent stamina, evader teammate dynamics, and all eight lidar rays with normalized distances and exact hit points. Lidar collides with platforms and the left/right camera walls only; other agents are perceived through the separate target/threat and teammate channels.

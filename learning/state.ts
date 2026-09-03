@@ -29,7 +29,8 @@ import { computeLidarRays, getLidarDistances } from './raycast';
 export function getAgentStateVector(
   agent: AgentState,
   gameState: GameState,
-  viewportSize: { width: number; height: number }
+  viewportSize: { width: number; height: number },
+  captureDebug = false
 ): number[] {
   const itAgent = gameState.agents.find(a => a.status === AgentStatus.It);
   const otherAgents = gameState.agents.filter(a => a.id !== agent.id);
@@ -80,6 +81,7 @@ export function getAgentStateVector(
 
   // --- 4. Explicit Platform Ledge Distances ---
   const onPlatform = gameState.platforms.find(p => p.id === agent.lastPlatformId);
+  let referencePlatform = onPlatform || null;
   let distToLeftLedge = 0.5;
   let distToRightLedge = 0.5;
   let distToClosestLedge = 0.5;
@@ -107,6 +109,7 @@ export function getAgentStateVector(
       }
     }
     if (closestPlat) {
+      referencePlatform = closestPlat;
       distToLeftLedge = Math.max(0, Math.min(1, (agentCenterX - closestPlat.position.x) / closestPlat.width));
       distToRightLedge = Math.max(
         0,
@@ -196,6 +199,60 @@ export function getAgentStateVector(
     // Opponent Energy Reserve (1)
     targetOrThreat ? targetOrThreat.energy / Math.max(1, targetOrThreat.maxEnergy) : 0,
   ];
+
+  // Debug/visualization data is produced by the exact same observation pass that feeds NEAT.
+  // The senses overlay consumes this instead of re-implementing target/platform selection.
+  if (captureDebug) {
+    agent.sensesDebug = {
+      self: {
+        vx: state[0],
+        vy: state[1],
+        energy: state[2],
+        grounded: state[3],
+        isIt: state[4],
+        cooldown: state[5],
+      },
+      boundaries: {
+        left: distToLeftBoundary,
+        right: distToRightBoundary,
+        fall: distToFallBoundary,
+      },
+      ledges: {
+        referencePlatformId: referencePlatform?.id ?? null,
+        left: distToLeftLedge,
+        right: distToRightLedge,
+        closest: distToClosestLedge,
+        alert: isNearLedge,
+      },
+      nearbyPlatforms: sortedPlatforms.map(({ platform }) => {
+        const platformCenter = {
+          x: platform.position.x + platform.width / 2,
+          y: platform.position.y + platform.height / 2,
+        };
+        return {
+          id: platform.id,
+          dx: (platformCenter.x - agent.position.x) / WORLD_REF_WIDTH,
+          dy: (platformCenter.y - agent.position.y) / WORLD_REF_HEIGHT,
+          width: platform.width / PLATFORM_MAX_WIDTH,
+        };
+      }),
+      target: targetOrThreat ? {
+        id: targetOrThreat.id,
+        dx: (targetOrThreat.position.x - agent.position.x) / WORLD_REF_WIDTH,
+        dy: (targetOrThreat.position.y - agent.position.y) / WORLD_REF_HEIGHT,
+        vx: targetOrThreat.velocity.x / MAX_SPEED,
+        vy: targetOrThreat.velocity.y / Math.abs(JUMP_STRENGTH),
+        energy: targetOrThreat.energy / Math.max(1, targetOrThreat.maxEnergy),
+      } : null,
+      teammate: closestTeammate ? {
+        id: closestTeammate.id,
+        dx: (closestTeammate.position.x - agent.position.x) / WORLD_REF_WIDTH,
+        dy: (closestTeammate.position.y - agent.position.y) / WORLD_REF_HEIGHT,
+        vx: closestTeammate.velocity.x / MAX_SPEED,
+        vy: closestTeammate.velocity.y / Math.abs(JUMP_STRENGTH),
+      } : null,
+    };
+  }
 
   return state;
 }

@@ -1,8 +1,8 @@
 
 
-import type { PlatformState, AgentState, TagEffect } from '../types';
+import type { PlatformState, AgentState, TagEffect, GameState } from '../types';
 import { AgentStatus } from '../types';
-import { AGENT_WIDTH, AGENT_HEIGHT } from '../constants';
+import { AGENT_WIDTH, AGENT_HEIGHT, FALL_BOUNDARY, WORLD_REF_WIDTH, WORLD_REF_HEIGHT } from '../constants';
 
 export const drawTagEffect = (ctx: CanvasRenderingContext2D, effect: TagEffect) => {
     const progress = 1 - (effect.life / effect.initialLife); // 0 to 1
@@ -65,53 +65,248 @@ export const drawAgentTrail = (ctx: CanvasRenderingContext2D, agent: AgentState)
     ctx.restore();
 };
 
-export const drawAgentLidarRays = (ctx: CanvasRenderingContext2D, agent: AgentState) => {
-    if (!agent.lidarRays || agent.lidarRays.length === 0) return;
+const rgbaFromHex = (hex: string, alpha: number) => {
+    const normalized = hex.replace('#', '');
+    const value = normalized.length === 3
+        ? normalized.split('').map(c => c + c).join('')
+        : normalized.padEnd(6, '0').slice(0, 6);
+    const r = parseInt(value.slice(0, 2), 16) || 255;
+    const g = parseInt(value.slice(2, 4), 16) || 255;
+    const b = parseInt(value.slice(4, 6), 16) || 255;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
 
+/**
+ * Draw the actual observation channels that feed the current 39-input NEAT policy.
+ * Geometry selection is not recomputed here: getAgentStateVector() stores sensesDebug
+ * from the exact observation pass used by the network, and this renderer consumes it.
+ */
+export const drawAgentSenses = (
+    ctx: CanvasRenderingContext2D,
+    agent: AgentState,
+    gameState: GameState,
+    cameraScale: number,
+) => {
+    const debug = agent.sensesDebug;
+    if (!debug) return;
+
+    const unit = 1 / Math.max(0.0001, cameraScale);
     const cx = agent.position.x + AGENT_WIDTH / 2;
     const cy = agent.position.y + AGENT_HEIGHT / 2;
+    const primary = rgbaFromHex(agent.color, 0.92);
+    const medium = rgbaFromHex(agent.color, 0.52);
+    const faint = rgbaFromHex(agent.color, 0.24);
+    const textBg = 'rgba(3, 7, 18, 0.76)';
+    const leftEdge = gameState.cameraPosition.x;
+    const rightEdge = leftEdge + WORLD_REF_WIDTH;
+    const visibleBottom = gameState.cameraPosition.y + WORLD_REF_HEIGHT;
+
+    const label = (text: string, x: number, y: number, align: CanvasTextAlign = 'left') => {
+        ctx.save();
+        ctx.font = `${10.5 * unit}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = align;
+        const metrics = ctx.measureText(text);
+        const padX = 3 * unit;
+        const padY = 2 * unit;
+        const h = 13 * unit;
+        let boxX = x;
+        if (align === 'center') boxX = x - metrics.width / 2;
+        if (align === 'right') boxX = x - metrics.width;
+        ctx.fillStyle = textBg;
+        ctx.fillRect(boxX - padX, y - h / 2 - padY / 2, metrics.width + padX * 2, h + padY);
+        ctx.fillStyle = primary;
+        ctx.fillText(text, x, y);
+        ctx.restore();
+    };
 
     ctx.save();
-    for (let i = 0; i < agent.lidarRays.length; i++) {
-        const ray = agent.lidarRays[i];
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // 8 lidar inputs. These rays hit platforms and the camera's left/right walls only.
+    if (agent.lidarRays) {
+        agent.lidarRays.forEach((ray, index) => {
+            const endX = cx + ray.direction.x * ray.distance;
+            const endY = cy + ray.direction.y * ray.distance;
+            const hit = ray.hitPoint !== null;
+            const norm = ray.normalizedDistance;
+
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(endX, endY);
+            ctx.lineWidth = (hit ? 1.45 : 0.9) * unit;
+            ctx.strokeStyle = hit ? medium : faint;
+            ctx.stroke();
+
+            if (hit) {
+                ctx.beginPath();
+                ctx.arc(endX, endY, 3 * unit, 0, Math.PI * 2);
+                ctx.fillStyle = primary;
+                ctx.fill();
+            }
+
+            // Keep labels close to the endpoint but slightly inset from it.
+            const labelX = cx + ray.direction.x * Math.max(24 * unit, ray.distance - 18 * unit);
+            const labelY = cy + ray.direction.y * Math.max(24 * unit, ray.distance - 18 * unit);
+            label(`R${index} ${norm.toFixed(2)}`, labelX, labelY, 'center');
+        });
+    }
+
+    // Target / threat dynamics: dx, dy, vx, vy + opponent energy.
+    if (debug.target) {
+        const target = gameState.agents.find(a => a.id === debug.target!.id);
+        if (target) {
+            const tx = target.position.x + AGENT_WIDTH / 2;
+            const ty = target.position.y + AGENT_HEIGHT / 2;
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(tx, ty);
+            ctx.lineWidth = 2.0 * unit;
+            ctx.strokeStyle = primary;
+            ctx.stroke();
+            const e = debug.target.energy ?? 0;
+            label(
+                `T A${target.id} d(${debug.target.dx.toFixed(2)},${debug.target.dy.toFixed(2)}) v(${debug.target.vx.toFixed(2)},${debug.target.vy.toFixed(2)}) E${e.toFixed(2)}`,
+                (cx + tx) / 2,
+                (cy + ty) / 2 - 10 * unit,
+                'center',
+            );
+        }
+    }
+
+    // Closest teammate dynamics exist for evaders only.
+    if (debug.teammate) {
+        const mate = gameState.agents.find(a => a.id === debug.teammate!.id);
+        if (mate) {
+            const mx = mate.position.x + AGENT_WIDTH / 2;
+            const my = mate.position.y + AGENT_HEIGHT / 2;
+            ctx.setLineDash([6 * unit, 5 * unit]);
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(mx, my);
+            ctx.lineWidth = 1.4 * unit;
+            ctx.strokeStyle = medium;
+            ctx.stroke();
+            ctx.setLineDash([]);
+            label(
+                `M A${mate.id} d(${debug.teammate.dx.toFixed(2)},${debug.teammate.dy.toFixed(2)}) v(${debug.teammate.vx.toFixed(2)},${debug.teammate.vy.toFixed(2)})`,
+                (cx + mx) / 2,
+                (cy + my) / 2 + 10 * unit,
+                'center',
+            );
+        }
+    }
+
+    // Three closest platform slots (excluding the current platform while grounded).
+    debug.nearbyPlatforms.forEach((slot, index) => {
+        const platform = gameState.platforms.find(p => p.id === slot.id);
+        if (!platform) return;
+        const px = platform.position.x + platform.width / 2;
+        const py = platform.position.y + platform.height / 2;
+        ctx.setLineDash([3 * unit, 4 * unit]);
+        ctx.lineWidth = 1.1 * unit;
+        ctx.strokeStyle = medium;
+        ctx.strokeRect(
+            platform.position.x - 2 * unit,
+            platform.position.y - 2 * unit,
+            platform.width + 4 * unit,
+            platform.height + 4 * unit,
+        );
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(px, py);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        label(
+            `P${index + 1} d(${slot.dx.toFixed(2)},${slot.dy.toFixed(2)}) w${slot.width.toFixed(2)}`,
+            platform.position.x + platform.width / 2,
+            platform.position.y - (10 + index * 13) * unit,
+            'center',
+        );
+    });
+
+    // Explicit ledge channels use the current platform when grounded, otherwise the nearest platform.
+    if (debug.ledges.referencePlatformId !== null) {
+        const platform = gameState.platforms.find(p => p.id === debug.ledges.referencePlatformId);
+        if (platform) {
+            const leftX = platform.position.x;
+            const rightX = platform.position.x + platform.width;
+            const topY = platform.position.y;
+            ctx.setLineDash([2 * unit, 3 * unit]);
+            ctx.lineWidth = 1.25 * unit;
+            ctx.strokeStyle = debug.ledges.alert > 0 ? 'rgba(251, 191, 36, 0.86)' : faint;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(leftX, topY);
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(rightX, topY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            label(
+                `LEDGE L${debug.ledges.left.toFixed(2)} R${debug.ledges.right.toFixed(2)} min${debug.ledges.closest.toFixed(2)} alert${debug.ledges.alert.toFixed(2)}`,
+                platform.position.x + platform.width / 2,
+                platform.position.y + platform.height + 11 * unit,
+                'center',
+            );
+        }
+    }
+
+    // Explicit left/right camera boundary distances.
+    ctx.setLineDash([2 * unit, 5 * unit]);
+    ctx.lineWidth = 1.0 * unit;
+    ctx.strokeStyle = faint;
+    ctx.beginPath();
+    ctx.moveTo(leftEdge, cy);
+    ctx.lineTo(cx, cy);
+    ctx.lineTo(rightEdge, cy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    label(`L ${debug.boundaries.left.toFixed(2)}`, leftEdge + 7 * unit, cy - 10 * unit, 'left');
+    label(`R ${debug.boundaries.right.toFixed(2)}`, rightEdge - 7 * unit, cy - 10 * unit, 'right');
+
+    // Fall-boundary input. The real boundary is often below the viewport, so terminate at the
+    // visible bottom and leave a downward arrow when the sensor target is off-screen.
+    const agentBottom = agent.position.y + AGENT_HEIGHT;
+    const fallVisible = FALL_BOUNDARY >= gameState.cameraPosition.y && FALL_BOUNDARY <= visibleBottom;
+    const fallEndY = fallVisible ? FALL_BOUNDARY : visibleBottom - 8 * unit;
+    ctx.beginPath();
+    ctx.moveTo(cx, agentBottom);
+    ctx.lineTo(cx, fallEndY);
+    ctx.lineWidth = 1.0 * unit;
+    ctx.strokeStyle = faint;
+    ctx.stroke();
+    label(`FALL${fallVisible ? '' : '↓'} ${debug.boundaries.fall.toFixed(2)}`, cx + 7 * unit, Math.min(fallEndY - 10 * unit, cy + 62 * unit), 'left');
+
+    // Self inputs: two velocities, stamina, grounded, role bit and cooldown bit.
+    const role = debug.self.isIt > 0.5 ? 'C' : 'R';
+    label(
+        `A${agent.id} ${role} vx${debug.self.vx.toFixed(2)} vy${debug.self.vy.toFixed(2)} E${debug.self.energy.toFixed(2)} G${debug.self.grounded.toFixed(0)} CD${debug.self.cooldown.toFixed(0)}`,
+        cx,
+        agent.position.y - 37 * unit,
+        'center',
+    );
+
+    ctx.restore();
+};
+
+// Kept as a small compatibility helper for any external caller that only wants raycasts.
+export const drawAgentLidarRays = (ctx: CanvasRenderingContext2D, agent: AgentState) => {
+    if (!agent.lidarRays || agent.lidarRays.length === 0) return;
+    const cx = agent.position.x + AGENT_WIDTH / 2;
+    const cy = agent.position.y + AGENT_HEIGHT / 2;
+    ctx.save();
+    for (const ray of agent.lidarRays) {
         const endX = cx + ray.direction.x * ray.distance;
         const endY = cy + ray.direction.y * ray.distance;
-
-        const hasHit = ray.hitPoint !== null;
-        const norm = ray.normalizedDistance;
-
-        // Color modulation based on proximity
-        let strokeColor = 'rgba(100, 116, 139, 0.18)'; // Faint slate if far/open
-        let hitGlowColor = 'rgba(6, 182, 212, 0.7)';  // Cyan
-
-        if (hasHit) {
-            if (norm < 0.25) {
-                strokeColor = 'rgba(239, 68, 68, 0.45)'; // Red/Amber if perilously close
-                hitGlowColor = 'rgba(239, 68, 68, 0.9)';
-            } else if (norm < 0.6) {
-                strokeColor = 'rgba(234, 179, 8, 0.35)'; // Yellow
-                hitGlowColor = 'rgba(234, 179, 8, 0.8)';
-            } else {
-                strokeColor = 'rgba(16, 185, 129, 0.28)'; // Emerald
-                hitGlowColor = 'rgba(16, 185, 129, 0.75)';
-            }
-        }
-
-        // Draw ray line
         ctx.beginPath();
         ctx.moveTo(cx, cy);
         ctx.lineTo(endX, endY);
-        ctx.lineWidth = hasHit ? 1.2 : 0.8;
-        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = ray.hitPoint ? 1.2 : 0.8;
+        ctx.strokeStyle = ray.hitPoint ? 'rgba(6, 182, 212, 0.5)' : 'rgba(100, 116, 139, 0.18)';
         ctx.stroke();
-
-        // Draw hit contact indicator
-        if (hasHit) {
-            ctx.beginPath();
-            ctx.arc(endX, endY, 2.5, 0, Math.PI * 2);
-            ctx.fillStyle = hitGlowColor;
-            ctx.fill();
-        }
     }
     ctx.restore();
 };

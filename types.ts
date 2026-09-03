@@ -24,6 +24,45 @@ export interface LidarRayData {
   maxDistance: number;
 }
 
+
+export interface AgentSensePlatformSlot {
+  id: number;
+  dx: number;
+  dy: number;
+  width: number;
+}
+
+export interface AgentSenseEntitySlot {
+  id: number;
+  dx: number;
+  dy: number;
+  vx: number;
+  vy: number;
+  energy?: number;
+}
+
+export interface AgentSenseDebug {
+  self: {
+    vx: number;
+    vy: number;
+    energy: number;
+    grounded: number;
+    isIt: number;
+    cooldown: number;
+  };
+  boundaries: { left: number; right: number; fall: number };
+  ledges: {
+    referencePlatformId: number | null;
+    left: number;
+    right: number;
+    closest: number;
+    alert: number;
+  };
+  nearbyPlatforms: AgentSensePlatformSlot[];
+  target: AgentSenseEntitySlot | null;
+  teammate: AgentSenseEntitySlot | null;
+}
+
 export interface AgentState {
   id: number;
   position: Vector2D;
@@ -50,6 +89,7 @@ export interface AgentState {
   elo?: number;
   role?: 'chaser' | 'evader';
   lidarRays?: LidarRayData[];
+  sensesDebug?: AgentSenseDebug;
   touchingCameraFrame?: boolean;
   cameraFrameContact?: 'left' | 'right' | null;
 }
@@ -150,7 +190,7 @@ export interface DiagnosticsState {
   chaserElo: number;
   evaderElo: number;
   eloLeaderboard: EloLeaderboardEntry[];
-  showLidar?: boolean;
+  showSenses?: boolean;
   hallOfFame?: HallOfFameTelemetry;
   lastGenerationBalance?: BalanceTelemetry | null;
   balanceHistory?: BalanceTelemetry[];

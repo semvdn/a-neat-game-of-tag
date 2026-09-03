@@ -64,7 +64,7 @@ export const App: React.FC = () => {
   const [isSimulating, setIsSimulating] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 1200, height: 800 });
   const [showTrails, setShowTrails] = useState(true);
-  const [showLidar, setShowLidar] = useState(true);
+  const [showSenses, setShowSenses] = useState(false);
 
   // Diagnostics & Control State
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
@@ -868,7 +868,7 @@ export const App: React.FC = () => {
         // Attach UI State
         newState.agents = newState.agents.map(agent => {
           const breakdown = rewardBreakdowns[agent.id] || {};
-          const stateVector = getAgentStateVector(agent, newState, CHAMPION_WORLD_VIEWPORT);
+          const stateVector = getAgentStateVector(agent, newState, CHAMPION_WORLD_VIEWPORT, showSenses);
 
           return {
             ...agent,
@@ -880,7 +880,7 @@ export const App: React.FC = () => {
         return newState;
       });
     },
-    [isSimulating]
+    [isSimulating, showSenses]
   );
 
   const updateSimulation = useCallback(
@@ -913,10 +913,24 @@ export const App: React.FC = () => {
     setShowTrails(prev => !prev);
   };
 
-  const handleToggleLidar = () => {
-    playToggleSound(!showLidar);
-    setShowLidar(prev => !prev);
+  const handleToggleSenses = () => {
+    playToggleSound(!showSenses);
+    setShowSenses(prev => !prev);
   };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 's' || event.repeat) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      setShowSenses(prev => {
+        playToggleSound(!prev);
+        return !prev;
+      });
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
 
   const handleResetChampionGame = useCallback(() => {
@@ -1242,7 +1256,7 @@ export const App: React.FC = () => {
               viewportHeight={viewportSize.height}
               onFrameReady={() => {}}
               showTrails={showTrails}
-              showLidar={showLidar}
+              showSenses={showSenses}
             />
           )}
         </main>
@@ -1251,8 +1265,8 @@ export const App: React.FC = () => {
           isSimulating={isSimulating}
             showTrails={showTrails}
           onToggleTrails={handleToggleTrails}
-          showLidar={showLidar}
-          onToggleLidar={handleToggleLidar}
+          showSenses={showSenses}
+          onToggleSenses={handleToggleSenses}
           chaserElo={chaserElo.current}
           evaderElo={evaderElo.current}
           onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
