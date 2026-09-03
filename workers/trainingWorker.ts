@@ -3,9 +3,17 @@ import { getPhysiology, stepLocomotion } from '../learning/movement';
 import { NeatPopulation, DEFAULT_NEAT_CONFIG, cloneGenome, type NeatGenerationMetrics, type NeatGenomeData } from '../learning/neat';
 import { getAgentStateVector } from '../learning/state';
 import { updateEloRatings, createLeaderboardEntries } from '../learning/elo';
-import type { AgentState, BalanceTelemetry, CurriculumTelemetry, GameState } from '../types';
+import type { AgentState, BalanceTelemetry, CurriculumTelemetry, GameState, TrainingHorizonTelemetry } from '../types';
 import { AgentStatus } from '../types';
 import { advanceCurriculum, createCurriculumState, curriculumSnapshot } from '../level/curriculum';
+import {
+  advanceHorizonCurriculum,
+  createHorizonCurriculumState,
+  getHorizonWindow,
+  holdHorizonForTerrainChange,
+  horizonSnapshot,
+  shouldRunHallOfFame,
+} from '../level/horizonCurriculum';
 import { countCourseFeatures, generateCourse } from '../level/generator';
 import { isPlatformSolid, triggerCrumblingPlatform, updateDynamicPlatforms } from '../level/dynamics';
 import { mulberry32 } from '../level/random';
@@ -23,9 +31,7 @@ import {
   NEAT_HOF_OPPONENTS_PER_GENOME,
   NEAT_HOF_MAX_SIZE,
   NEAT_HOF_RECENT_SLOTS,
-  NEAT_MATCH_MIN_MS,
-  NEAT_MATCH_MAX_MS,
-  NEAT_SURVIVAL_MILESTONE_MS,
+  NEAT_SURVIVAL_SCORE_WINDOW_MS,
   NEAT_TAG_POINT_WEIGHT,
   NEAT_FALL_POINT_WEIGHT,
   NEAT_TRAINING_COURSE_LENGTH,
@@ -102,9 +108,27 @@ let generationPopulationChaserMatchWins = 0;
 let generationPopulationEvaderMatchWins = 0;
 let generationPopulationDraws = 0;
 let generationPopulationSimulatedMs = 0;
+// Horizon progression is driven only by the two cheap normal rounds. The stretch round is a
+// robustness probe and cannot by itself push the curriculum to longer matches.
+let generationNormalMatches = 0;
+let generationNormalSimulatedMs = 0;
+let generationNormalTags = 0;
+let generationNormalChaserFalls = 0;
+let generationNormalEvaderFalls = 0;
+let generationNormalNavigationScoreTotal = 0;
+let generationNormalSurvivalStreakMs = 0;
+let generationNormalSurvivalStreakCount = 0;
+let generationNormalChaserWins = 0;
+let generationNormalEvaderWins = 0;
 let lastGenerationBalance: BalanceTelemetry | null = null;
 let curriculumState = createCurriculumState();
 let lastCurriculumTelemetry: CurriculumTelemetry = curriculumSnapshot(curriculumState);
+let horizonState = createHorizonCurriculumState();
+let lastHorizonTelemetry: TrainingHorizonTelemetry = {
+  ...horizonSnapshot(horizonState),
+  hofActiveThisGeneration: false,
+};
+let terrainHoldGenerations = 0;
 let generationNavigationScoreTotal = 0;
 let lastCourseSeed = 0;
 let lastCourseBranchCount = 0;
@@ -190,7 +214,10 @@ function createMatchState(seed: number): { gameState: GameState; flowDirection: 
   return { gameState, flowDirection: course.flowDirection };
 }
 
+type MatchKind = 'normal' | 'stretch' | 'hof';
+
 interface MatchStats {
+  matchKind: MatchKind;
   chaserFitness: number;
   evaderFitness: number;
   chaserPoints: number;
@@ -293,11 +320,19 @@ function runMatch(
   chaser: LearningAgent,
   evader: LearningAgent,
   seed: number,
-  trackActions: { chaser: boolean; evader: boolean } = { chaser: true, evader: true }
+  options: {
+    trackActions?: { chaser: boolean; evader: boolean };
+    matchKind?: MatchKind;
+  } = {},
 ): MatchStats {
+  const trackActions = options.trackActions ?? { chaser: true, evader: true };
+  const matchKind = options.matchKind ?? 'normal';
   const { gameState, flowDirection } = createMatchState(seed);
   const matchRng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
-  const matchDurationMs = NEAT_MATCH_MIN_MS + matchRng() * (NEAT_MATCH_MAX_MS - NEAT_MATCH_MIN_MS);
+  // Hall-of-Fame evaluation deliberately uses the current normal horizon. The single stretch
+  // population round is enough to test long-horizon robustness without paying that cost twice.
+  const durationWindow = getHorizonWindow(horizonState, matchKind === 'stretch' ? 'stretch' : 'normal');
+  const matchDurationMs = durationWindow.minMs + matchRng() * (durationWindow.maxMs - durationWindow.minMs);
   resetBoutAtRandomSection(gameState, flowDirection, matchRng, false);
 
   let tags = 0;
@@ -306,7 +341,7 @@ function runMatch(
   let doubleFalls = 0;
   let chaserJumps = 0;
   let evaderJumps = 0;
-  let survivalMilestones = 0;
+  let continuousSurvivalScore = 0;
   let platformTransitions = 0;
   let cumulativeClosestDistance = 0;
   let distanceSamples = 0;
@@ -331,12 +366,11 @@ function runMatch(
         agent.timeSinceBecameIt = (agent.timeSinceBecameIt || 0) + DT;
         agent.survivalTime = 0;
       } else {
-        const previousSurvival = agent.survivalTime || 0;
-        const nextSurvival = previousSurvival + DT;
-        survivalMilestones += Math.max(
-          0,
-          Math.floor(nextSurvival / NEAT_SURVIVAL_MILESTONE_MS) - Math.floor(previousSurvival / NEAT_SURVIVAL_MILESTONE_MS),
-        );
+        const nextSurvival = (agent.survivalTime || 0) + DT;
+        // Continuous survival credit avoids the 9.9s -> 10.0s discontinuity and remains smooth
+        // when the horizon curriculum changes match duration. Each evader earns one point per
+        // 10 seconds alive, regardless of whether the match is short or a stretch probe.
+        continuousSurvivalScore += DT / NEAT_SURVIVAL_SCORE_WINDOW_MS;
         agent.survivalTime = nextSurvival;
         agent.timeSinceBecameIt = 0;
       }
@@ -535,9 +569,14 @@ function runMatch(
   const elapsedSec = elapsedMs / 1000;
   const fallEvents = chaserFalls + evaderFalls;
   const chaserPoints = tags * NEAT_TAG_POINT_WEIGHT + evaderFalls * NEAT_FALL_POINT_WEIGHT;
-  const evaderPoints = survivalMilestones + chaserFalls * NEAT_FALL_POINT_WEIGHT;
-  const totalPoints = chaserPoints + evaderPoints;
-  const chaserShare = totalPoints > 0 ? chaserPoints / totalPoints : 0.5;
+  const evaderPoints = continuousSurvivalScore + chaserFalls * NEAT_FALL_POINT_WEIGHT;
+  // Normalize event accumulation to a common 30-second reference before converting it to a
+  // competitive share. This makes the selection scale invariant to normal vs stretch duration.
+  const durationScale = 30_000 / Math.max(DT, elapsedMs);
+  const normalizedChaserPoints = chaserPoints * durationScale;
+  const normalizedEvaderPoints = evaderPoints * durationScale;
+  const totalPoints = normalizedChaserPoints + normalizedEvaderPoints;
+  const chaserShare = totalPoints > 0 ? normalizedChaserPoints / totalPoints : 0.5;
   const evaderShare = 1 - chaserShare;
 
   const averageClosestDistance = cumulativeClosestDistance / Math.max(1, distanceSamples);
@@ -582,6 +621,7 @@ function runMatch(
   });
 
   return {
+    matchKind,
     chaserFitness,
     evaderFitness,
     chaserPoints,
@@ -678,6 +718,16 @@ function resetEvaluationAccumulators() {
   generationPopulationDraws = 0;
   generationPopulationSimulatedMs = 0;
   generationNavigationScoreTotal = 0;
+  generationNormalMatches = 0;
+  generationNormalSimulatedMs = 0;
+  generationNormalTags = 0;
+  generationNormalChaserFalls = 0;
+  generationNormalEvaderFalls = 0;
+  generationNormalNavigationScoreTotal = 0;
+  generationNormalSurvivalStreakMs = 0;
+  generationNormalSurvivalStreakCount = 0;
+  generationNormalChaserWins = 0;
+  generationNormalEvaderWins = 0;
 }
 
 function recordMatchTelemetry(result: MatchStats, currentPopulationMatch = true) {
@@ -714,7 +764,11 @@ function evaluateNextMatch(): boolean {
     // Rotating opponents prevents index-lock coevolution while keeping every role equally sampled.
     const evaderIndex = (evaluationIndex + evaluationRound * 17 + chaserPopulation.generation * 7) % n;
     const environmentSeed = chaserPopulation.generation * 100003 + evaluationRound * 7919;
-    const result = runMatch(chaserControllers[chaserIndex], evaderControllers[evaderIndex], environmentSeed);
+    // Two cheap normal rounds do the bulk of selection. The final current-population round is a
+    // stretch probe so genomes must remain useful beyond the short horizon without making every
+    // matchup expensive.
+    const matchKind: MatchKind = evaluationRound === NEAT_OPPONENTS_PER_GENOME - 1 ? 'stretch' : 'normal';
+    const result = runMatch(chaserControllers[chaserIndex], evaderControllers[evaderIndex], environmentSeed, { matchKind });
 
     chaserFitnessTotals[chaserIndex] += result.chaserFitness;
     chaserFitnessCounts[chaserIndex]++;
@@ -741,6 +795,21 @@ function evaluateNextMatch(): boolean {
     if (result.winner === 'chaser') generationPopulationChaserMatchWins++;
     else if (result.winner === 'evader') generationPopulationEvaderMatchWins++;
     else generationPopulationDraws++;
+
+    if (result.matchKind === 'normal') {
+      generationNormalMatches++;
+      generationNormalSimulatedMs += result.elapsedMs;
+      generationNormalTags += result.tags;
+      generationNormalChaserFalls += result.chaserFalls;
+      generationNormalEvaderFalls += result.evaderFalls;
+      generationNormalNavigationScoreTotal += result.navigationScore;
+      if (result.avgSurvivalStreakMs != null) {
+        generationNormalSurvivalStreakMs += result.avgSurvivalStreakMs;
+        generationNormalSurvivalStreakCount++;
+      }
+      if (result.winner === 'chaser') generationNormalChaserWins++;
+      else if (result.winner === 'evader') generationNormalEvaderWins++;
+    }
     recordMatchTelemetry(result);
 
     evaluationIndex++;
@@ -752,11 +821,11 @@ function evaluateNextMatch(): boolean {
     if (evaluationRound < NEAT_OPPONENTS_PER_GENOME) return false;
     evaluationRound = 0;
     evaluationIndex = 0;
-    if (NEAT_HOF_OPPONENTS_PER_GENOME > 0 && hallOfFamePool(evaderHallOfFame).length > 0) {
+    if (shouldRunHallOfFame(horizonState, chaserPopulation.generation) && NEAT_HOF_OPPONENTS_PER_GENOME > 0 && hallOfFamePool(evaderHallOfFame).length > 0) {
       evaluationPhase = 'chaser_hof';
       return false;
     }
-    if (NEAT_HOF_OPPONENTS_PER_GENOME > 0 && hallOfFamePool(chaserHallOfFame).length > 0) {
+    if (shouldRunHallOfFame(horizonState, chaserPopulation.generation) && NEAT_HOF_OPPONENTS_PER_GENOME > 0 && hallOfFamePool(chaserHallOfFame).length > 0) {
       evaluationPhase = 'evader_hof';
       return false;
     }
@@ -767,7 +836,7 @@ function evaluateNextMatch(): boolean {
     const opponent = selectHallOpponent(evaderHallOfFame, evaluationIndex, evaluationRound, chaserPopulation.generation);
     if (opponent) {
       const environmentSeed = chaserPopulation.generation * 200003 + evaluationRound * 12011 + 101;
-      const result = runMatch(chaserControllers[evaluationIndex], opponent.controller, environmentSeed, { chaser: true, evader: false });
+      const result = runMatch(chaserControllers[evaluationIndex], opponent.controller, environmentSeed, { matchKind: 'hof', trackActions: { chaser: true, evader: false } });
       chaserFitnessTotals[evaluationIndex] += result.chaserFitness;
       chaserFitnessCounts[evaluationIndex]++;
       recordMatchTelemetry(result, false);
@@ -791,7 +860,7 @@ function evaluateNextMatch(): boolean {
   const opponent = selectHallOpponent(chaserHallOfFame, evaluationIndex, evaluationRound, evaderPopulation.generation);
   if (opponent) {
     const environmentSeed = evaderPopulation.generation * 300007 + evaluationRound * 16001 + 211;
-    const result = runMatch(opponent.controller, evaderControllers[evaluationIndex], environmentSeed, { chaser: false, evader: true });
+    const result = runMatch(opponent.controller, evaderControllers[evaluationIndex], environmentSeed, { matchKind: 'hof', trackActions: { chaser: false, evader: true } });
     evaderFitnessTotals[evaluationIndex] += result.evaderFitness;
     evaderFitnessCounts[evaluationIndex]++;
     recordMatchTelemetry(result, false);
@@ -839,13 +908,46 @@ function finishGeneration() {
 
   const navigationScore = generationNavigationScoreTotal / matchDenominator;
   const fallTerminationRate = fallEvents / boutEvents;
-  const curriculum = advanceCurriculum(curriculumState, { navigationScore, fallTerminationRate });
+
+  // The horizon curriculum is intentionally based only on the two normal rounds. Stretch matches
+  // test robustness but cannot force the system toward still-longer evaluations on their own.
+  const normalMatches = Math.max(1, generationNormalMatches);
+  const normalFallEvents = generationNormalChaserFalls + generationNormalEvaderFalls;
+  const normalBoutEvents = Math.max(1, generationNormalTags + normalFallEvents);
+  const avgNormalDurationMs = generationNormalSimulatedMs / normalMatches;
+  const horizonObservation = {
+    navigationScore: generationNormalNavigationScoreTotal / normalMatches,
+    fallRate: normalFallEvents / normalBoutEvents,
+    tagsPer30s: generationNormalTags * 30_000 / Math.max(1, generationNormalSimulatedMs),
+    avgSurvivalStreakMs: generationNormalSurvivalStreakCount > 0
+      ? generationNormalSurvivalStreakMs / generationNormalSurvivalStreakCount
+      : 0,
+    avgMatchDurationMs: avgNormalDurationMs,
+    chaserWinRate: generationNormalChaserWins / normalMatches,
+    evaderWinRate: generationNormalEvaderWins / normalMatches,
+  };
+  const horizon = advanceHorizonCurriculum(horizonState, horizonObservation);
+  if (horizon.tierChanged) terrainHoldGenerations = Math.max(terrainHoldGenerations, 3);
+
+  const previousTerrainDifficulty = curriculumState.difficulty;
+  const curriculum = terrainHoldGenerations > 0
+    ? curriculumSnapshot(curriculumState, navigationScore, fallTerminationRate)
+    : advanceCurriculum(curriculumState, { navigationScore, fallTerminationRate });
+  if (terrainHoldGenerations > 0) terrainHoldGenerations--;
+  if (Math.abs(curriculumState.difficulty - previousTerrainDifficulty) > 1e-9) {
+    holdHorizonForTerrainChange(horizonState, 3);
+  }
+
   lastCurriculumTelemetry = {
     ...curriculum,
     lastCourseSeed,
     lastCourseBranchCount,
     lastCourseMovingPlatforms,
     lastCourseCrumblingPlatforms,
+  };
+  lastHorizonTelemetry = {
+    ...horizonSnapshot(horizonState, horizonObservation, horizon.competenceScore, horizon.tierChanged),
+    hofActiveThisGeneration: shouldRunHallOfFame(horizonState, chaserPopulation.generation + 1),
   };
 
   chaserPopulation.genomes.forEach((g, i) => {
@@ -876,8 +978,9 @@ function average(values: number[]): number {
 
 function evaluationProgress(): number {
   const n = NEAT_POPULATION_SIZE;
-  const hasEvaderHof = NEAT_HOF_OPPONENTS_PER_GENOME > 0 && hallOfFamePool(evaderHallOfFame).length > 0;
-  const hasChaserHof = NEAT_HOF_OPPONENTS_PER_GENOME > 0 && hallOfFamePool(chaserHallOfFame).length > 0;
+  const hofScheduled = shouldRunHallOfFame(horizonState, chaserPopulation.generation);
+  const hasEvaderHof = hofScheduled && NEAT_HOF_OPPONENTS_PER_GENOME > 0 && hallOfFamePool(evaderHallOfFame).length > 0;
+  const hasChaserHof = hofScheduled && NEAT_HOF_OPPONENTS_PER_GENOME > 0 && hallOfFamePool(chaserHallOfFame).length > 0;
   const populationEpisodes = n * NEAT_OPPONENTS_PER_GENOME;
   const chaserHofEpisodes = hasEvaderHof ? n * NEAT_HOF_OPPONENTS_PER_GENOME : 0;
   const evaderHofEpisodes = hasChaserHof ? n * NEAT_HOF_OPPONENTS_PER_GENOME : 0;
@@ -940,11 +1043,15 @@ function emitTelemetry() {
       eloLeaderboard: leaderboard,
       lastGenerationBalance,
       curriculum: lastCurriculumTelemetry,
+      trainingHorizon: {
+        ...lastHorizonTelemetry,
+        hofActiveThisGeneration: shouldRunHallOfFame(horizonState, chaserPopulation.generation),
+      },
       hallOfFame: {
         chaserSize: hallOfFamePool(chaserHallOfFame).length,
         evaderSize: hallOfFamePool(evaderHallOfFame).length,
         maxSize: NEAT_HOF_MAX_SIZE,
-        opponentsPerGenome: NEAT_HOF_OPPONENTS_PER_GENOME,
+        opponentsPerGenome: shouldRunHallOfFame(horizonState, chaserPopulation.generation) ? NEAT_HOF_OPPONENTS_PER_GENOME : 0,
         chaserGenerations: hallOfFamePool(chaserHallOfFame).map(entry => entry.generation).sort((a, b) => a - b),
         evaderGenerations: hallOfFamePool(evaderHallOfFame).map(entry => entry.generation).sort((a, b) => a - b),
       },
@@ -975,6 +1082,7 @@ function seedPopulations(chaserWeights?: AgentWeights, evaderWeights?: AgentWeig
   clearHallOfFame();
   lastGenerationBalance = null;
   lastCurriculumTelemetry = curriculumSnapshot(curriculumState);
+  lastHorizonTelemetry = { ...horizonSnapshot(horizonState), hofActiveThisGeneration: shouldRunHallOfFame(horizonState, chaserPopulation.generation) };
   if (chaserWeights?.nodes && chaserWeights?.connections) {
     chaserPopulation.seedFromChampion(chaserWeights as NeatGenomeData);
     championChaser.setWeights(chaserWeights);
@@ -1071,6 +1179,9 @@ self.onmessage = (event: MessageEvent) => {
       lastGenerationBalance = null;
       curriculumState = createCurriculumState();
       lastCurriculumTelemetry = curriculumSnapshot(curriculumState);
+      horizonState = createHorizonCurriculumState();
+      lastHorizonTelemetry = { ...horizonSnapshot(horizonState), hofActiveThisGeneration: false };
+      terrainHoldGenerations = 0;
       lastCourseSeed = 0;
       lastCourseBranchCount = 0;
       lastCourseMovingPlatforms = 0;

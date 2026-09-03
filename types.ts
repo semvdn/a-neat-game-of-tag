@@ -201,6 +201,29 @@ export interface CurriculumTelemetry {
   lastCourseCrumblingPlatforms?: number;
 }
 
+
+export interface TrainingHorizonTelemetry {
+  tier: 'Beginner' | 'Developing' | 'Competent' | 'Advanced' | 'Mature';
+  tierIndex: number;
+  normalMinMs: number;
+  normalMaxMs: number;
+  stretchMinMs: number;
+  stretchMaxMs: number;
+  hofEveryGenerations: number;
+  hofActiveThisGeneration: boolean;
+  competenceScore: number;
+  competenceEma: number;
+  goodGenerations: number;
+  badGenerations: number;
+  holdGenerations: number;
+  lastNavigationScore: number;
+  lastFallRate: number;
+  lastTagsPer30s: number;
+  lastSurvivalRatio: number;
+  lastChaserWinRate: number;
+  lastEvaderWinRate: number;
+}
+
 export interface HallOfFameTelemetry {
   chaserSize: number;
   evaderSize: number;
@@ -233,4 +256,5 @@ export interface DiagnosticsState {
   lastGenerationBalance?: BalanceTelemetry | null;
   balanceHistory?: BalanceTelemetry[];
   curriculum?: CurriculumTelemetry;
+  trainingHorizon?: TrainingHorizonTelemetry;
 }

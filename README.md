@@ -23,8 +23,8 @@ At `25x` and `50x`, the persistent training worker performs headless evolutionar
 For each generation:
 
 1. Every chaser genome is evaluated against rotating evader genomes in the existing **1 chaser vs 2 runners** game.
-2. Every genome receives the same number of current-population evaluations (currently 3), plus Hall-of-Fame tests once an archive exists.
-3. Each evaluation is a deterministic-seeded **28–42 second continuing match**. The duration is randomized and is not included in the 39-input state vector.
+2. Every genome receives three current-population evaluations: **two normal-horizon matches plus one longer stretch probe**. Hall-of-Fame tests are scheduled less often at early horizon tiers and become every-generation tests as the populations mature.
+3. Match duration follows an adaptive horizon curriculum. Beginner normal matches are only **8–12 seconds**, while the stretch probe is **18–22 seconds**; mature populations eventually reach **30–42 second** normal matches with **45–55 second** stretch probes. Duration is randomized and is not included in the 39-input state vector.
 4. A tag no longer ends evaluation: the tagged runner becomes the new chaser, the old chaser becomes a runner with cooldown, and play continues exactly like visual mode. The chaser genome always controls whichever body is currently It; the evader genome controls both non-It bodies.
 5. A fall ends only the current bout. The whole group restarts on another valid backbone section of the same procedural course, temporary crumble state is restored, and stamina is preserved.
 6. Fitness is calculated from repeated events across the whole match, then averaged across the genome's matchups.
@@ -33,21 +33,41 @@ For each generation:
 
 At `1x`, `2x`, `5x` and `10x`, the app shows normal visual play using the latest champions. Visual tags use the same role-swap semantics, and visual falls now reset the whole bout without refilling stamina, closely matching training. Switching between visual and turbo modes does **not** recreate the worker or discard the evolving populations.
 
-## Long-horizon fitness and bout failures
+## Adaptive-horizon fitness and bout failures
 
-The old 12-second first-tag objective has been removed. The continuing-match score keeps selection pressure active for the entire randomized horizon:
+The old fixed 12-second first-tag objective has been removed, but long matches are no longer paid for on every evaluation from generation 1. Each genome receives two cheap normal matches and one stretch probe. The continuing-match score keeps selection pressure active throughout whatever horizon is currently scheduled:
 
 - every successful tag gives the chaser side **1.0 competitive point**;
-- each evader earns **1.0 survival point every 10 seconds of uninterrupted survival**;
+- evader survival credit is **continuous at 1.0 point per 10 seconds alive** (for example 5 seconds = 0.5 points), avoiding a hard 10-second reward cliff;
 - an evader fall gives the chaser side **1.5 points**;
 - a chaser fall gives the evader side **1.5 points**;
 - simultaneous failures can award fall points to both sides, then the bout resets and the match continues.
 
 The 1.5× fall weight makes deliberately leaving the terrain worse than accepting a tag. A fall also does **not** refill stamina, removing the old reset exploit. Because tags swap roles and continue, evolution is now directly exposed to the post-tag body/energy/position states seen during normal-speed playback.
 
-At the end of a match, each role's competitive-point share is mapped to the same roughly 25–220 fitness range. Small closest-distance and navigation shaping remains bounded and secondary to repeated tags, survival milestones and terrain failures. Jumping and unused stamina are never rewarded directly.
+At the end of a match, competitive points are normalized to a common 30-second reference before each role's share is mapped to the same roughly 25–220 fitness range. Normal and stretch evaluations therefore stay on the same selection scale rather than a longer probe being valuable merely because it ran longer. Small closest-distance and navigation shaping remains bounded and secondary to repeated tags, continuous survival credit and terrain failures. Jumping and unused stamina are never rewarded directly.
 
 The most useful balance diagnostics are now **tags per 30 seconds**, whole-match chaser/runner win rate, mean uninterrupted evader survival streak, mean tag interval, and the share of bout-ending events caused by falls.
+
+## Adaptive training horizon
+
+Training time grows only when the populations demonstrate competence in the **two normal rounds**. The stretch round is deliberately excluded from horizon progression: it is a robustness test that catches short-horizon policies without forcing every evaluation to become expensive.
+
+Current tiers are:
+
+| Tier | Normal matches | Stretch probe | Hall of Fame |
+| --- | --- | --- | --- |
+| Beginner | 8–12 s | 18–22 s | every 3 generations |
+| Developing | 12–18 s | 22–28 s | every 2 generations |
+| Competent | 18–25 s | 28–35 s | every generation |
+| Advanced | 24–32 s | 35–42 s | every generation |
+| Mature | 30–42 s | 45–55 s | every generation |
+
+The normal-round competence score uses navigation quality, fall-event share, tags per 30 seconds, mean survival streak relative to the normal horizon, and whole-match balance. Five sustained competent generations advance a tier. Three clearly struggling generations can step the horizon back. An EMA and hysteresis prevent one noisy coevolutionary generation from changing the horizon.
+
+Terrain and time complexity are also staggered: a horizon tier change temporarily holds terrain difficulty, and a terrain-difficulty change temporarily holds horizon progression. This avoids simultaneously introducing longer matches and harder procedural terrain.
+
+This substantially reduces early-generation simulation cost. At Beginner, the three current-population rounds average roughly **40 simulated seconds per genome** (10 + 10 + 20) instead of roughly **105 seconds** under the previous always-long 28–42 second setup. Hall-of-Fame evaluation is also skipped on two out of three Beginner generations.
 
 ## Continuous control + stamina
 
@@ -162,9 +182,8 @@ See `constants.ts`:
 ```ts
 NEAT_POPULATION_SIZE = 48
 NEAT_OPPONENTS_PER_GENOME = 3
-NEAT_MATCH_MIN_MS = 28000
-NEAT_MATCH_MAX_MS = 42000
-NEAT_SURVIVAL_MILESTONE_MS = 10000
+NEAT_SURVIVAL_SCORE_WINDOW_MS = 10000
+// adaptive duration windows live in level/horizonCurriculum.ts
 NEAT_TAG_POINT_WEIGHT = 1.0
 NEAT_FALL_POINT_WEIGHT = 1.5
 NEAT_COMPATIBILITY_THRESHOLD = 0.8
@@ -201,7 +220,7 @@ The original AI Studio/Vite Gemini environment plumbing is left in place, althou
 - `workers/trainingWorker.ts` — population ownership, headless matches, fitness, curriculum and generation loop
 - `components/PerformanceDiagnostics.tsx` — NEAT diagnostics and topology visualizer
 - `App.tsx` — champion rendering, worker lifecycle, persistence and UI integration
-- `level/` — seeded procedural course generation, reachability, dynamic platforms and adaptive curriculum
+- `level/` — seeded procedural course generation, reachability, dynamic platforms, terrain curriculum and adaptive horizon curriculum
 - `constants.ts` — NEAT and game parameters
 
 The former PPO math/optimizer module (`learning/math.ts`) has been removed.
@@ -209,13 +228,13 @@ The former PPO math/optimizer module (`learning/math.ts`) has been removed.
 
 ## Hall of Fame coevolution
 
-Each evaluated genome plays the normal balanced current-population matchups and, once historical champions exist, an extra matchup against the opposite role's Hall of Fame. Each role keeps up to 12 champions: the four most recent champions plus a reservoir sample of older generations. This keeps old successful strategies in the selection pressure and reduces cyclic forgetting. The archive is worker-session state; importing a champion seeds a new archive baseline.
+Each evaluated genome plays the balanced current-population matchups. Once historical champions exist, Hall-of-Fame evaluation is scheduled by horizon maturity: every third Beginner generation, every second Developing generation, then every generation from Competent onward. On an active HoF generation each role receives one extra **normal-horizon** matchup against the opposite archive; the stretch duration is not repeated for historical tests. Each role keeps up to 12 champions: the four most recent champions plus a reservoir sample of older generations. This keeps old successful strategies in the selection pressure while avoiding unnecessary early compute. The archive is worker-session state; importing a champion seeds a new archive baseline.
 
 
 ## Symmetric game balance
 
 Chaser and runner use identical physiology: 100 stamina, the same acceleration, maximum speed, jump strength, recovery and fatigue curve. Their only built-in difference is the objective (tag versus survive). The game remains 1v2: one chaser-controller genome controls the current It body and one runner-controller genome simultaneously controls both evader bodies.
 
-Evolutionary fitness is comparable across roles and is based on the whole continuing match rather than a single terminal event. Repeated tags favor the chaser, uninterrupted 10-second survival milestones favor the runner team, and falls are weighted 1.5× more heavily than tags for the opposing side. This makes terrain navigation mandatory without turning navigation itself into the primary reward objective.
+Evolutionary fitness is comparable across roles and is based on the whole continuing match rather than a single terminal event. Repeated tags favor the chaser, continuous survival time favors the runner team, and falls are weighted 1.5× more heavily than tags for the opposing side. This makes terrain navigation mandatory without turning navigation itself into the primary reward objective.
 
 Diagnostics report tags per 30 seconds, average tags per match, chaser/runner whole-match win rate, no-tag match rate, mean tag interval, mean uninterrupted runner survival streak and fall-event share from current-population matches only. Hall-of-Fame evaluations still affect selection but are excluded from these balance metrics.

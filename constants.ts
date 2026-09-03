@@ -83,12 +83,10 @@ export const TIME_TO_TAG_HISTORY_LENGTH = 10; // Average over the last N tag tim
 // NEAT (NeuroEvolution of Augmenting Topologies)
 export const NEAT_POPULATION_SIZE = 48;
 export const NEAT_OPPONENTS_PER_GENOME = 3;
-export const NEAT_HOF_OPPONENTS_PER_GENOME = 1; // extra historical opponent per genome once the archive is populated
+export const NEAT_HOF_OPPONENTS_PER_GENOME = 1; // extra historical opponent on horizon-scheduled HoF generations
 export const NEAT_HOF_MAX_SIZE = 12; // per role: recent champions + a reservoir sample of older champions
 export const NEAT_HOF_RECENT_SLOTS = 4;
-export const NEAT_MATCH_MIN_MS = 28000;
-export const NEAT_MATCH_MAX_MS = 42000;
-export const NEAT_SURVIVAL_MILESTONE_MS = 10000;
+export const NEAT_SURVIVAL_SCORE_WINDOW_MS = 10000; // continuous runner survival credit: 1 point per 10s alive
 export const NEAT_TAG_POINT_WEIGHT = 1.0;
 export const NEAT_FALL_POINT_WEIGHT = 1.5;
 export const NEAT_TRAINING_COURSE_LENGTH = 20000;

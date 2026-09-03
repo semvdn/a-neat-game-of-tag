@@ -359,6 +359,7 @@ export const App: React.FC = () => {
               lastGenerationBalance: balanceMetric || prev.lastGenerationBalance,
               balanceHistory: appendUnique(prev.balanceHistory, balanceMetric),
               curriculum: payload.curriculum || prev.curriculum,
+              trainingHorizon: payload.trainingHorizon || prev.trainingHorizon,
             };
           });
 
@@ -1060,6 +1061,7 @@ export const App: React.FC = () => {
       lastGenerationBalance: null,
       balanceHistory: [],
       curriculum: undefined,
+      trainingHorizon: undefined,
     }));
   };
 

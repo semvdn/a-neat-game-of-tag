@@ -219,6 +219,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   const balanceHistory = diagnostics.balanceHistory || [];
   const balance = diagnostics.lastGenerationBalance;
   const curriculum = diagnostics.curriculum;
+  const horizon = diagnostics.trainingHorizon;
   const chaserMetrics = diagnostics.lastChaserNeatMetrics;
   const evaderMetrics = diagnostics.lastEvaderNeatMetrics;
   const selectedGenome = role === 'chaser' ? diagnostics.chaserChampionGenome : diagnostics.evaderChampionGenome;
@@ -276,7 +277,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <MetricCard label="Generation" value={generation} hint="one full population evaluation" />
               <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} hint="same 0–220 scale as runner" />
               <MetricCard label="Runner best" value={fmt(evaderMetrics?.bestFitness)} hint="same 0–220 scale as chaser" />
-              <MetricCard label="Tags / 30s" value={balance ? balance.tagsPer30s.toFixed(2) : '—'} hint={balance ? `${balance.avgTagsPerMatch.toFixed(2)} per long match` : 'repeated tags'} />
+              <MetricCard label="Tags / 30s" value={balance ? balance.tagsPer30s.toFixed(2) : '—'} hint={balance ? `${balance.avgTagsPerMatch.toFixed(2)} per evaluation match` : 'repeated tags'} />
               <MetricCard label="Chaser match win" value={balance ? `${(balance.chaserWinRate * 100).toFixed(1)}%` : '—'} hint="whole-match point score" />
               <MetricCard label="Runner match win" value={balance ? `${(balance.evaderWinRate * 100).toFixed(1)}%` : '—'} hint="whole-match point score" />
               <MetricCard label="Fall event share" value={balance ? `${(balance.fallRate * 100).toFixed(1)}%` : '—'} hint={balance ? `${balance.chaserFalls} chaser / ${balance.evaderFalls} runner falls` : 'of tag + fall bout endings'} />
@@ -289,8 +290,27 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
             <div className="grid md:grid-cols-3 gap-3">
               <MetricCard label="Hall of Fame C / E" value={`${diagnostics.hallOfFame?.chaserSize ?? 0} / ${diagnostics.hallOfFame?.evaderSize ?? 0}`} hint={`max ${diagnostics.hallOfFame?.maxSize ?? 0} champions per role`} />
-              <MetricCard label="Historical opponents" value={diagnostics.hallOfFame?.opponentsPerGenome ?? 0} hint="extra archive matchups per genome" />
+              <MetricCard label="Historical opponents" value={diagnostics.hallOfFame?.opponentsPerGenome ?? 0} hint={horizon ? `scheduled every ${horizon.hofEveryGenerations} gen${horizon.hofEveryGenerations === 1 ? '' : 's'}` : 'extra archive matchups per genome'} />
               <MetricCard label="Archived generations" value={(diagnostics.hallOfFame?.chaserGenerations?.length || diagnostics.hallOfFame?.evaderGenerations?.length) ? `${diagnostics.hallOfFame?.chaserGenerations?.[0] ?? '—'}–${diagnostics.hallOfFame?.chaserGenerations?.slice(-1)[0] ?? '—'}` : '—'} hint="recent + reservoir-sampled history" />
+            </div>
+
+            <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4">
+              <div className="flex items-center justify-between gap-4 mb-3">
+                <div>
+                  <h3 className="font-semibold text-violet-200">Adaptive training horizon</h3>
+                  <p className="text-xs text-gray-500 mt-1">Two normal rounds drive progression; one stretch round checks long-horizon robustness. Hall-of-Fame frequency rises with maturity.</p>
+                </div>
+                <div className="text-xl font-bold font-mono text-violet-300">{horizon?.tier ?? '—'}</div>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
+                <MetricCard label="Normal horizon" value={horizon ? `${(horizon.normalMinMs / 1000).toFixed(0)}–${(horizon.normalMaxMs / 1000).toFixed(0)}s` : '—'} hint="rounds 1 + 2" />
+                <MetricCard label="Stretch horizon" value={horizon ? `${(horizon.stretchMinMs / 1000).toFixed(0)}–${(horizon.stretchMaxMs / 1000).toFixed(0)}s` : '—'} hint="round 3" />
+                <MetricCard label="Competence EMA" value={horizon ? `${(horizon.competenceEma * 100).toFixed(0)}%` : '—'} hint={horizon ? `last ${(horizon.competenceScore * 100).toFixed(0)}%` : undefined} />
+                <MetricCard label="Advance streak" value={horizon ? `${horizon.goodGenerations}/5` : '—'} hint="competent generations" />
+                <MetricCard label="Short survival" value={horizon ? `${(horizon.lastSurvivalRatio * 100).toFixed(0)}%` : '—'} hint="streak / normal horizon" />
+                <MetricCard label="Short tags / 30s" value={horizon ? horizon.lastTagsPer30s.toFixed(2) : '—'} hint="normal rounds only" />
+                <MetricCard label="HoF schedule" value={horizon ? (horizon.hofActiveThisGeneration ? 'ON' : 'skip') : '—'} hint={horizon ? `every ${horizon.hofEveryGenerations} gen${horizon.hofEveryGenerations === 1 ? '' : 's'}` : undefined} />
+              </div>
             </div>
 
             <div className="rounded-xl border border-emerald-500/20 bg-emerald-950/10 p-4">
@@ -327,7 +347,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                 ]}
                 emptyLabel="Complete generations to populate the balance chart."
               />
-              <p className="mt-2 text-xs text-gray-500">Current-population matches only. Each evaluation is a randomized 28–42s continuing match with repeated tags and bout resets after falls; Hall-of-Fame tests remain excluded from this balance signal.</p>
+              <p className="mt-2 text-xs text-gray-500">Current-population matches only. Each genome gets two normal-horizon matches plus one longer stretch probe; repeated tags and bout resets continue within each match. Hall-of-Fame tests remain excluded from this balance signal.</p>
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
