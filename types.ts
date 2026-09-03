@@ -172,7 +172,7 @@ export interface BalanceTelemetry {
   tagRate: number;
   /** Fraction of long matches with no tags at all. */
   survivalRate: number;
-  /** Fraction of bout-ending events caused by terrain failure rather than tags. */
+  /** Fraction of evaluated controller assignments containing at least one terrain fall. */
   fallRate: number;
   chaserWinRate: number;
   evaderWinRate: number;
@@ -202,26 +202,28 @@ export interface CurriculumTelemetry {
 }
 
 
-export interface TrainingHorizonTelemetry {
-  tier: 'Beginner' | 'Developing' | 'Competent' | 'Advanced' | 'Mature';
-  tierIndex: number;
-  normalMinMs: number;
-  normalMaxMs: number;
-  stretchMinMs: number;
-  stretchMaxMs: number;
-  hofEveryGenerations: number;
-  hofActiveThisGeneration: boolean;
-  competenceScore: number;
-  competenceEma: number;
-  goodGenerations: number;
-  badGenerations: number;
-  holdGenerations: number;
-  lastNavigationScore: number;
-  lastFallRate: number;
-  lastTagsPer30s: number;
-  lastSurvivalRatio: number;
-  lastChaserWinRate: number;
-  lastEvaderWinRate: number;
+export interface ContinuousTrainingTelemetry {
+  arenaCount: number;
+  assignmentMinMs: number;
+  assignmentMaxMs: number;
+  longAssignmentChance: number;
+  longAssignmentMinMs: number;
+  longAssignmentMaxMs: number;
+  exposureTargetMs: number;
+  minAssignments: number;
+  minArenas: number;
+  minOpponents: number;
+  generationProgress: number;
+  chaserReady: number;
+  evaderReady: number;
+  populationSize: number;
+  avgChaserExposureMs: number;
+  avgEvaderExposureMs: number;
+  avgChaserAssignments: number;
+  avgEvaderAssignments: number;
+  currentCurrentAssignments: number;
+  hallOfFameAssignments: number;
+  hallOfFameChance: number;
 }
 
 export interface HallOfFameTelemetry {
@@ -256,5 +258,5 @@ export interface DiagnosticsState {
   lastGenerationBalance?: BalanceTelemetry | null;
   balanceHistory?: BalanceTelemetry[];
   curriculum?: CurriculumTelemetry;
-  trainingHorizon?: TrainingHorizonTelemetry;
+  continuousTraining?: ContinuousTrainingTelemetry;
 }

@@ -27,6 +27,8 @@ interface PerformanceDiagnosticsProps {
   onSetVisualSpeed: (speed: number) => void;
   workerSpeed: number;
   onSetWorkerSpeed: (speed: number) => void;
+  trainingArenaCount: number;
+  onSetTrainingArenaCount: (count: number) => void;
   isVisualPaused: boolean;
   onToggleVisualPause: () => void;
   isTrainingPaused: boolean;
@@ -203,6 +205,8 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   onSetVisualSpeed,
   workerSpeed,
   onSetWorkerSpeed,
+  trainingArenaCount,
+  onSetTrainingArenaCount,
   isVisualPaused,
   onToggleVisualPause,
   isTrainingPaused,
@@ -231,7 +235,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   const balanceHistory = diagnostics.balanceHistory || [];
   const balance = diagnostics.lastGenerationBalance;
   const curriculum = diagnostics.curriculum;
-  const horizon = diagnostics.trainingHorizon;
+  const continuous = diagnostics.continuousTraining;
   const chaserMetrics = diagnostics.lastChaserNeatMetrics;
   const evaderMetrics = diagnostics.lastEvaderNeatMetrics;
   const selectedGenome = role === 'chaser' ? diagnostics.chaserChampionGenome : diagnostics.evaderChampionGenome;
@@ -276,6 +280,11 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             {[10, 25, 50, 100, 200].map(speed => (
               <button key={speed} onClick={() => onSetWorkerSpeed(speed)} className={`px-2 py-1 rounded text-xs font-mono ${workerSpeed === speed ? 'bg-amber-400 text-black' : 'text-gray-500 hover:text-white'}`}>{speed}x</button>
             ))}
+            <span className="mx-1 h-5 w-px bg-gray-800" />
+            <span className="text-[10px] uppercase tracking-wider text-violet-300">Arenas</span>
+            {[2, 4, 6, 8, 12, 16].map(count => (
+              <button key={count} onClick={() => onSetTrainingArenaCount(count)} className={`px-2 py-1 rounded text-xs font-mono ${trainingArenaCount === count ? 'bg-violet-400 text-black' : 'text-gray-500 hover:text-white'}`}>{count}</button>
+            ))}
             <button onClick={onToggleTrainingPause} className="p-1.5 rounded hover:bg-gray-900 text-amber-200" title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>{isTrainingPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}</button>
           </div>
           <button onClick={onClose} className="p-2 rounded border border-gray-800 hover:bg-gray-900"><X className="w-4 h-4" /></button>
@@ -305,7 +314,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <MetricCard label="Tags / 30s" value={balance ? balance.tagsPer30s.toFixed(2) : '—'} hint={balance ? `${balance.avgTagsPerMatch.toFixed(2)} per evaluation match` : 'repeated tags'} />
               <MetricCard label="Chaser match win" value={balance ? `${(balance.chaserWinRate * 100).toFixed(1)}%` : '—'} hint="whole-match point score" />
               <MetricCard label="Runner match win" value={balance ? `${(balance.evaderWinRate * 100).toFixed(1)}%` : '—'} hint="whole-match point score" />
-              <MetricCard label="Fall event share" value={balance ? `${(balance.fallRate * 100).toFixed(1)}%` : '—'} hint={balance ? `${balance.chaserFalls} chaser / ${balance.evaderFalls} runner falls` : 'of tag + fall bout endings'} />
+              <MetricCard label="Assignments with falls" value={balance ? `${(balance.fallRate * 100).toFixed(1)}%` : '—'} hint={balance ? `${balance.chaserFalls} chaser / ${balance.evaderFalls} runner falls` : 'fraction of controller slots with terrain failure'} />
               <MetricCard label="Avg survival streak" value={balance?.avgSurvivalStreakMs != null ? `${(balance.avgSurvivalStreakMs / 1000).toFixed(1)}s` : '—'} hint={balance?.avgTagTimeMs != null ? `avg tag interval ${(balance.avgTagTimeMs / 1000).toFixed(1)}s` : 'uninterrupted evasion'} />
             </div>
 
@@ -315,26 +324,27 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
             <div className="grid md:grid-cols-3 gap-3">
               <MetricCard label="Hall of Fame C / E" value={`${diagnostics.hallOfFame?.chaserSize ?? 0} / ${diagnostics.hallOfFame?.evaderSize ?? 0}`} hint={`max ${diagnostics.hallOfFame?.maxSize ?? 0} champions per role`} />
-              <MetricCard label="Historical opponents" value={diagnostics.hallOfFame?.opponentsPerGenome ?? 0} hint={horizon ? `scheduled every ${horizon.hofEveryGenerations} gen${horizon.hofEveryGenerations === 1 ? '' : 's'}` : 'extra archive matchups per genome'} />
+              <MetricCard label="Historical sampling" value={continuous ? `${(continuous.hallOfFameChance * 100).toFixed(0)}%` : '—'} hint="assignments with one archived opponent" />
               <MetricCard label="Archived generations" value={(diagnostics.hallOfFame?.chaserGenerations?.length || diagnostics.hallOfFame?.evaderGenerations?.length) ? `${diagnostics.hallOfFame?.chaserGenerations?.[0] ?? '—'}–${diagnostics.hallOfFame?.chaserGenerations?.slice(-1)[0] ?? '—'}` : '—'} hint="recent + reservoir-sampled history" />
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4">
               <div className="flex items-center justify-between gap-4 mb-3">
                 <div>
-                  <h3 className="font-semibold text-violet-200">Adaptive training horizon</h3>
-                  <p className="text-xs text-gray-500 mt-1">Two normal rounds drive progression; one stretch round checks long-horizon robustness. Hall-of-Fame frequency rises with maturity.</p>
+                  <h3 className="font-semibold text-violet-200">Continuous persistent training</h3>
+                  <p className="text-xs text-gray-500 mt-1">Worlds keep running while genomes are hot-swapped into controller slots. A generation breeds only after every genome has enough exposure across arenas and opponents.</p>
                 </div>
-                <div className="text-xl font-bold font-mono text-violet-300">{horizon?.tier ?? '—'}</div>
+                <div className="text-xl font-bold font-mono text-violet-300">{continuous ? `${(continuous.generationProgress * 100).toFixed(0)}%` : '—'}</div>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
-                <MetricCard label="Normal horizon" value={horizon ? `${(horizon.normalMinMs / 1000).toFixed(0)}–${(horizon.normalMaxMs / 1000).toFixed(0)}s` : '—'} hint="rounds 1 + 2" />
-                <MetricCard label="Stretch horizon" value={horizon ? `${(horizon.stretchMinMs / 1000).toFixed(0)}–${(horizon.stretchMaxMs / 1000).toFixed(0)}s` : '—'} hint="round 3" />
-                <MetricCard label="Competence EMA" value={horizon ? `${(horizon.competenceEma * 100).toFixed(0)}%` : '—'} hint={horizon ? `last ${(horizon.competenceScore * 100).toFixed(0)}%` : undefined} />
-                <MetricCard label="Advance streak" value={horizon ? `${horizon.goodGenerations}/5` : '—'} hint="competent generations" />
-                <MetricCard label="Short survival" value={horizon ? `${(horizon.lastSurvivalRatio * 100).toFixed(0)}%` : '—'} hint="streak / normal horizon" />
-                <MetricCard label="Short tags / 30s" value={horizon ? horizon.lastTagsPer30s.toFixed(2) : '—'} hint="normal rounds only" />
-                <MetricCard label="HoF schedule" value={horizon ? (horizon.hofActiveThisGeneration ? 'ON' : 'skip') : '—'} hint={horizon ? `every ${horizon.hofEveryGenerations} gen${horizon.hofEveryGenerations === 1 ? '' : 's'}` : undefined} />
+              <div className="grid grid-cols-2 md:grid-cols-8 gap-3">
+                <MetricCard label="Arenas" value={continuous?.arenaCount ?? trainingArenaCount} hint="persistent 1v2 worlds" />
+                <MetricCard label="Assignments" value={continuous ? `${(continuous.assignmentMinMs / 1000).toFixed(0)}–${(continuous.assignmentMaxMs / 1000).toFixed(0)}s` : '—'} hint={continuous ? `${(continuous.longAssignmentChance * 100).toFixed(0)}% long probes` : undefined} />
+                <MetricCard label="Exposure target" value={continuous ? `${(continuous.exposureTargetMs / 1000).toFixed(0)}s` : '—'} hint={continuous ? `≥${continuous.minAssignments} slots · ${continuous.minArenas} arenas` : undefined} />
+                <MetricCard label="Chasers ready" value={continuous ? `${continuous.chaserReady}/${continuous.populationSize}` : '—'} hint={continuous ? `${(continuous.avgChaserExposureMs / 1000).toFixed(1)}s avg exposure` : undefined} />
+                <MetricCard label="Runners ready" value={continuous ? `${continuous.evaderReady}/${continuous.populationSize}` : '—'} hint={continuous ? `${(continuous.avgEvaderExposureMs / 1000).toFixed(1)}s avg exposure` : undefined} />
+                <MetricCard label="Chaser slots" value={continuous ? continuous.avgChaserAssignments.toFixed(1) : '—'} hint="avg assignments / genome" />
+                <MetricCard label="Runner slots" value={continuous ? continuous.avgEvaderAssignments.toFixed(1) : '—'} hint="avg assignments / genome" />
+                <MetricCard label="HoF slots" value={continuous ? continuous.hallOfFameAssignments : '—'} hint={continuous ? `${continuous.currentCurrentAssignments} current-current` : undefined} />
               </div>
             </div>
 
@@ -348,7 +358,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               </div>
               <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
                 <MetricCard label="Navigation" value={curriculum ? `${(curriculum.lastNavigationScore * 100).toFixed(0)}%` : '—'} hint="last generation" />
-                <MetricCard label="Fall endings" value={curriculum ? `${(curriculum.lastFallTerminationRate * 100).toFixed(1)}%` : '—'} hint="share of tag + fall bout endings" />
+                <MetricCard label="Fall endings" value={curriculum ? `${(curriculum.lastFallTerminationRate * 100).toFixed(1)}%` : '—'} hint="controller assignments containing a fall" />
                 <MetricCard label="Branches" value={curriculum?.branchesUnlocked ? 'ON' : 'locked'} hint={curriculum?.lastCourseBranchCount != null ? `${curriculum.lastCourseBranchCount} in sampled course` : undefined} />
                 <MetricCard label="Moving" value={curriculum?.movingUnlocked ? 'ON' : 'locked'} hint={curriculum?.lastCourseMovingPlatforms != null ? `${curriculum.lastCourseMovingPlatforms} platforms` : undefined} />
                 <MetricCard label="Crumbling" value={curriculum?.crumblingUnlocked ? 'ON' : 'locked'} hint={curriculum?.lastCourseCrumblingPlatforms != null ? `${curriculum.lastCourseCrumblingPlatforms} platforms` : undefined} />
@@ -372,11 +382,11 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                 ]}
                 emptyLabel="Complete generations to populate the balance chart."
               />
-              <p className="mt-2 text-xs text-gray-500">Current-population matches only. Each genome gets two normal-horizon matches plus one longer stretch probe; repeated tags and bout resets continue within each match. Hall-of-Fame tests remain excluded from this balance signal.</p>
+              <p className="mt-2 text-xs text-gray-500">Controller assignments sampled from persistent arenas. Most slots are current-vs-current; Hall-of-Fame slots remain part of selection but are separated in the continuous-training telemetry.</p>
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> both roles have identical physical abilities and evolve against rotating current opponents plus Hall-of-Fame champions. The champion view is a persistent 1v2 game with its own speed and pause controls; newly evolved generation champions are hot-swapped into the running bodies without resetting positions or stamina. Background evolution runs independently with adaptive normal/stretch horizons, scheduled Hall-of-Fame tests, repeated tag role-swaps, and bout resets after falls.
+              <strong className="text-violet-200">Training architecture:</strong> both roles have identical physical abilities and evolve inside several persistent 1v2 worlds. Genomes are hot-swapped into chaser/runner controller slots for short randomized windows without resetting positions, stamina, roles or terrain. Most assignments use current opponents; a bounded share samples Hall-of-Fame champions. Falls reset only that arena's bout, tags swap roles continuously, and generations reproduce after every genome reaches its exposure quota.
             </div>
           </div>
         )}

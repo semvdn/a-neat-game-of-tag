@@ -82,8 +82,6 @@ export const TIME_TO_TAG_HISTORY_LENGTH = 10; // Average over the last N tag tim
 
 // NEAT (NeuroEvolution of Augmenting Topologies)
 export const NEAT_POPULATION_SIZE = 48;
-export const NEAT_OPPONENTS_PER_GENOME = 3;
-export const NEAT_HOF_OPPONENTS_PER_GENOME = 1; // extra historical opponent on horizon-scheduled HoF generations
 export const NEAT_HOF_MAX_SIZE = 12; // per role: recent champions + a reservoir sample of older champions
 export const NEAT_HOF_RECENT_SLOTS = 4;
 export const NEAT_SURVIVAL_SCORE_WINDOW_MS = 10000; // continuous runner survival credit: 1 point per 10s alive
@@ -96,3 +94,22 @@ export const NEAT_CROSSOVER_RATE = 0.75;
 export const NEAT_WEIGHT_MUTATION_RATE = 0.8;
 export const NEAT_ADD_NODE_RATE = 0.03;
 export const NEAT_ADD_CONNECTION_RATE = 0.08;
+
+// Continuous persistent training arenas
+export const CONTINUOUS_TRAINING_DEFAULT_ARENAS = 8;
+export const CONTINUOUS_TRAINING_MIN_ARENAS = 2;
+export const CONTINUOUS_TRAINING_MAX_ARENAS = 16;
+export const CONTINUOUS_ASSIGNMENT_MIN_MS = 6000;
+export const CONTINUOUS_ASSIGNMENT_MAX_MS = 12000;
+export const CONTINUOUS_LONG_ASSIGNMENT_CHANCE = 0.15;
+export const CONTINUOUS_LONG_ASSIGNMENT_MIN_MS = 15000;
+export const CONTINUOUS_LONG_ASSIGNMENT_MAX_MS = 20000;
+export const CONTINUOUS_EXPOSURE_TARGET_MS = 24000;
+export const CONTINUOUS_MIN_ASSIGNMENTS = 3;
+export const CONTINUOUS_MIN_ARENAS_PER_GENOME = 2;
+export const CONTINUOUS_MIN_OPPONENTS_PER_GENOME = 3;
+// Total probability that exactly one side of an assignment is drawn from the Hall of Fame.
+export const CONTINUOUS_HOF_MATCHUP_CHANCE = 0.20;
+export const CONTINUOUS_ARENA_MIN_LIFETIME_MS = 75000;
+export const CONTINUOUS_ARENA_MAX_LIFETIME_MS = 120000;
+export const CONTINUOUS_ARENA_MAX_BOUT_RESETS = 10;

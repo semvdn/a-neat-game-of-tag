@@ -31,7 +31,8 @@ import {
   TIME_TO_TAG_HISTORY_LENGTH,
   INITIAL_ELO,
   NEAT_HOF_MAX_SIZE,
-  NEAT_HOF_OPPONENTS_PER_GENOME,
+  CONTINUOUS_TRAINING_DEFAULT_ARENAS,
+  CONTINUOUS_HOF_MATCHUP_CHANCE,
 } from './constants';
 import { Activity, Play, Pause, FastForward, RotateCcw, MonitorPlay, Cpu } from 'lucide-react';
 
@@ -47,6 +48,7 @@ export const App: React.FC = () => {
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [visualSpeed, setVisualSpeed] = useState(1);
   const [workerSpeed, setWorkerSpeed] = useState(50);
+  const [trainingArenaCount, setTrainingArenaCount] = useState(CONTINUOUS_TRAINING_DEFAULT_ARENAS);
   const [isVisualPaused, setIsVisualPaused] = useState(false);
   const [isTrainingPaused, setIsTrainingPaused] = useState(false);
   const stepFrameRef = useRef(false);
@@ -71,7 +73,7 @@ export const App: React.FC = () => {
     chaserElo: INITIAL_ELO,
     evaderElo: INITIAL_ELO,
     eloLeaderboard: createLeaderboardEntries(INITIAL_ELO, INITIAL_ELO, 0, 0, 0, 0, 0),
-    hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: NEAT_HOF_MAX_SIZE, opponentsPerGenome: NEAT_HOF_OPPONENTS_PER_GENOME, chaserGenerations: [], evaderGenerations: [] },
+    hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: NEAT_HOF_MAX_SIZE, opponentsPerGenome: CONTINUOUS_HOF_MATCHUP_CHANCE, chaserGenerations: [], evaderGenerations: [] },
     lastGenerationBalance: null,
     balanceHistory: [],
   }));
@@ -378,7 +380,7 @@ export const App: React.FC = () => {
               lastGenerationBalance: balanceMetric || prev.lastGenerationBalance,
               balanceHistory: appendUnique(prev.balanceHistory, balanceMetric),
               curriculum: payload.curriculum || prev.curriculum,
-              trainingHorizon: payload.trainingHorizon || prev.trainingHorizon,
+              continuousTraining: payload.continuousTraining || prev.continuousTraining,
             };
           });
 
@@ -416,6 +418,7 @@ export const App: React.FC = () => {
       type: 'START',
       payload: {
         speedMultiplier: workerSpeed,
+        arenaCount: trainingArenaCount,
         chaserWeights: chaserAgent.current?.getWeights(),
         evaderWeights: evaderAgent.current?.getWeights(),
         chaserElo: chaserElo.current,
@@ -424,6 +427,12 @@ export const App: React.FC = () => {
       },
     });
   }, [workerSpeed, isTrainingPaused, isSimulating, viewportSize]);
+
+  // Arena count can be changed while training is running or paused without reseeding populations.
+  useEffect(() => {
+    if (!workerRef.current || !isSimulating) return;
+    workerRef.current.postMessage({ type: 'SET_ARENA_COUNT', payload: { arenaCount: trainingArenaCount } });
+  }, [trainingArenaCount, isSimulating]);
 
   const calculateReward = (
     agent: AgentState,
@@ -1025,11 +1034,11 @@ export const App: React.FC = () => {
       chaserElo: INITIAL_ELO,
       evaderElo: INITIAL_ELO,
       eloLeaderboard: createLeaderboardEntries(INITIAL_ELO, INITIAL_ELO, 0, 0, 0, 0, 0),
-      hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: NEAT_HOF_MAX_SIZE, opponentsPerGenome: NEAT_HOF_OPPONENTS_PER_GENOME, chaserGenerations: [], evaderGenerations: [] },
+      hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: NEAT_HOF_MAX_SIZE, opponentsPerGenome: CONTINUOUS_HOF_MATCHUP_CHANCE, chaserGenerations: [], evaderGenerations: [] },
       lastGenerationBalance: null,
       balanceHistory: [],
       curriculum: undefined,
-      trainingHorizon: undefined,
+      continuousTraining: undefined,
     }));
   };
 
@@ -1196,6 +1205,16 @@ export const App: React.FC = () => {
                 >{speed}x</button>
               ))}
             </div>
+            <div className="flex items-center gap-1 bg-gray-950 border border-gray-800 rounded-lg p-1" title="Number of persistent background training arenas">
+              <span className="text-[10px] uppercase tracking-wider text-violet-300 ml-1 mr-1">Arenas</span>
+              {[2, 4, 6, 8, 12, 16].map(count => (
+                <button
+                  key={count}
+                  onClick={() => setTrainingArenaCount(count)}
+                  className={`px-2 py-1 text-[11px] font-mono font-semibold rounded ${trainingArenaCount === count ? 'bg-violet-400 text-black' : 'text-gray-400 hover:text-violet-300 hover:bg-gray-900'}`}
+                >{count}</button>
+              ))}
+            </div>
             <button onClick={() => setIsTrainingPaused(p => !p)} className="p-2 rounded-lg border border-gray-700 text-amber-200 hover:bg-gray-800" title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>
               {isTrainingPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
             </button>
@@ -1279,6 +1298,8 @@ export const App: React.FC = () => {
         onSetVisualSpeed={setVisualSpeed}
         workerSpeed={workerSpeed}
         onSetWorkerSpeed={setWorkerSpeed}
+        trainingArenaCount={trainingArenaCount}
+        onSetTrainingArenaCount={setTrainingArenaCount}
         isVisualPaused={isVisualPaused}
         onToggleVisualPause={() => setIsVisualPaused(p => !p)}
         isTrainingPaused={isTrainingPaused}
