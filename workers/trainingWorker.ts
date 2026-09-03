@@ -23,7 +23,13 @@ import {
   NEAT_HOF_OPPONENTS_PER_GENOME,
   NEAT_HOF_MAX_SIZE,
   NEAT_HOF_RECENT_SLOTS,
-  NEAT_EPISODE_MAX_MS,
+  NEAT_MATCH_MIN_MS,
+  NEAT_MATCH_MAX_MS,
+  NEAT_SURVIVAL_MILESTONE_MS,
+  NEAT_TAG_POINT_WEIGHT,
+  NEAT_FALL_POINT_WEIGHT,
+  NEAT_TRAINING_COURSE_LENGTH,
+  TAG_COOLDOWN,
   NEAT_COMPATIBILITY_THRESHOLD,
   NEAT_TARGET_SPECIES,
   NEAT_CROSSOVER_RATE,
@@ -82,12 +88,20 @@ let evaderFitnessTotals = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
 let chaserFitnessCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
 let evaderFitnessCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
 let generationPopulationMatches = 0;
+let generationPopulationMatchesWithTag = 0;
 let generationPopulationTags = 0;
 let generationPopulationTagTimeMs = 0;
+let generationPopulationTagTimeCount = 0;
+let generationPopulationSurvivalStreakMs = 0;
+let generationPopulationSurvivalStreakCount = 0;
 let generationPopulationChaserFalls = 0;
 let generationPopulationEvaderFalls = 0;
 let generationPopulationDoubleFalls = 0;
 let generationPopulationTimeouts = 0;
+let generationPopulationChaserMatchWins = 0;
+let generationPopulationEvaderMatchWins = 0;
+let generationPopulationDraws = 0;
+let generationPopulationSimulatedMs = 0;
 let lastGenerationBalance: BalanceTelemetry | null = null;
 let curriculumState = createCurriculumState();
 let lastCurriculumTelemetry: CurriculumTelemetry = curriculumSnapshot(curriculumState);
@@ -103,6 +117,10 @@ let totalChaserFallTerminations = 0;
 let totalEvaderFallTerminations = 0;
 let totalDoubleFallTerminations = 0;
 let totalTimeouts = 0;
+let totalMatches = 0;
+let totalChaserMatchWins = 0;
+let totalEvaderMatchWins = 0;
+let totalMatchDraws = 0;
 let totalJumps = 0;
 let totalSimulatedTime = 0;
 let chaserElo = INITIAL_ELO;
@@ -141,12 +159,12 @@ function makeAgent(id: number, x: number, role: 'chaser' | 'evader'): AgentState
   };
 }
 
-function createEpisodeState(seed: number): { gameState: GameState; flowDirection: 1 | -1 } {
+function createMatchState(seed: number): { gameState: GameState; flowDirection: 1 | -1 } {
   const course = generateCourse({
     seed,
     difficulty: curriculumState.difficulty,
     viewport: viewportSize,
-    length: viewportSize.width + 7200,
+    length: NEAT_TRAINING_COURSE_LENGTH,
   });
   const features = countCourseFeatures(course.platforms);
   lastCourseSeed = seed >>> 0;
@@ -154,71 +172,176 @@ function createEpisodeState(seed: number): { gameState: GameState; flowDirection
   lastCourseMovingPlatforms = features.moving;
   lastCourseCrumblingPlatforms = features.crumbling;
 
-  return {
-    flowDirection: course.flowDirection,
-    gameState: {
-      agents: [
-        makeAgent(1, course.startXs[0], 'chaser'),
-        makeAgent(2, course.startXs[1], 'evader'),
-        makeAgent(3, course.startXs[2], 'evader'),
-      ],
-      platforms: course.platforms,
-      cameraPosition: { x: 0, y: 0 },
-      gameTime: 0,
-      tagEffects: [],
-      avgSurvivalTime: 0,
-      avgTimeToTag: 0,
-      courseGraph: course.graph,
-    },
+  const gameState: GameState = {
+    agents: [
+      makeAgent(1, course.startXs[0], 'chaser'),
+      makeAgent(2, course.startXs[1], 'evader'),
+      makeAgent(3, course.startXs[2], 'evader'),
+    ],
+    platforms: course.platforms,
+    cameraPosition: { x: 0, y: 0 },
+    gameTime: 0,
+    tagEffects: [],
+    avgSurvivalTime: 0,
+    avgTimeToTag: 0,
+    courseGraph: course.graph,
   };
+
+  return { gameState, flowDirection: course.flowDirection };
 }
 
-type EpisodeTermination = 'tag' | 'timeout' | 'chaser_fall' | 'evader_fall' | 'double_fall';
-
-interface EpisodeStats {
+interface MatchStats {
   chaserFitness: number;
   evaderFitness: number;
-  termination: EpisodeTermination;
-  tagged: boolean;
+  chaserPoints: number;
+  evaderPoints: number;
+  winner: 'chaser' | 'evader' | 'draw';
   elapsedMs: number;
+  tags: number;
+  chaserFalls: number;
+  evaderFalls: number;
+  doubleFalls: number;
   falls: number;
   jumps: number;
   navigationScore: number;
+  avgTagTimeMs: number | null;
+  avgSurvivalStreakMs: number | null;
   gameState: GameState;
 }
 
-function runEpisode(
+function cloneResettablePlatforms(platforms: GameState['platforms']): GameState['platforms'] {
+  return platforms.map(platform => ({
+    ...platform,
+    position: { ...(platform.basePosition ?? platform.position) },
+    active: true,
+    crumblePhase: platform.kind === 'crumbling' ? 'stable' : platform.crumblePhase,
+    crumble: platform.crumble
+      ? { ...platform.crumble, triggeredAt: undefined }
+      : undefined,
+  }));
+}
+
+function resetBoutAtRandomSection(
+  gameState: GameState,
+  flowDirection: 1 | -1,
+  rng: () => number,
+  preserveEnergy: boolean,
+) {
+  const currentIt = gameState.agents.find(agent => agent.status === AgentStatus.It) ?? gameState.agents[0];
+  const currentItId = currentIt.id;
+
+  // A bout reset restores temporary terrain state, but does not refill stamina. Falling therefore
+  // cannot be exploited as an energy-reset shortcut inside the longer evolutionary match.
+  gameState.platforms = cloneResettablePlatforms(gameState.platforms);
+  gameState.platforms = updateDynamicPlatforms(gameState.platforms, gameState.gameTime).platforms;
+
+  const backbone = gameState.platforms.filter(platform =>
+    (platform.routeRole === 'start' || platform.routeRole === 'backbone') && isPlatformSolid(platform)
+  );
+  if (backbone.length < 2) return;
+
+  // Sample across the first ~45% of the generated backbone. The training course is long enough that
+  // even a maximum-duration match retains substantial navigable terrain ahead of the group.
+  const maxAnchor = Math.max(0, Math.min(backbone.length - 2, Math.floor((backbone.length - 2) * 0.45)));
+  const anchorIndex = Math.floor(rng() * (maxAnchor + 1));
+  const chaserPlatform = backbone[anchorIndex];
+  const evaderPlatform = backbone[Math.min(backbone.length - 1, anchorIndex + 1)];
+  const evaders = gameState.agents.filter(agent => agent.id !== currentItId);
+
+  const placeOnPlatform = (agent: AgentState, platform: GameState['platforms'][number], ratio: number, role: 'chaser' | 'evader') => {
+    const physiology = getPhysiology(role);
+    const oldEnergy = agent.energy;
+    const usable = Math.max(AGENT_WIDTH + 8, platform.width - AGENT_WIDTH);
+    const x = platform.position.x + Math.max(4, Math.min(usable - 4, usable * ratio));
+    const y = platform.position.y - AGENT_HEIGHT;
+    agent.position = { x, y };
+    agent.velocity = { x: 0, y: 0 };
+    agent.acceleration = { x: 0, y: 0 };
+    agent.isOnGround = true;
+    agent.lastPlatformId = platform.id;
+    agent.maxEnergy = physiology.energyCapacity;
+    agent.energy = preserveEnergy ? Math.max(0, Math.min(agent.maxEnergy, oldEnergy)) : agent.maxEnergy;
+    agent.energyAtLastTakeoff = agent.energy;
+    agent.positionAtLastTakeoff = { x, y };
+    agent.survivalTime = 0;
+    agent.timeSinceBecameIt = 0;
+    agent.touchingCameraFrame = false;
+    agent.cameraFrameContact = null;
+    agent.role = role;
+    agent.modelId = role === 'chaser' ? 'current_chaser' : 'current_evader';
+    agent.elo = role === 'chaser' ? chaserElo : evaderElo;
+  };
+
+  placeOnPlatform(currentIt, chaserPlatform, flowDirection === 1 ? 0.68 : 0.32, 'chaser');
+  currentIt.status = AgentStatus.It;
+  currentIt.cooldownTimer = preserveEnergy ? 700 : 0;
+
+  evaders.forEach((agent, index) => {
+    const ratios = flowDirection === 1 ? [0.30, 0.72] : [0.70, 0.28];
+    placeOnPlatform(agent, evaderPlatform, ratios[index] ?? 0.5, 'evader');
+    agent.status = preserveEnergy ? AgentStatus.Cooldown : AgentStatus.Normal;
+    agent.cooldownTimer = preserveEnergy ? 850 : 0;
+  });
+
+  const minX = Math.min(...gameState.agents.map(agent => agent.position.x));
+  const maxX = Math.max(...gameState.agents.map(agent => agent.position.x + AGENT_WIDTH));
+  gameState.cameraPosition.x = (minX + maxX) / 2 - viewportSize.width / 2;
+  gameState.tagEffects = [];
+}
+
+function runMatch(
   chaser: LearningAgent,
   evader: LearningAgent,
   seed: number,
   trackActions: { chaser: boolean; evader: boolean } = { chaser: true, evader: true }
-): EpisodeStats {
-  const { gameState, flowDirection } = createEpisodeState(seed);
-  const chaserAgent = gameState.agents[0];
-  const evaders = gameState.agents.slice(1);
-  const initialClosestDistance = Math.min(...evaders.map(e => Math.hypot(e.position.x - chaserAgent.position.x, e.position.y - chaserAgent.position.y)));
-  const initialChaserX = chaserAgent.position.x;
-  const initialEvaderXs = evaders.map(e => e.position.x);
-  let maxChaserProgress = 0;
-  const maxEvaderProgress = initialEvaderXs.map(() => 0);
-  let cumulativeClosestDistance = 0;
-  let distanceSamples = 0;
+): MatchStats {
+  const { gameState, flowDirection } = createMatchState(seed);
+  const matchRng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
+  const matchDurationMs = NEAT_MATCH_MIN_MS + matchRng() * (NEAT_MATCH_MAX_MS - NEAT_MATCH_MIN_MS);
+  resetBoutAtRandomSection(gameState, flowDirection, matchRng, false);
+
+  let tags = 0;
   let chaserFalls = 0;
   let evaderFalls = 0;
+  let doubleFalls = 0;
   let chaserJumps = 0;
   let evaderJumps = 0;
-  let termination: EpisodeTermination | null = null;
-  const visitedPlatforms = new Map<number, Set<number>>();
-  gameState.agents.forEach(agent => visitedPlatforms.set(agent.id, new Set([agent.lastPlatformId ?? 0])));
+  let survivalMilestones = 0;
+  let platformTransitions = 0;
+  let cumulativeClosestDistance = 0;
+  let distanceSamples = 0;
+  const tagTimes: number[] = [];
+  const survivalStreaks: number[] = [];
 
-  const maxSteps = Math.ceil(NEAT_EPISODE_MAX_MS / DT);
+  const maxSteps = Math.ceil(matchDurationMs / DT);
 
-  for (let step = 0; step < maxSteps && termination === null; step++) {
-    gameState.gameTime += DT;
-    chaserAgent.timeSinceBecameIt += DT;
-    evaders.forEach(a => (a.survivalTime += DT));
+  for (let step = 0; step < maxSteps; step++) {
+    gameState.gameTime = Math.min(matchDurationMs, gameState.gameTime + DT);
 
-    // Advance dynamic terrain before perception. Grounded agents inherit platform motion.
+    // Advance cooldowns and role timers before perception. Survival milestones continue throughout
+    // the randomized match, so useful evasion remains valuable at 10s, 20s, 30s, ... rather than
+    // losing all selection pressure after a fixed first-tag horizon.
+    for (const agent of gameState.agents) {
+      agent.cooldownTimer = Math.max(0, (agent.cooldownTimer || 0) - DT);
+      if (agent.status === AgentStatus.Cooldown && agent.cooldownTimer === 0) {
+        agent.status = AgentStatus.Normal;
+      }
+
+      if (agent.status === AgentStatus.It) {
+        agent.timeSinceBecameIt = (agent.timeSinceBecameIt || 0) + DT;
+        agent.survivalTime = 0;
+      } else {
+        const previousSurvival = agent.survivalTime || 0;
+        const nextSurvival = previousSurvival + DT;
+        survivalMilestones += Math.max(
+          0,
+          Math.floor(nextSurvival / NEAT_SURVIVAL_MILESTONE_MS) - Math.floor(previousSurvival / NEAT_SURVIVAL_MILESTONE_MS),
+        );
+        agent.survivalTime = nextSurvival;
+        agent.timeSinceBecameIt = 0;
+      }
+    }
+
     const dynamicStep = updateDynamicPlatforms(gameState.platforms, gameState.gameTime);
     gameState.platforms = dynamicStep.platforms;
     for (const agent of gameState.agents) {
@@ -237,22 +360,24 @@ function runEpisode(
 
     const controlsByAgent = new Map<number, AgentControls>();
     for (const agent of gameState.agents) {
-      const controller = agent.id === 1 ? chaser : evader;
+      const role: 'chaser' | 'evader' = agent.status === AgentStatus.It ? 'chaser' : 'evader';
+      agent.role = role;
+      agent.modelId = role === 'chaser' ? 'current_chaser' : 'current_evader';
+      agent.elo = role === 'chaser' ? chaserElo : evaderElo;
+      const controller = role === 'chaser' ? chaser : evader;
       const state = getAgentStateVector(agent, gameState, viewportSize);
       const controls = controller.chooseControls(state);
       controlsByAgent.set(agent.id, controls);
-      const roleForTelemetry = agent.id === 1 ? 'chaser' : 'evader';
-      if (trackActions[roleForTelemetry]) {
-        const counter = roleForTelemetry === 'chaser' ? actionCountsChaser : actionCountsEvader;
+      if (trackActions[role]) {
+        const counter = role === 'chaser' ? actionCountsChaser : actionCountsEvader;
         counter[controls.action] = (counter[controls.action] || 0) + 1;
       }
     }
 
     const crumbleContacts = new Set<number>();
-    let chaserFellThisStep = false;
-    let evaderFellThisStep = false;
+    const fallenIds = new Set<number>();
     for (const agent of gameState.agents) {
-      const role: 'chaser' | 'evader' = agent.id === 1 ? 'chaser' : 'evader';
+      const role: 'chaser' | 'evader' = agent.status === AgentStatus.It ? 'chaser' : 'evader';
       const controls = controlsByAgent.get(agent.id) || {
         move: 0, jump: 0, sprint: 0, outputs: [0, 0, 0, 0], action: 'left_drive', actionIndex: 0, label: 'wait',
       };
@@ -266,7 +391,7 @@ function runEpisode(
 
       if (locomotion.jumped) {
         totalJumps++;
-        if (agent.id === 1) chaserJumps++;
+        if (role === 'chaser') chaserJumps++;
         else evaderJumps++;
       }
 
@@ -299,8 +424,8 @@ function runEpisode(
           nextPosition.y = platform.position.y - AGENT_HEIGHT;
           velocity.y = 0;
           grounded = true;
+          if (platform.id !== agent.lastPlatformId) platformTransitions++;
           landedPlatformId = platform.id;
-          visitedPlatforms.get(agent.id)?.add(platform.id);
           if (platform.kind === 'crumbling') crumbleContacts.add(platform.id);
           break;
         }
@@ -308,15 +433,7 @@ function runEpisode(
 
       if (nextPosition.y > FALL_BOUNDARY) {
         totalFalls++;
-        if (agent.id === 1) {
-          chaserFalls++;
-          chaserFellThisStep = true;
-        } else {
-          evaderFalls++;
-          evaderFellThisStep = true;
-        }
-        // Evolutionary evaluation has no respawn. Falling is a terminal terrain failure,
-        // so it can never be exploited as a teleport or free stamina refill.
+        fallenIds.add(agent.id);
         grounded = false;
       }
 
@@ -332,120 +449,154 @@ function runEpisode(
       );
     }
 
-    // Terrain failure takes precedence over tagging on the same physics tick. This prevents
-    // an agent from deliberately diving off the course at the instant a tag is imminent.
-    if (chaserFellThisStep && evaderFellThisStep) {
-      termination = 'double_fall';
-    } else if (chaserFellThisStep) {
-      termination = 'chaser_fall';
-    } else if (evaderFellThisStep) {
-      termination = 'evader_fall';
+    // A fall ends only the current bout. It is more costly than a tag, and resetting the bout does
+    // not refill stamina, so jumping into the void cannot become a rational escape/reset strategy.
+    if (fallenIds.size > 0) {
+      const currentIt = gameState.agents.find(agent => agent.status === AgentStatus.It);
+      const chaserFell = currentIt ? fallenIds.has(currentIt.id) : false;
+      const evadersFell = gameState.agents.filter(agent => agent.status !== AgentStatus.It && fallenIds.has(agent.id)).length;
+      if (chaserFell) chaserFalls++;
+      if (evadersFell > 0) evaderFalls += evadersFell;
+      if (chaserFell && evadersFell > 0) doubleFalls++;
+
+      resetBoutAtRandomSection(gameState, flowDirection, matchRng, true);
+      continue;
     }
 
-    // Tag ends the episode. Roles never swap during evolutionary evaluation.
-    if (termination === null) {
-      for (const evaderAgent of evaders) {
-        const dx = (chaserAgent.position.x + AGENT_WIDTH / 2) - (evaderAgent.position.x + AGENT_WIDTH / 2);
-        const dy = (chaserAgent.position.y + AGENT_HEIGHT / 2) - (evaderAgent.position.y + AGENT_HEIGHT / 2);
-        if (Math.hypot(dx, dy) < (AGENT_WIDTH + AGENT_HEIGHT) / 2) {
-          termination = 'tag';
-          totalTags++;
-          break;
-        }
+    // Tagging mirrors visual play: the tagged runner becomes It, the old chaser becomes an evader,
+    // and the match continues. The role-level genome always controls whichever body currently has
+    // that role, exposing both networks to post-tag states during evolution.
+    const itAgent = gameState.agents.find(agent => agent.status === AgentStatus.It);
+    if (itAgent && (itAgent.cooldownTimer || 0) <= 0) {
+      for (const otherAgent of gameState.agents) {
+        if (
+          otherAgent.id === itAgent.id ||
+          otherAgent.status === AgentStatus.It ||
+          (otherAgent.cooldownTimer || 0) > 0
+        ) continue;
+
+        const dx = (itAgent.position.x + AGENT_WIDTH / 2) - (otherAgent.position.x + AGENT_WIDTH / 2);
+        const dy = (itAgent.position.y + AGENT_HEIGHT / 2) - (otherAgent.position.y + AGENT_HEIGHT / 2);
+        if (Math.hypot(dx, dy) >= (AGENT_WIDTH + AGENT_HEIGHT) / 2) continue;
+
+        tags++;
+        totalTags++;
+        tagTimes.push(Math.max(100, itAgent.timeSinceBecameIt || 0));
+        survivalStreaks.push(Math.max(100, otherAgent.survivalTime || 0));
+
+        const oldTagger = itAgent;
+        const newTagger = otherAgent;
+
+        newTagger.status = AgentStatus.It;
+        newTagger.role = 'chaser';
+        newTagger.modelId = 'current_chaser';
+        newTagger.elo = chaserElo;
+        newTagger.cooldownTimer = 600;
+        newTagger.survivalTime = 0;
+        newTagger.timeSinceBecameIt = 0;
+        newTagger.maxEnergy = getPhysiology('chaser').energyCapacity;
+        newTagger.energy = Math.min(newTagger.energy, newTagger.maxEnergy);
+
+        oldTagger.status = AgentStatus.Cooldown;
+        oldTagger.role = 'evader';
+        oldTagger.modelId = 'current_evader';
+        oldTagger.elo = evaderElo;
+        oldTagger.cooldownTimer = TAG_COOLDOWN;
+        oldTagger.survivalTime = 0;
+        oldTagger.timeSinceBecameIt = 0;
+        oldTagger.maxEnergy = getPhysiology('evader').energyCapacity;
+        oldTagger.energy = Math.min(oldTagger.energy, oldTagger.maxEnergy);
+        break;
       }
     }
 
-    const minX = Math.min(...evaders.map(a => a.position.x));
-    const maxX = Math.max(...evaders.map(a => a.position.x + AGENT_WIDTH));
-    const desiredCameraX = (minX + maxX) / 2 - viewportSize.width * 0.45;
-    gameState.cameraPosition.x += (desiredCameraX - gameState.cameraPosition.x) * 0.12;
+    const activeIt = gameState.agents.find(agent => agent.status === AgentStatus.It);
+    const activeEvaders = gameState.agents.filter(agent => agent.status !== AgentStatus.It);
+    if (activeIt && activeEvaders.length > 0) {
+      const closestDistance = Math.min(...activeEvaders.map(agent =>
+        Math.hypot(agent.position.x - activeIt.position.x, agent.position.y - activeIt.position.y)
+      ));
+      cumulativeClosestDistance += closestDistance;
+      distanceSamples++;
 
-    const closestDistance = Math.min(...evaders.map(e => Math.hypot(e.position.x - chaserAgent.position.x, e.position.y - chaserAgent.position.y)));
-    cumulativeClosestDistance += closestDistance;
-    distanceSamples++;
-    maxChaserProgress = Math.max(maxChaserProgress, flowDirection * (chaserAgent.position.x - initialChaserX));
-    evaders.forEach((e, i) => {
-      maxEvaderProgress[i] = Math.max(maxEvaderProgress[i], flowDirection * (e.position.x - initialEvaderXs[i]));
-    });
+      const minX = Math.min(...activeEvaders.map(agent => agent.position.x));
+      const maxX = Math.max(...activeEvaders.map(agent => agent.position.x + AGENT_WIDTH));
+      const desiredCameraX = (minX + maxX) / 2 - viewportSize.width * 0.45;
+      gameState.cameraPosition.x += (desiredCameraX - gameState.cameraPosition.x) * 0.12;
+    }
+
+    if (gameState.gameTime >= matchDurationMs) break;
   }
 
-  if (termination === null) termination = 'timeout';
-  const tagged = termination === 'tag';
-  const elapsedMs = gameState.gameTime;
+  const finalEvaders = gameState.agents.filter(agent => agent.status !== AgentStatus.It);
+  finalEvaders.forEach(agent => survivalStreaks.push(Math.max(100, agent.survivalTime || 0)));
+
+  const elapsedMs = matchDurationMs;
   const elapsedSec = elapsedMs / 1000;
-  const maxSec = NEAT_EPISODE_MAX_MS / 1000;
-  const finalClosestDistance = Math.min(...evaders.map(e => Math.hypot(e.position.x - chaserAgent.position.x, e.position.y - chaserAgent.position.y)));
-  const averageDistance = cumulativeClosestDistance / Math.max(1, distanceSamples);
-  const closingGain = initialClosestDistance - finalClosestDistance;
-  const chaserProgress = Math.max(0, maxChaserProgress);
-  const evaderProgress = maxEvaderProgress.reduce((sum, progress) => sum + Math.max(0, progress), 0) / evaders.length;
-  const totalPlatformTransitions = Array.from(visitedPlatforms.values()).reduce(
-    (sum, visited) => sum + Math.max(0, visited.size - 1),
-    0,
-  );
-  const traversalScore = Math.max(0, Math.min(1, totalPlatformTransitions / Math.max(1, elapsedSec * gameState.agents.length * 0.22)));
-  const noFallScore = Math.max(0, 1 - (chaserFalls + evaderFalls) / Math.max(1, gameState.agents.length));
-  const progressScore = Math.max(
-    0,
-    Math.min(1, ((chaserProgress + evaderProgress) / 2) / Math.max(120, elapsedSec * 135)),
-  );
-  const navigationScore = 0.45 * traversalScore + 0.35 * noFallScore + 0.20 * progressScore;
+  const fallEvents = chaserFalls + evaderFalls;
+  const chaserPoints = tags * NEAT_TAG_POINT_WEIGHT + evaderFalls * NEAT_FALL_POINT_WEIGHT;
+  const evaderPoints = survivalMilestones + chaserFalls * NEAT_FALL_POINT_WEIGHT;
+  const totalPoints = chaserPoints + evaderPoints;
+  const chaserShare = totalPoints > 0 ? chaserPoints / totalPoints : 0.5;
+  const evaderShare = 1 - chaserShare;
 
-  // Shared outcome scale with an explicit terrain-failure floor. A normally tagged runner
-  // always receives at least 20 fitness, while a fall receives 0.01. This makes deliberate
-  // self-elimination strictly worse than accepting even an immediate tag.
-  const timeFraction = Math.max(0, Math.min(1, elapsedSec / Math.max(1e-6, maxSec)));
-  const closingNorm = Math.max(-1, Math.min(1, closingGain / Math.max(150, initialClosestDistance)));
-  const chaserProgressNorm = Math.max(0, Math.min(1, chaserProgress / 600));
-  const evaderProgressNorm = Math.max(0, Math.min(1, evaderProgress / 600));
+  const averageClosestDistance = cumulativeClosestDistance / Math.max(1, distanceSamples);
+  const separationScore = Math.max(0, Math.min(1, averageClosestDistance / 620));
+  const traversalScore = Math.max(0, Math.min(1, platformTransitions / Math.max(1, elapsedSec * gameState.agents.length * 0.18)));
+  const fallEventRate = fallEvents / Math.max(1, tags + fallEvents);
+  const noFallScore = Math.max(0, 1 - fallEventRate);
+  const navigationScore = 0.65 * traversalScore + 0.35 * noFallScore;
 
-  let chaserFitness: number;
-  let evaderFitness: number;
+  // The main score is a symmetric share of repeated competitive events over the whole match.
+  // Distance and navigation shaping are intentionally small so repeated tags / long survival streaks
+  // remain the dominant evolutionary objective.
+  const chaserOutcome = 25 + 185 * chaserShare;
+  const evaderOutcome = 25 + 185 * evaderShare;
+  const chaserFitness = Math.max(0.01, Math.min(220, chaserOutcome + 8 * (1 - separationScore) + 4 * navigationScore));
+  const evaderFitness = Math.max(0.01, Math.min(220, evaderOutcome + 8 * separationScore + 4 * navigationScore));
+  const winner: MatchStats['winner'] = chaserPoints > evaderPoints + 1e-9
+    ? 'chaser'
+    : evaderPoints > chaserPoints + 1e-9
+      ? 'evader'
+      : 'draw';
 
-  if (termination === 'chaser_fall') {
-    chaserFitness = 0.01;
-    evaderFitness = 220;
-  } else if (termination === 'evader_fall') {
-    chaserFitness = 220;
-    evaderFitness = 0.01;
-  } else if (termination === 'double_fall') {
-    // No side should benefit from a mutually catastrophic trajectory.
-    chaserFitness = 0.01;
-    evaderFitness = 0.01;
-  } else {
-    const chaserOutcome = tagged ? 120 + 100 * (1 - timeFraction) : 20;
-    const evaderOutcome = tagged ? 20 + 100 * timeFraction : 220;
+  const avgTagTimeMs = tagTimes.length ? tagTimes.reduce((a, b) => a + b, 0) / tagTimes.length : null;
+  const avgSurvivalStreakMs = survivalStreaks.length
+    ? survivalStreaks.reduce((a, b) => a + b, 0) / survivalStreaks.length
+    : null;
 
-    // Shaping remains deliberately small and is only applied to valid navigation outcomes.
-    // There is no jump reward and no energy-conservation reward.
-    const chaserShaping = 10 * closingNorm + 5 * chaserProgressNorm;
-    const evaderShaping = -10 * closingNorm + 5 * evaderProgressNorm;
+  if (chaserFalls > 0) totalChaserFallTerminations += chaserFalls;
+  if (evaderFalls > 0) totalEvaderFallTerminations += evaderFalls;
+  if (doubleFalls > 0) totalDoubleFallTerminations += doubleFalls;
+  if (tags === 0) totalTimeouts++;
+  totalMatches++;
+  if (winner === 'chaser') totalChaserMatchWins++;
+  else if (winner === 'evader') totalEvaderMatchWins++;
+  else totalMatchDraws++;
 
-    chaserFitness = Math.max(0.01, Math.min(220, chaserOutcome + chaserShaping));
-    evaderFitness = Math.max(0.01, Math.min(220, evaderOutcome + evaderShaping));
-  }
-
-  if (termination === 'chaser_fall') totalChaserFallTerminations++;
-  else if (termination === 'evader_fall') totalEvaderFallTerminations++;
-  else if (termination === 'double_fall') totalDoubleFallTerminations++;
-  else if (termination === 'timeout') totalTimeouts++;
-
-  gameState.avgSurvivalTime = elapsedMs;
-  gameState.avgTimeToTag = tagged ? elapsedMs : NEAT_EPISODE_MAX_MS;
-  gameState.agents.forEach(a => {
-    a.stateVector = getAgentStateVector(a, gameState, viewportSize);
-    a.elo = a.id === 1 ? chaserElo : evaderElo;
+  gameState.avgSurvivalTime = avgSurvivalStreakMs ?? elapsedMs;
+  gameState.avgTimeToTag = avgTagTimeMs ?? elapsedMs;
+  gameState.agents.forEach(agent => {
+    agent.stateVector = getAgentStateVector(agent, gameState, viewportSize);
+    agent.elo = agent.status === AgentStatus.It ? chaserElo : evaderElo;
   });
 
   return {
     chaserFitness,
     evaderFitness,
-    termination,
-    tagged,
+    chaserPoints,
+    evaderPoints,
+    winner,
     elapsedMs,
-    falls: chaserFalls + evaderFalls,
+    tags,
+    chaserFalls,
+    evaderFalls,
+    doubleFalls,
+    falls: fallEvents,
     jumps: chaserJumps + evaderJumps,
     navigationScore,
+    avgTagTimeMs,
+    avgSurvivalStreakMs,
     gameState,
   };
 }
@@ -512,30 +663,43 @@ function resetEvaluationAccumulators() {
   chaserFitnessCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
   evaderFitnessCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
   generationPopulationMatches = 0;
+  generationPopulationMatchesWithTag = 0;
   generationPopulationTags = 0;
   generationPopulationTagTimeMs = 0;
+  generationPopulationTagTimeCount = 0;
+  generationPopulationSurvivalStreakMs = 0;
+  generationPopulationSurvivalStreakCount = 0;
   generationPopulationChaserFalls = 0;
   generationPopulationEvaderFalls = 0;
   generationPopulationDoubleFalls = 0;
   generationPopulationTimeouts = 0;
+  generationPopulationChaserMatchWins = 0;
+  generationPopulationEvaderMatchWins = 0;
+  generationPopulationDraws = 0;
+  generationPopulationSimulatedMs = 0;
   generationNavigationScoreTotal = 0;
 }
 
-function recordEpisodeTelemetry(result: EpisodeStats, currentPopulationMatch = true) {
+function recordMatchTelemetry(result: MatchStats, currentPopulationMatch = true) {
   totalSimulatedTime += result.elapsedMs;
-  recentSurvivalTimes.push(result.elapsedMs);
-  if (recentSurvivalTimes.length > SURVIVAL_TIME_HISTORY_LENGTH) recentSurvivalTimes.shift();
-  if (result.tagged) {
-    recentTimesToTag.push(result.elapsedMs);
+  if (result.avgSurvivalStreakMs != null) {
+    recentSurvivalTimes.push(result.avgSurvivalStreakMs);
+    if (recentSurvivalTimes.length > SURVIVAL_TIME_HISTORY_LENGTH) recentSurvivalTimes.shift();
+  }
+  if (result.avgTagTimeMs != null) {
+    recentTimesToTag.push(result.avgTagTimeMs);
     if (recentTimesToTag.length > TIME_TO_TAG_HISTORY_LENGTH) recentTimesToTag.shift();
   }
   if (currentPopulationMatch) {
-    const forcedResult = result.termination === 'tag' || result.termination === 'evader_fall'
-      ? 'chaser'
-      : result.termination === 'double_fall'
-        ? 'draw'
-        : 'evader';
-    const eloResult = updateEloRatings(chaserElo, evaderElo, result.elapsedMs, undefined, result.tagged, forcedResult);
+    const forcedResult = result.winner;
+    const eloResult = updateEloRatings(
+      chaserElo,
+      evaderElo,
+      result.elapsedMs,
+      undefined,
+      result.tags > 0,
+      forcedResult,
+    );
     chaserElo = eloResult.newChaserElo;
     evaderElo = eloResult.newEvaderElo;
     lastSampleGameState = result.gameState;
@@ -550,27 +714,34 @@ function evaluateNextMatch(): boolean {
     // Rotating opponents prevents index-lock coevolution while keeping every role equally sampled.
     const evaderIndex = (evaluationIndex + evaluationRound * 17 + chaserPopulation.generation * 7) % n;
     const environmentSeed = chaserPopulation.generation * 100003 + evaluationRound * 7919;
-    const result = runEpisode(chaserControllers[chaserIndex], evaderControllers[evaderIndex], environmentSeed);
+    const result = runMatch(chaserControllers[chaserIndex], evaderControllers[evaderIndex], environmentSeed);
 
     chaserFitnessTotals[chaserIndex] += result.chaserFitness;
     chaserFitnessCounts[chaserIndex]++;
     evaderFitnessTotals[evaderIndex] += result.evaderFitness;
     evaderFitnessCounts[evaderIndex]++;
+
     generationPopulationMatches++;
+    generationPopulationSimulatedMs += result.elapsedMs;
     generationNavigationScoreTotal += result.navigationScore;
-    if (result.termination === 'tag') {
-      generationPopulationTags++;
-      generationPopulationTagTimeMs += result.elapsedMs;
-    } else if (result.termination === 'chaser_fall') {
-      generationPopulationChaserFalls++;
-    } else if (result.termination === 'evader_fall') {
-      generationPopulationEvaderFalls++;
-    } else if (result.termination === 'double_fall') {
-      generationPopulationDoubleFalls++;
-    } else {
-      generationPopulationTimeouts++;
+    generationPopulationTags += result.tags;
+    if (result.tags > 0) generationPopulationMatchesWithTag++;
+    else generationPopulationTimeouts++;
+    generationPopulationChaserFalls += result.chaserFalls;
+    generationPopulationEvaderFalls += result.evaderFalls;
+    generationPopulationDoubleFalls += result.doubleFalls;
+    if (result.avgTagTimeMs != null && result.tags > 0) {
+      generationPopulationTagTimeMs += result.avgTagTimeMs * result.tags;
+      generationPopulationTagTimeCount += result.tags;
     }
-    recordEpisodeTelemetry(result);
+    if (result.avgSurvivalStreakMs != null) {
+      generationPopulationSurvivalStreakMs += result.avgSurvivalStreakMs;
+      generationPopulationSurvivalStreakCount++;
+    }
+    if (result.winner === 'chaser') generationPopulationChaserMatchWins++;
+    else if (result.winner === 'evader') generationPopulationEvaderMatchWins++;
+    else generationPopulationDraws++;
+    recordMatchTelemetry(result);
 
     evaluationIndex++;
     if (evaluationIndex >= n) {
@@ -596,10 +767,10 @@ function evaluateNextMatch(): boolean {
     const opponent = selectHallOpponent(evaderHallOfFame, evaluationIndex, evaluationRound, chaserPopulation.generation);
     if (opponent) {
       const environmentSeed = chaserPopulation.generation * 200003 + evaluationRound * 12011 + 101;
-      const result = runEpisode(chaserControllers[evaluationIndex], opponent.controller, environmentSeed, { chaser: true, evader: false });
+      const result = runMatch(chaserControllers[evaluationIndex], opponent.controller, environmentSeed, { chaser: true, evader: false });
       chaserFitnessTotals[evaluationIndex] += result.chaserFitness;
       chaserFitnessCounts[evaluationIndex]++;
-      recordEpisodeTelemetry(result, false);
+      recordMatchTelemetry(result, false);
     }
 
     evaluationIndex++;
@@ -620,10 +791,10 @@ function evaluateNextMatch(): boolean {
   const opponent = selectHallOpponent(chaserHallOfFame, evaluationIndex, evaluationRound, evaderPopulation.generation);
   if (opponent) {
     const environmentSeed = evaderPopulation.generation * 300007 + evaluationRound * 16001 + 211;
-    const result = runEpisode(opponent.controller, evaderControllers[evaluationIndex], environmentSeed, { chaser: false, evader: true });
+    const result = runMatch(opponent.controller, evaderControllers[evaluationIndex], environmentSeed, { chaser: false, evader: true });
     evaderFitnessTotals[evaluationIndex] += result.evaderFitness;
     evaderFitnessCounts[evaluationIndex]++;
-    recordEpisodeTelemetry(result, false);
+    recordMatchTelemetry(result, false);
   }
 
   evaluationIndex++;
@@ -637,27 +808,37 @@ function evaluateNextMatch(): boolean {
 function finishGeneration() {
   const evaluatedGeneration = chaserPopulation.generation;
   const matchDenominator = Math.max(1, generationPopulationMatches);
-  const chaserWins = generationPopulationTags + generationPopulationEvaderFalls;
-  const evaderWins = generationPopulationTimeouts + generationPopulationChaserFalls;
-  const fallTerminations = generationPopulationChaserFalls + generationPopulationEvaderFalls + generationPopulationDoubleFalls;
+  const fallEvents = generationPopulationChaserFalls + generationPopulationEvaderFalls;
+  const boutEvents = Math.max(1, generationPopulationTags + fallEvents);
+  const tagsPer30s = generationPopulationTags * 30000 / Math.max(1, generationPopulationSimulatedMs);
+
   lastGenerationBalance = {
     generation: evaluatedGeneration,
     matches: generationPopulationMatches,
     tags: generationPopulationTags,
+    matchesWithTag: generationPopulationMatchesWithTag,
     timeouts: generationPopulationTimeouts,
     chaserFalls: generationPopulationChaserFalls,
     evaderFalls: generationPopulationEvaderFalls,
     doubleFalls: generationPopulationDoubleFalls,
-    tagRate: generationPopulationTags / matchDenominator,
+    tagRate: generationPopulationMatchesWithTag / matchDenominator,
     survivalRate: generationPopulationTimeouts / matchDenominator,
-    fallRate: fallTerminations / matchDenominator,
-    chaserWinRate: chaserWins / matchDenominator,
-    evaderWinRate: evaderWins / matchDenominator,
-    avgTagTimeMs: generationPopulationTags > 0 ? generationPopulationTagTimeMs / generationPopulationTags : null,
+    fallRate: fallEvents / boutEvents,
+    chaserWinRate: generationPopulationChaserMatchWins / matchDenominator,
+    evaderWinRate: generationPopulationEvaderMatchWins / matchDenominator,
+    drawRate: generationPopulationDraws / matchDenominator,
+    tagsPer30s,
+    avgTagsPerMatch: generationPopulationTags / matchDenominator,
+    avgSurvivalStreakMs: generationPopulationSurvivalStreakCount > 0
+      ? generationPopulationSurvivalStreakMs / generationPopulationSurvivalStreakCount
+      : null,
+    avgTagTimeMs: generationPopulationTagTimeCount > 0
+      ? generationPopulationTagTimeMs / generationPopulationTagTimeCount
+      : null,
   };
 
   const navigationScore = generationNavigationScoreTotal / matchDenominator;
-  const fallTerminationRate = fallTerminations / matchDenominator;
+  const fallTerminationRate = fallEvents / boutEvents;
   const curriculum = advanceCurriculum(curriculumState, { navigationScore, fallTerminationRate });
   lastCurriculumTelemetry = {
     ...curriculum,
@@ -729,6 +910,10 @@ function emitTelemetry() {
       evaderFalls: totalEvaderFallTerminations,
       timeouts: totalTimeouts,
       doubleFalls: totalDoubleFallTerminations,
+      matches: totalMatches,
+      chaserMatchWins: totalChaserMatchWins,
+      evaderMatchWins: totalEvaderMatchWins,
+      draws: totalMatchDraws,
     }
   );
 
@@ -869,6 +1054,10 @@ self.onmessage = (event: MessageEvent) => {
       totalEvaderFallTerminations = 0;
       totalDoubleFallTerminations = 0;
       totalTimeouts = 0;
+      totalMatches = 0;
+      totalChaserMatchWins = 0;
+      totalEvaderMatchWins = 0;
+      totalMatchDraws = 0;
       totalJumps = 0;
       totalSimulatedTime = 0;
       chaserElo = INITIAL_ELO;

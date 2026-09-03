@@ -161,15 +161,28 @@ export interface BalanceTelemetry {
   generation: number;
   matches: number;
   tags: number;
+  /** Matches containing at least one tag. */
+  matchesWithTag: number;
+  /** Matches that reached the randomized horizon without a single tag. */
   timeouts: number;
   chaserFalls: number;
   evaderFalls: number;
   doubleFalls: number;
+  /** Fraction of long matches containing at least one tag. */
   tagRate: number;
+  /** Fraction of long matches with no tags at all. */
   survivalRate: number;
+  /** Fraction of bout-ending events caused by terrain failure rather than tags. */
   fallRate: number;
   chaserWinRate: number;
   evaderWinRate: number;
+  drawRate: number;
+  /** Tag events normalized to 30 seconds of simulated match time. */
+  tagsPer30s: number;
+  avgTagsPerMatch: number;
+  /** Mean uninterrupted evader survival streak sampled at tags and match end. */
+  avgSurvivalStreakMs: number | null;
+  /** Mean time that the current chaser had been It before a successful tag. */
   avgTagTimeMs: number | null;
 }
 

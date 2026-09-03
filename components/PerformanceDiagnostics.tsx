@@ -276,11 +276,11 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <MetricCard label="Generation" value={generation} hint="one full population evaluation" />
               <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} hint="same 0–220 scale as runner" />
               <MetricCard label="Runner best" value={fmt(evaderMetrics?.bestFitness)} hint="same 0–220 scale as chaser" />
-              <MetricCard label="Species C / R" value={`${chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.speciesCount ?? '—'}`} />
-              <MetricCard label="Chaser win" value={balance ? `${(balance.chaserWinRate * 100).toFixed(1)}%` : '—'} hint="tag or runner fall" />
-              <MetricCard label="Runner win" value={balance ? `${(balance.evaderWinRate * 100).toFixed(1)}%` : '—'} hint="timeout or chaser fall" />
-              <MetricCard label="Fall-ended" value={balance ? `${(balance.fallRate * 100).toFixed(1)}%` : '—'} hint={balance ? `${balance.chaserFalls} chaser / ${balance.evaderFalls} runner` : 'terrain failures'} />
-              <MetricCard label="Avg tag time" value={balance?.avgTagTimeMs != null ? `${(balance.avgTagTimeMs / 1000).toFixed(2)}s` : '—'} hint={balance ? `${balance.matches} matches` : 'when a tag occurs'} />
+              <MetricCard label="Tags / 30s" value={balance ? balance.tagsPer30s.toFixed(2) : '—'} hint={balance ? `${balance.avgTagsPerMatch.toFixed(2)} per long match` : 'repeated tags'} />
+              <MetricCard label="Chaser match win" value={balance ? `${(balance.chaserWinRate * 100).toFixed(1)}%` : '—'} hint="whole-match point score" />
+              <MetricCard label="Runner match win" value={balance ? `${(balance.evaderWinRate * 100).toFixed(1)}%` : '—'} hint="whole-match point score" />
+              <MetricCard label="Fall event share" value={balance ? `${(balance.fallRate * 100).toFixed(1)}%` : '—'} hint={balance ? `${balance.chaserFalls} chaser / ${balance.evaderFalls} runner falls` : 'of tag + fall bout endings'} />
+              <MetricCard label="Avg survival streak" value={balance?.avgSurvivalStreakMs != null ? `${(balance.avgSurvivalStreakMs / 1000).toFixed(1)}s` : '—'} hint={balance?.avgTagTimeMs != null ? `avg tag interval ${(balance.avgTagTimeMs / 1000).toFixed(1)}s` : 'uninterrupted evasion'} />
             </div>
 
             <div className="grid lg:grid-cols-2 gap-4">
@@ -303,7 +303,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               </div>
               <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
                 <MetricCard label="Navigation" value={curriculum ? `${(curriculum.lastNavigationScore * 100).toFixed(0)}%` : '—'} hint="last generation" />
-                <MetricCard label="Fall endings" value={curriculum ? `${(curriculum.lastFallTerminationRate * 100).toFixed(1)}%` : '—'} hint="matches ended by terrain failure" />
+                <MetricCard label="Fall endings" value={curriculum ? `${(curriculum.lastFallTerminationRate * 100).toFixed(1)}%` : '—'} hint="share of tag + fall bout endings" />
                 <MetricCard label="Branches" value={curriculum?.branchesUnlocked ? 'ON' : 'locked'} hint={curriculum?.lastCourseBranchCount != null ? `${curriculum.lastCourseBranchCount} in sampled course` : undefined} />
                 <MetricCard label="Moving" value={curriculum?.movingUnlocked ? 'ON' : 'locked'} hint={curriculum?.lastCourseMovingPlatforms != null ? `${curriculum.lastCourseMovingPlatforms} platforms` : undefined} />
                 <MetricCard label="Crumbling" value={curriculum?.crumblingUnlocked ? 'ON' : 'locked'} hint={curriculum?.lastCourseCrumblingPlatforms != null ? `${curriculum.lastCourseCrumblingPlatforms} platforms` : undefined} />
@@ -320,18 +320,18 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-cyan-300" /><h3 className="font-semibold text-white">Game balance by generation</h3></div>
               <LineChart
                 series={[
-                  { label: 'Tag %', values: balanceHistory.map(m => m.tagRate * 100) },
-                  { label: 'Runner timeout %', values: balanceHistory.map(m => m.survivalRate * 100) },
-                  { label: 'Chaser fall %', values: balanceHistory.map(m => (m.chaserFalls / Math.max(1, m.matches)) * 100) },
-                  { label: 'Runner fall %', values: balanceHistory.map(m => (m.evaderFalls / Math.max(1, m.matches)) * 100) },
+                  { label: 'Chaser match win %', values: balanceHistory.map(m => m.chaserWinRate * 100) },
+                  { label: 'Runner match win %', values: balanceHistory.map(m => m.evaderWinRate * 100) },
+                  { label: 'No-tag match %', values: balanceHistory.map(m => m.survivalRate * 100) },
+                  { label: 'Fall event %', values: balanceHistory.map(m => m.fallRate * 100) },
                 ]}
                 emptyLabel="Complete generations to populate the balance chart."
               />
-              <p className="mt-2 text-xs text-gray-500">Current-population matches only. A fall is a terminal loss in evolutionary evaluation; Hall-of-Fame tests remain excluded from this balance signal.</p>
+              <p className="mt-2 text-xs text-gray-500">Current-population matches only. Each evaluation is a randomized 28–42s continuing match with repeated tags and bout resets after falls; Hall-of-Fame tests remain excluded from this balance signal.</p>
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> both roles have identical physical abilities and evolve against rotating current opponents plus Hall-of-Fame champions. Episodes use seeded course graphs with a guaranteed reachable backbone; as navigation competence rises the curriculum unlocks branch/rejoin routes, moving platforms and contact-triggered crumbling platforms. Training falls are terminal losses, so neither role can exploit the void as a teleport, stamina refill or escape from an imminent tag.
+              <strong className="text-violet-200">Training architecture:</strong> both roles have identical physical abilities and evolve against rotating current opponents plus Hall-of-Fame champions. Evaluations are randomized 28–42 second 1v2 continuing matches: tags swap roles exactly like visual play, and the match continues. Evaders earn survival milestones every 10 uninterrupted seconds; falls end only the current bout, cost more than a tag, preserve stamina, and restart the group at another valid procedural-course section.
             </div>
           </div>
         )}

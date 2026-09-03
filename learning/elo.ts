@@ -88,14 +88,18 @@ export function createLeaderboardEntries(
   generation: number,
   avgTimeToTagMs: number,
   avgSurvivalTimeMs: number,
-  outcomeCounts?: { tags: number; chaserFalls: number; evaderFalls: number; timeouts: number; doubleFalls: number }
+  outcomeCounts?: { tags: number; chaserFalls: number; evaderFalls: number; timeouts: number; doubleFalls: number; matches?: number; chaserMatchWins?: number; evaderMatchWins?: number; draws?: number }
 ) {
   const matches = outcomeCounts
-    ? outcomeCounts.tags + outcomeCounts.chaserFalls + outcomeCounts.evaderFalls + outcomeCounts.timeouts + outcomeCounts.doubleFalls
+    ? outcomeCounts.matches ?? (outcomeCounts.tags + outcomeCounts.chaserFalls + outcomeCounts.evaderFalls + outcomeCounts.timeouts + outcomeCounts.doubleFalls)
     : totalTags + totalFalls;
-  const chaserWins = outcomeCounts ? outcomeCounts.tags + outcomeCounts.evaderFalls : totalTags;
-  const evaderWins = outcomeCounts ? outcomeCounts.timeouts + outcomeCounts.chaserFalls : totalFalls;
-  const draws = outcomeCounts ? outcomeCounts.doubleFalls : 0;
+  const chaserWins = outcomeCounts
+    ? outcomeCounts.chaserMatchWins ?? (outcomeCounts.tags + outcomeCounts.evaderFalls)
+    : totalTags;
+  const evaderWins = outcomeCounts
+    ? outcomeCounts.evaderMatchWins ?? (outcomeCounts.timeouts + outcomeCounts.chaserFalls)
+    : totalFalls;
+  const draws = outcomeCounts ? outcomeCounts.draws ?? outcomeCounts.doubleFalls : 0;
   return [
     {
       id: 'current_chaser',

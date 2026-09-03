@@ -17,6 +17,7 @@ import type {
   DiagnosticsState,
   PerformanceDataPoint,
   EloLeaderboardEntry,
+  PlatformState,
 } from './types';
 import { AgentStatus } from './types';
 import {
@@ -49,6 +50,7 @@ export const App: React.FC = () => {
   const [simulationSpeed, setSimulationSpeed] = useState(1);
   const [isPaused, setIsPaused] = useState(false);
   const stepFrameRef = useRef(false);
+  const visualFlowDirectionRef = useRef<1 | -1>(1);
 
   const [diagnosticsState, setDiagnosticsState] = useState<DiagnosticsState>(() => ({
     chaserNeatHistory: [],
@@ -121,6 +123,7 @@ export const App: React.FC = () => {
       viewport: viewportSize,
       length: 24000,
     });
+    visualFlowDirectionRef.current = visualCourse.flowDirection;
     const initialPlatforms = visualCourse.platforms;
     const visualStartXs = visualCourse.startXs;
     const startPlatform = initialPlatforms.find(p => p.id === 0) || initialPlatforms[0];
@@ -647,30 +650,13 @@ export const App: React.FC = () => {
             }
           }
 
-          // Fall Handling
+          // Fall Handling. The whole bout is repositioned below after all bodies have been stepped.
+          // Stamina is intentionally not refilled, matching evolutionary evaluation.
           if (newPosition.y > FALL_BOUNDARY) {
             fallEvents[agent.id] = true;
             totalFallsRef.current++;
             playFallSound();
-            agent.survivalTime = 0;
-
-            const visiblePlats = newState.platforms.filter(
-              p => isPlatformSolid(p) && p.position.x + p.width >= minVisibleX && p.position.x <= maxVisibleX + AGENT_WIDTH
-            );
-            const solidPlatforms = newState.platforms.filter(isPlatformSolid);
-            const candidates = visiblePlats.length > 0 ? visiblePlats : solidPlatforms;
-            const spawnPlatform = candidates.reduce((best, p) => {
-              const d = Math.abs((p.position.x + p.width / 2) - agent.position.x);
-              const bestD = Math.abs((best.position.x + best.width / 2) - agent.position.x);
-              return d < bestD ? p : best;
-            }, candidates[0] || newState.platforms[0]);
-            newPosition.x = spawnPlatform.position.x + spawnPlatform.width / 2 - AGENT_WIDTH / 2;
-            newPosition.y = spawnPlatform.position.y - AGENT_HEIGHT - 30;
-            newVelocity.x = 0;
-            newVelocity.y = 0;
-            newEnergy = newMaxEnergy;
             grounded = false;
-            landedPlatformId = spawnPlatform.id;
           }
 
           return {
@@ -696,9 +682,69 @@ export const App: React.FC = () => {
           );
         }
 
+        const hadFall = Object.keys(fallEvents).length > 0;
+        if (hadFall) {
+          const currentIt = newState.agents.find(a => a.status === AgentStatus.It) ?? newState.agents[0];
+          const itId = currentIt.id;
+
+          // Restore temporary crumble state for the new bout while keeping moving platforms at their
+          // current phase. This mirrors headless training rather than teleporting one body in isolation.
+          newState.platforms = newState.platforms.map(platform => ({
+            ...platform,
+            position: { ...(platform.basePosition ?? platform.position) },
+            active: true,
+            crumblePhase: platform.kind === 'crumbling' ? 'stable' : platform.crumblePhase,
+            crumble: platform.crumble ? { ...platform.crumble, triggeredAt: undefined } : undefined,
+          }));
+          newState.platforms = updateDynamicPlatforms(newState.platforms, newState.gameTime).platforms;
+
+          const backbone = newState.platforms.filter(platform =>
+            (platform.routeRole === 'start' || platform.routeRole === 'backbone') && isPlatformSolid(platform)
+          );
+          if (backbone.length >= 2) {
+            const maxAnchor = Math.max(0, Math.min(backbone.length - 2, Math.floor((backbone.length - 2) * 0.45)));
+            const anchorIndex = Math.floor(Math.random() * (maxAnchor + 1));
+            const chaserPlatform = backbone[anchorIndex];
+            const evaderPlatform = backbone[Math.min(backbone.length - 1, anchorIndex + 1)];
+            const evaders = newState.agents.filter(a => a.id !== itId);
+
+            const place = (agent: AgentState, platform: PlatformState, ratio: number, role: 'chaser' | 'evader') => {
+              const usable = Math.max(AGENT_WIDTH + 8, platform.width - AGENT_WIDTH);
+              const x = platform.position.x + Math.max(4, Math.min(usable - 4, usable * ratio));
+              const y = platform.position.y - AGENT_HEIGHT;
+              agent.position = { x, y };
+              agent.velocity = { x: 0, y: 0 };
+              agent.acceleration = { x: 0, y: 0 };
+              agent.isOnGround = true;
+              agent.lastPlatformId = platform.id;
+              agent.energy = Math.max(0, Math.min(agent.maxEnergy, agent.energy));
+              agent.energyAtLastTakeoff = agent.energy;
+              agent.positionAtLastTakeoff = { x, y };
+              agent.survivalTime = 0;
+              agent.timeSinceBecameIt = 0;
+              agent.role = role;
+              agent.modelId = role === 'chaser' ? 'current_chaser' : 'current_evader';
+            };
+
+            place(currentIt, chaserPlatform, visualFlowDirectionRef.current === 1 ? 0.68 : 0.32, 'chaser');
+            currentIt.status = AgentStatus.It;
+            currentIt.cooldownTimer = 700;
+            evaders.forEach((agent, index) => {
+              const ratios = visualFlowDirectionRef.current === 1 ? [0.30, 0.72] : [0.70, 0.28];
+              place(agent, evaderPlatform, ratios[index] ?? 0.5, 'evader');
+              agent.status = AgentStatus.Cooldown;
+              agent.cooldownTimer = 850;
+            });
+
+            const minGroupX = Math.min(...newState.agents.map(a => a.position.x));
+            const maxGroupX = Math.max(...newState.agents.map(a => a.position.x + AGENT_WIDTH));
+            newState.cameraPosition.x = (minGroupX + maxGroupX) / 2 - viewportSize.width / 2;
+          }
+        }
+
         // 4. Tag Detection & role swap between the current NEAT champions
         let tagEvent: { taggerId?: number; taggedId?: number } = {};
-        const itAgent = newState.agents.find(a => a.status === AgentStatus.It);
+        const itAgent = hadFall ? undefined : newState.agents.find(a => a.status === AgentStatus.It);
 
         if (itAgent && (itAgent.cooldownTimer || 0) <= 0) {
           for (const otherAgent of newState.agents) {
@@ -953,6 +999,7 @@ export const App: React.FC = () => {
       viewport: viewportSizeRef.current,
       length: 24000,
     });
+    visualFlowDirectionRef.current = freshCourse.flowDirection;
     setGameState(prev => {
       if (!prev) return prev;
       const startPlatform = freshCourse.platforms.find(p => p.id === 0) || freshCourse.platforms[0];

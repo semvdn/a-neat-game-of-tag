@@ -22,33 +22,32 @@ At `25x` and `50x`, the persistent training worker performs headless evolutionar
 
 For each generation:
 
-1. Every chaser genome is evaluated against rotating evader genomes.
-2. Every genome receives the same number of evaluations (currently 3).
-3. Episodes end on a tag, a terminal fall, or after 12 seconds of simulated time.
-4. Fitness is averaged across the genome's matchups.
-5. Each population is speciated independently.
-6. Elites survive, parents are selected, crossover aligns genes by innovation number, then mutations create the next generation.
-7. The worker sends the best chaser and evader genomes plus generation diagnostics to the UI.
+1. Every chaser genome is evaluated against rotating evader genomes in the existing **1 chaser vs 2 runners** game.
+2. Every genome receives the same number of current-population evaluations (currently 3), plus Hall-of-Fame tests once an archive exists.
+3. Each evaluation is a deterministic-seeded **28–42 second continuing match**. The duration is randomized and is not included in the 39-input state vector.
+4. A tag no longer ends evaluation: the tagged runner becomes the new chaser, the old chaser becomes a runner with cooldown, and play continues exactly like visual mode. The chaser genome always controls whichever body is currently It; the evader genome controls both non-It bodies.
+5. A fall ends only the current bout. The whole group restarts on another valid backbone section of the same procedural course, temporary crumble state is restored, and stamina is preserved.
+6. Fitness is calculated from repeated events across the whole match, then averaged across the genome's matchups.
+7. Each population is speciated independently. Elites survive, parents are selected, crossover aligns genes by innovation number, then mutations create the next generation.
+8. The worker sends the best chaser and evader genomes plus generation diagnostics to the UI.
 
-At `1x`, `2x`, `5x` and `10x`, the app shows normal visual play using the latest champions. Switching between visual and turbo modes does **not** recreate the worker or discard the evolving populations.
+At `1x`, `2x`, `5x` and `10x`, the app shows normal visual play using the latest champions. Visual tags use the same role-swap semantics, and visual falls now reset the whole bout without refilling stamina, closely matching training. Switching between visual and turbo modes does **not** recreate the worker or discard the evolving populations.
 
-## Fitness and terminal falls
+## Long-horizon fitness and bout failures
 
-Terminal performance is deliberately dominant, with modest dense shaping so locomotion can bootstrap before reliable tags emerge.
+The old 12-second first-tag objective has been removed. The continuing-match score keeps selection pressure active for the entire randomized horizon:
 
-Training now treats **falling as a terminal terrain failure**. There is no evolutionary respawn, teleport or stamina refill:
+- every successful tag gives the chaser side **1.0 competitive point**;
+- each evader earns **1.0 survival point every 10 seconds of uninterrupted survival**;
+- an evader fall gives the chaser side **1.5 points**;
+- a chaser fall gives the evader side **1.5 points**;
+- simultaneous failures can award fall points to both sides, then the bout resets and the match continues.
 
-- runner fall → immediate chaser win;
-- chaser fall → immediate runner win;
-- simultaneous chaser + runner fall on the same physics tick → both receive the terrain-failure floor;
-- tag → normal time-scaled tag outcome;
-- 12-second timeout → runner survival win.
+The 1.5× fall weight makes deliberately leaving the terrain worse than accepting a tag. A fall also does **not** refill stamina, removing the old reset exploit. Because tags swap roles and continue, evolution is now directly exposed to the post-tag body/energy/position states seen during normal-speed playback.
 
-Normal outcomes use a shared 20–220 scale. An immediate tag is approximately `220 / 20` (chaser / runner), a very late tag approaches `120 / 120`, and a full timeout is `20 / 220`. The agent responsible for a terminal fall receives `0.01`, so deliberately leaving the course is always worse than accepting even an immediate tag. The opponent receives `220` for a single-sided fall.
+At the end of a match, each role's competitive-point share is mapped to the same roughly 25–220 fitness range. Small closest-distance and navigation shaping remains bounded and secondary to repeated tags, survival milestones and terrain failures. Jumping and unused stamina are never rewarded directly.
 
-Small bounded closing/separation and progress shaping is applied only to valid tag/timeout outcomes. A fall receives no positive shaping. Jumping and unused stamina are never rewarded directly.
-
-The exact coefficients are in `workers/trainingWorker.ts` and are intentionally easy to tune.
+The most useful balance diagnostics are now **tags per 30 seconds**, whole-match chaser/runner win rate, mean uninterrupted evader survival streak, mean tag interval, and the share of bout-ending events caused by falls.
 
 ## Continuous control + stamina
 
@@ -80,7 +79,7 @@ The headless course is geometrically mirrored for leftward episodes, camera trac
 
 ## Phase 1 adaptive procedural terrain
 
-Training episodes are now generated from deterministic seeded **course graphs** rather than a simple linear list of random platforms.
+Training matches are generated from deterministic seeded **course graphs** rather than a simple linear list of random platforms.
 
 The terrain system is split into shared modules so headless training and visible champion playback use the same rules:
 
@@ -97,7 +96,7 @@ The primary backbone is always available. In Phase 1, crumbling platforms are re
 
 ### Curriculum
 
-Difficulty starts low and is adjusted after each generation from navigation competence and the fraction of matches terminated by terrain failure. It increases in small steps only when navigation is reliable and fall-ended matches stay below roughly 12%, and it steps backward if fall-ended matches rise above roughly 32% or navigation collapses.
+Difficulty starts low and is adjusted after each generation from navigation competence and the fraction of **bout-ending events** caused by terrain failure rather than tags. It increases in small steps only when navigation is reliable and that fall-event share stays below roughly 12%, and it steps backward if falls rise above roughly 32% or navigation collapses.
 
 Feature unlocks currently occur around:
 
@@ -111,7 +110,7 @@ As difficulty rises, platform widths tighten, vertical variation grows, usable g
 
 Moving platforms use deterministic sinusoidal motion and carry grounded agents with them. Crumbling platforms enter a warning state on first contact, disappear after a seeded delay, remain absent briefly, then respawn and can be triggered again. Gone platforms are removed from collision and lidar calculations; the renderer leaves a faint dashed ghost to make the temporary route change legible.
 
-The diagnostics overview now reports curriculum difficulty, navigation score, the percentage of matches ended by falls, unlocked terrain systems, feature counts in the latest sampled course and the deterministic course seed.
+The diagnostics overview now reports curriculum difficulty, navigation score, fall-event share, unlocked terrain systems, feature counts in the latest sampled course and the deterministic course seed.
 
 ## NEAT implementation
 
@@ -163,7 +162,11 @@ See `constants.ts`:
 ```ts
 NEAT_POPULATION_SIZE = 48
 NEAT_OPPONENTS_PER_GENOME = 3
-NEAT_EPISODE_MAX_MS = 12000
+NEAT_MATCH_MIN_MS = 28000
+NEAT_MATCH_MAX_MS = 42000
+NEAT_SURVIVAL_MILESTONE_MS = 10000
+NEAT_TAG_POINT_WEIGHT = 1.0
+NEAT_FALL_POINT_WEIGHT = 1.5
 NEAT_COMPATIBILITY_THRESHOLD = 0.8
 NEAT_TARGET_SPECIES = 8
 NEAT_CROSSOVER_RATE = 0.75
@@ -211,8 +214,8 @@ Each evaluated genome plays the normal balanced current-population matchups and,
 
 ## Symmetric game balance
 
-Chaser and runner use identical physiology: 100 stamina, the same acceleration, maximum speed, jump strength, recovery and fatigue curve. Their only built-in difference is the objective (tag versus survive).
+Chaser and runner use identical physiology: 100 stamina, the same acceleration, maximum speed, jump strength, recovery and fatigue curve. Their only built-in difference is the objective (tag versus survive). The game remains 1v2: one chaser-controller genome controls the current It body and one runner-controller genome simultaneously controls both evader bodies.
 
-Evolutionary fitness is comparable across roles. Normal tag/timeout outcomes share the same 20–220 scale, while a self-caused terminal fall is fixed at `0.01`. This creates the intended hierarchy: successfully win > lose late > lose early > fall. Terrain navigation is therefore mandatory without becoming a separate parkour reward objective.
+Evolutionary fitness is comparable across roles and is based on the whole continuing match rather than a single terminal event. Repeated tags favor the chaser, uninterrupted 10-second survival milestones favor the runner team, and falls are weighted 1.5× more heavily than tags for the opposing side. This makes terrain navigation mandatory without turning navigation itself into the primary reward objective.
 
-Diagnostics report chaser win rate, runner win rate, tag rate, true timeout/survival rate, chaser-fall rate, runner-fall rate and mean tag time from current-population matches only. Hall-of-Fame evaluations still affect selection but are excluded from these balance metrics.
+Diagnostics report tags per 30 seconds, average tags per match, chaser/runner whole-match win rate, no-tag match rate, mean tag interval, mean uninterrupted runner survival streak and fall-event share from current-population matches only. Hall-of-Fame evaluations still affect selection but are excluded from these balance metrics.
