@@ -211,3 +211,6 @@ The champion arena now uses fixed world geometry independent of the responsive c
 The champion arena includes an **Agent Senses** overlay (sidebar toggle or `S` key). It is generated from the same `getAgentStateVector()` observation pass that feeds the NEAT policy, so the visualization follows the current 39-input schema rather than a duplicated approximation.
 
 The overlay shows, per agent: normalized self velocity/energy/status, camera-left/right and fall-boundary distances, current/nearest-platform ledge distances and alert, the three nearest platform slots (`dx`, `dy`, width), target/threat dynamics plus opponent stamina, evader teammate dynamics, and all eight lidar rays with normalized distances and exact hit points. Lidar collides with platforms and the left/right camera walls only; other agents are perceived through the separate target/threat and teammate channels.
+
+### Camera zoom
+The Champion Arena header includes a visual-only **− / percentage / +** camera control. It ranges from 50% to 200% in 25% steps, stays centered, and never changes world physics, platform/agent dimensions, raycasts, observation inputs, or worker training. Click the percentage to return to 100%.

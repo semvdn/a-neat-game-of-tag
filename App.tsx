@@ -41,7 +41,7 @@ import {
   WORLD_REF_WIDTH,
   WORLD_REF_HEIGHT,
 } from './constants';
-import { Activity, Play, Pause, FastForward, RotateCcw, MonitorPlay, Cpu } from 'lucide-react';
+import { Activity, Play, Pause, FastForward, RotateCcw, MonitorPlay, Cpu, Minus, Plus } from 'lucide-react';
 
 const MAX_TRAIL_POINTS = 96;
 const TRAIL_SAMPLE_DISTANCE = 4;
@@ -69,6 +69,7 @@ export const App: React.FC = () => {
   // Diagnostics & Control State
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [visualSpeed, setVisualSpeed] = useState(1);
+  const [cameraZoom, setCameraZoom] = useState(1);
   const [workerSpeed, setWorkerSpeed] = useState(50);
   const [isVisualPaused, setIsVisualPaused] = useState(false);
   const [isTrainingPaused, setIsTrainingPaused] = useState(false);
@@ -1153,6 +1154,13 @@ export const App: React.FC = () => {
     stepFrameRef.current = true;
   };
 
+  const changeCameraZoom = (delta: number) => {
+    setCameraZoom(current => {
+      const next = Math.round((current + delta) * 100) / 100;
+      return Math.max(0.5, Math.min(2, next));
+    });
+  };
+
   if (isLoading || !gameState) {
     return <div className="flex items-center justify-center h-screen text-cyan-400 font-mono">Loading Artwork...</div>;
   }
@@ -1184,6 +1192,33 @@ export const App: React.FC = () => {
               {[0.5, 1, 2, 5, 10].map(speed => (
                 <button key={speed} onClick={() => setVisualSpeed(speed)} className={`px-2 py-1 text-[11px] font-mono font-semibold rounded ${visualSpeed === speed ? 'bg-cyan-500 text-black' : 'text-gray-400 hover:text-cyan-300 hover:bg-gray-900'}`}>{speed}x</button>
               ))}
+            </div>
+            <div className="flex items-center bg-gray-950 border border-gray-800 rounded-lg p-1" title="Visual camera zoom only; does not change physics or agent senses">
+              <button
+                onClick={() => changeCameraZoom(-0.25)}
+                disabled={cameraZoom <= 0.5}
+                className="p-1.5 rounded text-cyan-200 hover:bg-gray-900 disabled:text-gray-700 disabled:hover:bg-transparent"
+                title="Zoom camera out"
+                aria-label="Zoom camera out"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => setCameraZoom(1)}
+                className="min-w-[52px] px-1 text-[10px] font-mono font-semibold text-gray-300 hover:text-cyan-200"
+                title="Reset camera zoom to 100%"
+              >
+                {Math.round(cameraZoom * 100)}%
+              </button>
+              <button
+                onClick={() => changeCameraZoom(0.25)}
+                disabled={cameraZoom >= 2}
+                className="p-1.5 rounded text-cyan-200 hover:bg-gray-900 disabled:text-gray-700 disabled:hover:bg-transparent"
+                title="Zoom camera in"
+                aria-label="Zoom camera in"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
             </div>
             <button onClick={() => setIsVisualPaused(p => !p)} className="p-2 rounded-lg border border-gray-700 text-cyan-200 hover:bg-gray-800" title={isVisualPaused ? 'Resume champion game' : 'Pause champion game'}>
               {isVisualPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
@@ -1257,6 +1292,7 @@ export const App: React.FC = () => {
               onFrameReady={() => {}}
               showTrails={showTrails}
               showSenses={showSenses}
+              cameraZoom={cameraZoom}
             />
           )}
         </main>

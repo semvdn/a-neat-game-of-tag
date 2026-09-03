@@ -10,6 +10,7 @@ interface GameCanvasProps {
   onFrameReady: (dataUrl: string) => void;
   showTrails: boolean;
   showSenses: boolean;
+  cameraZoom: number;
 }
 
 /**
@@ -26,6 +27,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   onFrameReady,
   showTrails,
   showSenses,
+  cameraZoom,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { agents, platforms, cameraPosition, tagEffects } = gameState;
@@ -51,15 +53,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Work in CSS pixels first. DPR is only for backing-store sharpness.
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#0b0f16';
+    // Paint the ENTIRE canvas as world space first. Zooming out must reveal more
+    // of the presentation world, never an unrendered/black letterbox.
+    ctx.fillStyle = '#1a202c';
     ctx.fillRect(0, 0, cssWidth, cssHeight);
 
     // Uniformly fit the fixed logical camera viewport into the responsive canvas.
     // Using one scale for both axes guarantees that world objects never deform.
-    const cameraScale = Math.max(
+    const fitScale = Math.max(
       0.0001,
       Math.min(cssWidth / WORLD_REF_WIDTH, cssHeight / WORLD_REF_HEIGHT)
     );
+    // cameraZoom is presentation-only. It scales both axes uniformly around the
+    // logical camera center, so geometry never deforms and agent observations are untouched.
+    const cameraScale = fitScale * Math.max(0.5, Math.min(2, cameraZoom));
     const renderedWorldWidth = WORLD_REF_WIDTH * cameraScale;
     const renderedWorldHeight = WORLD_REF_HEIGHT * cameraScale;
 
@@ -70,18 +77,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const offsetX = canvasCenterX - renderedWorldWidth / 2;
     const offsetY = canvasCenterY - renderedWorldHeight / 2;
 
-    // Slightly distinguish the active camera area from any aspect-ratio letterboxing.
-    ctx.fillStyle = '#1a202c';
-    ctx.fillRect(offsetX, offsetY, renderedWorldWidth, renderedWorldHeight);
-
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(offsetX, offsetY, renderedWorldWidth, renderedWorldHeight);
-    ctx.clip();
 
-    // Transform around the CENTER of both the canvas and the logical camera viewport.
-    // Doing this explicitly prevents any resize/aspect-ratio path from biasing the view
-    // toward the top-left while still preserving one uniform X/Y scale factor.
+    // Transform the whole canvas around the CENTER of the logical camera. We deliberately
+    // do NOT clip to the 1200x800 policy viewport here. At zoom < 100%, the canvas shows
+    // additional surrounding world space instead of shrinking the rendered scene into a
+    // smaller rectangle with black borders. Physics/senses still use the fixed viewport.
     const cameraCenterX = cameraPosition.x + WORLD_REF_WIDTH / 2;
     const cameraCenterY = cameraPosition.y + WORLD_REF_HEIGHT / 2;
     ctx.translate(canvasCenterX, canvasCenterY);
@@ -104,9 +105,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     ctx.restore();
 
     if (showSenses) {
-      const legendX = offsetX + 10;
-      const legendY = offsetY + 10;
-      const legendW = Math.min(renderedWorldWidth - 20, 535);
+      // Screen-space legend: keep it visible regardless of camera zoom.
+      const legendX = 10;
+      const legendY = 10;
+      const legendW = Math.min(cssWidth - 20, 535);
       ctx.fillStyle = 'rgba(3, 7, 18, 0.82)';
       ctx.fillRect(legendX, legendY, Math.max(0, legendW), 44);
       ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
@@ -117,8 +119,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.fillText('R0–R7 lidar hits platforms + camera side walls only · S toggles view', legendX + 7, legendY + 24);
     }
 
-    // Camera-frame collision indicator. These are drawn in CSS pixels but line up with
-    // the uniformly scaled logical camera edges rather than the outer canvas letterbox.
+    // Camera-frame collision indicator. At zoom-out the fixed policy-camera boundaries
+    // are intentionally visible inside the larger presentation viewport.
     const touchingLeft = agents.some(
       a => a.cameraFrameContact === 'left' || a.position.x <= cameraPosition.x + 2.5
     );
@@ -151,7 +153,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.fillStyle = '#ef4444';
       ctx.fillRect(rightEdge - edgeThickness, offsetY, edgeThickness, renderedWorldHeight);
     }
-  }, [gameState, viewportWidth, viewportHeight, onFrameReady, showTrails, showSenses]);
+  }, [gameState, viewportWidth, viewportHeight, onFrameReady, showTrails, showSenses, cameraZoom]);
 
   return <canvas ref={canvasRef} className="block" />;
 };
