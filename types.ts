@@ -194,4 +194,6 @@ export interface DiagnosticsState {
   hallOfFame?: HallOfFameTelemetry;
   lastGenerationBalance?: BalanceTelemetry | null;
   balanceHistory?: BalanceTelemetry[];
+  trainingSpeedX?: number;
+  trainingEpisodesPerSecond?: number;
 }

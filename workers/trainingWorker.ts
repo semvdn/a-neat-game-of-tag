@@ -60,10 +60,22 @@ let lastChaserMetrics: NeatGenerationMetrics | null = null;
 let lastEvaderMetrics: NeatGenerationMetrics | null = null;
 
 let isRunning = false;
-let speedMultiplier = 50;
 let timerId: ReturnType<typeof setTimeout> | null = null;
 const viewportSize = { width: WORLD_REF_WIDTH, height: WORLD_REF_HEIGHT };
 let seededFromStart = false;
+
+// Training always runs at the maximum throughput this worker can sustain. We process
+// work in short CPU bursts and yield with a zero-delay timeout so control messages
+// (pause/reset/import) are still handled promptly without an artificial 16 ms throttle.
+const MAX_TRAINING_BURST_MS = 40;
+const TELEMETRY_INTERVAL_MS = 250;
+let lastTelemetryEmitAt = 0;
+let completedEpisodes = 0;
+let throughputSampleStartedAt = performance.now();
+let throughputSampleSimulatedTime = 0;
+let throughputSampleEpisodes = 0;
+let currentTrainingSpeedX = 0;
+let currentTrainingEpisodesPerSecond = 0;
 
 type EvaluationPhase = 'population' | 'chaser_hof' | 'evader_hof';
 interface HallOfFameEntry {
@@ -472,6 +484,7 @@ function resetEvaluationAccumulators() {
 }
 
 function recordEpisodeTelemetry(result: EpisodeStats, currentPopulationMatch = true) {
+  completedEpisodes++;
   totalSimulatedTime += result.elapsedMs;
   recentSurvivalTimes.push(result.elapsedMs);
   if (recentSurvivalTimes.length > SURVIVAL_TIME_HISTORY_LENGTH) recentSurvivalTimes.shift();
@@ -626,7 +639,37 @@ function evaluationProgress(): number {
   return Math.max(0, Math.min(1, completed / Math.max(1, total)));
 }
 
-function emitTelemetry() {
+function updateTrainingThroughput(now = performance.now()) {
+  if (!isRunning) return;
+  const elapsedWallMs = now - throughputSampleStartedAt;
+  if (elapsedWallMs < TELEMETRY_INTERVAL_MS) return;
+
+  const simulatedDeltaMs = totalSimulatedTime - throughputSampleSimulatedTime;
+  const episodeDelta = completedEpisodes - throughputSampleEpisodes;
+  currentTrainingSpeedX = simulatedDeltaMs / Math.max(1, elapsedWallMs);
+  currentTrainingEpisodesPerSecond = episodeDelta * 1000 / Math.max(1, elapsedWallMs);
+
+  throughputSampleStartedAt = now;
+  throughputSampleSimulatedTime = totalSimulatedTime;
+  throughputSampleEpisodes = completedEpisodes;
+}
+
+function resetTrainingThroughput() {
+  const now = performance.now();
+  throughputSampleStartedAt = now;
+  throughputSampleSimulatedTime = totalSimulatedTime;
+  throughputSampleEpisodes = completedEpisodes;
+  currentTrainingSpeedX = 0;
+  currentTrainingEpisodesPerSecond = 0;
+  lastTelemetryEmitAt = 0;
+}
+
+function emitTelemetry(force = false) {
+  const now = performance.now();
+  updateTrainingThroughput(now);
+  if (!force && now - lastTelemetryEmitAt < TELEMETRY_INTERVAL_MS) return;
+  lastTelemetryEmitAt = now;
+
   const generation = Math.max(lastChaserMetrics?.generation || 0, lastEvaderMetrics?.generation || 0);
   const leaderboard = createLeaderboardEntries(
     chaserElo,
@@ -644,6 +687,8 @@ function emitTelemetry() {
       algorithm: 'NEAT',
       generation,
       evaluationProgress: evaluationProgress(),
+      trainingSpeedX: currentTrainingSpeedX,
+      trainingEpisodesPerSecond: currentTrainingEpisodesPerSecond,
       gameTime: totalSimulatedTime,
       chaserElo,
       evaderElo,
@@ -675,14 +720,14 @@ function emitTelemetry() {
 function runHeadlessBatch() {
   if (!isRunning) return;
 
-  const matchesThisBatch = Math.max(1, Math.min(40, Math.round(speedMultiplier / 5)));
-  for (let i = 0; i < matchesThisBatch; i++) {
+  const burstStartedAt = performance.now();
+  do {
     const generationComplete = evaluateNextMatch();
     if (generationComplete) finishGeneration();
-  }
+  } while (isRunning && performance.now() - burstStartedAt < MAX_TRAINING_BURST_MS);
 
   emitTelemetry();
-  if (isRunning) timerId = setTimeout(runHeadlessBatch, 16);
+  if (isRunning) timerId = setTimeout(runHeadlessBatch, 0);
 }
 
 function seedPopulations(chaserWeights?: AgentWeights, evaderWeights?: AgentWeights, archiveSeed = false) {
@@ -707,7 +752,6 @@ self.onmessage = (event: MessageEvent) => {
 
   switch (type) {
     case 'START': {
-      if (typeof payload?.speedMultiplier === 'number') speedMultiplier = Math.max(1, Math.min(200, payload.speedMultiplier));
       if (!seededFromStart && (payload?.chaserWeights || payload?.evaderWeights)) {
         seedPopulations(payload?.chaserWeights, payload?.evaderWeights);
         seededFromStart = true;
@@ -716,6 +760,7 @@ self.onmessage = (event: MessageEvent) => {
       if (typeof payload?.evaderElo === 'number') evaderElo = payload.evaderElo;
       isRunning = true;
       if (timerId) clearTimeout(timerId);
+      resetTrainingThroughput();
       runHeadlessBatch();
       break;
     }
@@ -723,11 +768,9 @@ self.onmessage = (event: MessageEvent) => {
     case 'PAUSE':
       isRunning = false;
       if (timerId) clearTimeout(timerId);
-      emitTelemetry();
-      break;
-
-    case 'SET_SPEED':
-      if (typeof payload?.speedMultiplier === 'number') speedMultiplier = Math.max(1, Math.min(200, payload.speedMultiplier));
+      currentTrainingSpeedX = 0;
+      currentTrainingEpisodesPerSecond = 0;
+      emitTelemetry(true);
       break;
 
     case 'SYNC_WEIGHTS_REQUEST':
@@ -764,6 +807,7 @@ self.onmessage = (event: MessageEvent) => {
       totalFalls = 0;
       totalJumps = 0;
       totalSimulatedTime = 0;
+      completedEpisodes = 0;
       chaserElo = INITIAL_ELO;
       evaderElo = INITIAL_ELO;
       recentSurvivalTimes.length = 0;
@@ -773,7 +817,8 @@ self.onmessage = (event: MessageEvent) => {
       clearHallOfFame();
       lastGenerationBalance = null;
       resetEvaluationAccumulators();
-      emitTelemetry();
+      resetTrainingThroughput();
+      emitTelemetry(true);
       break;
   }
 };

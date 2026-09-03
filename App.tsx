@@ -46,6 +46,15 @@ import { Activity, Play, Pause, FastForward, RotateCcw, MonitorPlay, Cpu, Minus,
 const MAX_TRAIL_POINTS = 96;
 const TRAIL_SAMPLE_DISTANCE = 4;
 
+const formatTrainingRate = (value: number | undefined) => {
+  const safe = Number.isFinite(value) ? Math.max(0, Number(value)) : 0;
+  if (safe >= 1000000) return `${(safe / 1000000).toFixed(1)}M`;
+  if (safe >= 1000) return `${(safe / 1000).toFixed(1)}k`;
+  if (safe >= 100) return safe.toFixed(0);
+  if (safe >= 10) return safe.toFixed(1);
+  return safe.toFixed(2);
+};
+
 // The champion simulation always sees the same logical camera window. The HTML canvas
 // may resize freely; GameCanvas scales this world viewport uniformly for presentation.
 const CHAMPION_WORLD_VIEWPORT = { width: WORLD_REF_WIDTH, height: WORLD_REF_HEIGHT } as const;
@@ -69,7 +78,6 @@ export const App: React.FC = () => {
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [visualSpeed, setVisualSpeed] = useState(1);
   const [cameraZoom, setCameraZoom] = useState(1);
-  const [workerSpeed, setWorkerSpeed] = useState(50);
   const [isVisualPaused, setIsVisualPaused] = useState(false);
   const [isTrainingPaused, setIsTrainingPaused] = useState(false);
   const stepFrameRef = useRef(false);
@@ -96,6 +104,8 @@ export const App: React.FC = () => {
     hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: NEAT_HOF_MAX_SIZE, opponentsPerGenome: NEAT_HOF_OPPONENTS_PER_GENOME, chaserGenerations: [], evaderGenerations: [] },
     lastGenerationBalance: null,
     balanceHistory: [],
+    trainingSpeedX: 0,
+    trainingEpisodesPerSecond: 0,
   }));
 
 
@@ -368,6 +378,8 @@ export const App: React.FC = () => {
               hallOfFame: payload.hallOfFame || prev.hallOfFame,
               lastGenerationBalance: balanceMetric || prev.lastGenerationBalance,
               balanceHistory: appendUnique(prev.balanceHistory, balanceMetric),
+              trainingSpeedX: typeof payload.trainingSpeedX === 'number' ? payload.trainingSpeedX : prev.trainingSpeedX,
+              trainingEpisodesPerSecond: typeof payload.trainingEpisodesPerSecond === 'number' ? payload.trainingEpisodesPerSecond : prev.trainingEpisodesPerSecond,
             };
           });
 
@@ -392,7 +404,8 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Background evolution has an independent speed and pause state. It never owns the canvas.
+  // Background evolution runs at maximum worker throughput with an independent pause state.
+  // It never owns the canvas.
   useEffect(() => {
     if (!workerRef.current || !isSimulating) return;
 
@@ -404,7 +417,6 @@ export const App: React.FC = () => {
     workerRef.current.postMessage({
       type: 'START',
       payload: {
-        speedMultiplier: workerSpeed,
         chaserWeights: chaserAgent.current?.getWeights(),
         evaderWeights: evaderAgent.current?.getWeights(),
         chaserElo: chaserElo.current,
@@ -412,7 +424,7 @@ export const App: React.FC = () => {
         viewportSize: { width: WORLD_REF_WIDTH, height: WORLD_REF_HEIGHT },
       },
     });
-  }, [workerSpeed, isTrainingPaused, isSimulating]);
+  }, [isTrainingPaused, isSimulating]);
 
   const calculateReward = (
     agent: AgentState,
@@ -1233,12 +1245,16 @@ export const App: React.FC = () => {
 
           {/* Independent background-training controls */}
           <div className="flex items-center gap-1.5">
-            <div className="flex items-center gap-1 bg-gray-950 border border-gray-800 rounded-lg p-1" title="Background worker speed">
+            <div className="flex items-center gap-1.5 bg-gray-950 border border-gray-800 rounded-lg px-2 py-1.5" title="Background training always runs as fast as this device can process it">
               <Cpu className="w-3.5 h-3.5 text-amber-300 ml-1" />
-              <span className="text-[10px] uppercase tracking-wider text-amber-300 mr-1">Train</span>
-              {[10, 25, 50, 100, 200].map(speed => (
-                <button key={speed} onClick={() => setWorkerSpeed(speed)} className={`px-2 py-1 text-[11px] font-mono font-semibold rounded ${workerSpeed === speed ? 'bg-amber-400 text-black' : 'text-gray-400 hover:text-amber-300 hover:bg-gray-900'}`}>{speed}x</button>
-              ))}
+              <span className="text-[10px] uppercase tracking-wider text-amber-300">Train</span>
+              <span className="px-1.5 py-0.5 rounded bg-amber-400/15 border border-amber-400/30 text-[9px] font-bold uppercase tracking-wider text-amber-200">Max</span>
+              <span className="text-[11px] font-mono font-semibold text-amber-100 min-w-[54px] text-right">
+                {isTrainingPaused ? 'paused' : `${formatTrainingRate(diagnosticsState.trainingSpeedX)}×`}
+              </span>
+              <span className="text-[9px] font-mono text-gray-500 min-w-[58px]">
+                {formatTrainingRate(diagnosticsState.trainingEpisodesPerSecond)} ep/s
+              </span>
             </div>
             <button onClick={() => setIsTrainingPaused(p => !p)} className="p-2 rounded-lg border border-gray-700 text-amber-200 hover:bg-gray-800" title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>
               {isTrainingPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
@@ -1316,8 +1332,6 @@ export const App: React.FC = () => {
         diagnostics={diagnosticsState}
         visualSpeed={visualSpeed}
         onSetVisualSpeed={setVisualSpeed}
-        workerSpeed={workerSpeed}
-        onSetWorkerSpeed={setWorkerSpeed}
         isVisualPaused={isVisualPaused}
         onToggleVisualPause={() => setIsVisualPaused(p => !p)}
         isTrainingPaused={isTrainingPaused}

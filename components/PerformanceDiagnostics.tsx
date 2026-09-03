@@ -25,8 +25,6 @@ interface PerformanceDiagnosticsProps {
   diagnostics: DiagnosticsState;
   visualSpeed: number;
   onSetVisualSpeed: (speed: number) => void;
-  workerSpeed: number;
-  onSetWorkerSpeed: (speed: number) => void;
   isVisualPaused: boolean;
   onToggleVisualPause: () => void;
   isTrainingPaused: boolean;
@@ -46,6 +44,14 @@ interface PerformanceDiagnosticsProps {
 }
 
 const fmt = (v: number | undefined, digits = 2) => (Number.isFinite(v) ? Number(v).toFixed(digits) : '—');
+const formatTrainingRate = (value: number | undefined) => {
+  const safe = Number.isFinite(value) ? Math.max(0, Number(value)) : 0;
+  if (safe >= 1000000) return `${(safe / 1000000).toFixed(1)}M`;
+  if (safe >= 1000) return `${(safe / 1000).toFixed(1)}k`;
+  if (safe >= 100) return safe.toFixed(0);
+  if (safe >= 10) return safe.toFixed(1);
+  return safe.toFixed(2);
+};
 
 const MetricCard: React.FC<{ label: string; value: React.ReactNode; hint?: string }> = ({ label, value, hint }) => (
   <div className="rounded-xl border border-gray-800 bg-gray-950/70 p-4">
@@ -201,8 +207,6 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   diagnostics,
   visualSpeed,
   onSetVisualSpeed,
-  workerSpeed,
-  onSetWorkerSpeed,
   isVisualPaused,
   onToggleVisualPause,
   isTrainingPaused,
@@ -268,12 +272,16 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             <button onClick={onStepFrame} className="p-1.5 rounded hover:bg-gray-900 text-cyan-200" title="Step champion view"><FastForward className="w-4 h-4" /></button>
             <button onClick={onResetChampionGame} className="p-1.5 rounded hover:bg-gray-900 text-cyan-200" title="Reset champion game only"><RotateCcw className="w-4 h-4" /></button>
           </div>
-          <div className="flex items-center gap-1 rounded-lg border border-gray-800 bg-black/30 p-1" title="Background worker throughput">
+          <div className="flex items-center gap-1.5 rounded-lg border border-gray-800 bg-black/30 px-2 py-1.5" title="Background training always runs as fast as this device can process it">
             <Cpu className="w-3.5 h-3.5 text-amber-300 ml-1" />
-            <span className="text-[10px] uppercase tracking-wider text-amber-300 mr-1">Train</span>
-            {[10, 25, 50, 100, 200].map(speed => (
-              <button key={speed} onClick={() => onSetWorkerSpeed(speed)} className={`px-2 py-1 rounded text-xs font-mono ${workerSpeed === speed ? 'bg-amber-400 text-black' : 'text-gray-500 hover:text-white'}`}>{speed}x</button>
-            ))}
+            <span className="text-[10px] uppercase tracking-wider text-amber-300">Train</span>
+            <span className="px-1.5 py-0.5 rounded bg-amber-400/15 border border-amber-400/30 text-[9px] font-bold uppercase tracking-wider text-amber-200">Max</span>
+            <span className="text-xs font-mono font-semibold text-amber-100 min-w-[58px] text-right">
+              {isTrainingPaused ? 'paused' : `${formatTrainingRate(diagnostics.trainingSpeedX)}×`}
+            </span>
+            <span className="text-[10px] font-mono text-gray-500 min-w-[62px]">
+              {formatTrainingRate(diagnostics.trainingEpisodesPerSecond)} ep/s
+            </span>
             <button onClick={onToggleTrainingPause} className="p-1.5 rounded hover:bg-gray-900 text-amber-200" title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>{isTrainingPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}</button>
           </div>
           <button onClick={onClose} className="p-2 rounded border border-gray-800 hover:bg-gray-900"><X className="w-4 h-4" /></button>

@@ -18,7 +18,7 @@ The main React thread no longer learns. It only renders the current champion gen
 
 ## Training cycle
 
-At `25x` and `50x`, the persistent training worker performs headless evolutionary evaluation.
+The persistent training worker performs headless evolutionary evaluation continuously at the maximum throughput the browser/device can sustain. There is no user-set training-speed cap.
 
 For each generation:
 
@@ -30,7 +30,7 @@ For each generation:
 6. Elites survive, parents are selected, crossover aligns genes by innovation number, then mutations create the next generation.
 7. The worker sends the best chaser and evader genomes plus generation diagnostics to the UI.
 
-At `1x`, `2x`, `5x` and `10x`, the app shows normal visual play using the latest champions. Switching between visual and turbo modes does **not** recreate the worker or discard the evolving populations.
+The visible champion arena has its own independent `0.5x`–`10x` playback control. Changing visual playback speed does **not** recreate the worker or discard the evolving populations.
 
 ## Fitness
 
@@ -124,12 +124,12 @@ The PPO diagnostics have been replaced by NEAT metrics:
 Role-level Elo is retained only as a human-readable evaluation signal. It is **not** used for evolutionary selection.
 
 
-## Decoupled champion view and training speed
+## Decoupled champion view and maximum-throughput training
 
 The visible canvas and the evolutionary worker now run on independent clocks.
 
 - **View:** `0.5x`, `1x`, `2x`, `5x`, `10x`, with its own pause, single-frame step, and **Reset view** control.
-- **Train:** `10x`, `25x`, `50x`, `100x`, `200x`, with its own pause. Training speed only changes how many headless evaluations the worker processes per batch.
+- **Train:** always runs at maximum available worker throughput, with its own pause. The UI reports the measured simulated-time multiplier (`× realtime`) and completed episodes per second instead of exposing a requested speed setting.
 - The worker no longer sends sampled training game states to replace the canvas. The visible game is always one continuous champion arena.
 - After each completed generation, newly reported chaser and evader champions are hot-swapped into the running arena without resetting positions, velocity, stamina, roles, cooldowns, platforms, or game time.
 - **Reset view** resets only the visible arena and its local match history; populations, Hall of Fame, generation, and worker state continue untouched.
