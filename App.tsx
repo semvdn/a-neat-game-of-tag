@@ -41,6 +41,17 @@ import {
 } from './constants';
 import { Activity, Play, Pause, FastForward, RotateCcw, MonitorPlay, Cpu } from 'lucide-react';
 
+const MAX_TRAIL_POINTS = 96;
+const TRAIL_SAMPLE_DISTANCE = 4;
+
+const appendTrailPoint = (trajectory: AgentState['trajectory'] | undefined, position: AgentState['position']) => {
+  const trail = trajectory || [];
+  const last = trail[trail.length - 1];
+  if (last && Math.hypot(position.x - last.x, position.y - last.y) < TRAIL_SAMPLE_DISTANCE) return trail;
+
+  return [...trail.slice(-(MAX_TRAIL_POINTS - 1)), { ...position }];
+};
+
 export const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -150,7 +161,7 @@ export const App: React.FC = () => {
         lastAction: 'wait',
         energy: MAX_ENERGY,
         maxEnergy: MAX_ENERGY,
-        trajectory: [],
+        trajectory: [{ x: visualStartXs[0], y: 500 }],
         lastPlatformId: 0,
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
@@ -173,7 +184,7 @@ export const App: React.FC = () => {
         lastAction: 'wait',
         energy: MAX_ENERGY,
         maxEnergy: MAX_ENERGY,
-        trajectory: [],
+        trajectory: [{ x: visualStartXs[1], y: 500 }],
         lastPlatformId: 0,
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
@@ -196,7 +207,7 @@ export const App: React.FC = () => {
         lastAction: 'wait',
         energy: MAX_ENERGY,
         maxEnergy: MAX_ENERGY,
-        trajectory: [],
+        trajectory: [{ x: visualStartXs[2], y: 500 }],
         lastPlatformId: 0,
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
@@ -641,9 +652,16 @@ export const App: React.FC = () => {
             landedPlatformId = spawnPlatform.id;
           }
 
+          // Keep a short, distance-sampled world-space trail. A fall teleports the body,
+          // so start a fresh trail there instead of drawing a streak across the arena.
+          const newTrajectory = fallEvents[agent.id]
+            ? [{ ...newPosition }]
+            : appendTrailPoint(agent.trajectory, newPosition);
+
           return {
             ...agent,
             position: newPosition,
+            trajectory: newTrajectory,
             velocity: newVelocity,
             isOnGround: grounded,
             energy: newEnergy,
@@ -937,7 +955,7 @@ export const App: React.FC = () => {
           lastAction: 'wait',
           energy: MAX_ENERGY,
           maxEnergy: MAX_ENERGY,
-          trajectory: [],
+          trajectory: [{ x: xs[index] ?? xs[xs.length - 1], y: startY }],
           lastPlatformId: 0,
           energyAtLastTakeoff: MAX_ENERGY,
           positionAtLastTakeoff: { x: xs[index] ?? xs[xs.length - 1], y: startY },
@@ -1231,8 +1249,6 @@ export const App: React.FC = () => {
           onToggleTrails={handleToggleTrails}
           showLidar={showLidar}
           onToggleLidar={handleToggleLidar}
-          avgSurvivalTime={gameState.avgSurvivalTime}
-          avgTimeToTag={gameState.avgTimeToTag}
           chaserElo={chaserElo.current}
           evaderElo={evaderElo.current}
           onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}

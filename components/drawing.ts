@@ -42,21 +42,27 @@ export const drawAgentTrail = (ctx: CanvasRenderingContext2D, agent: AgentState)
     const g = parseInt(agent.color.slice(3, 5), 16);
     const b = parseInt(agent.color.slice(5, 7), 16);
 
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
     for (let i = 0; i < trailLength - 1; i++) {
         const startPoint = agent.trajectory[i];
         const endPoint = agent.trajectory[i + 1];
-        
-        const opacity = (1 - (i / trailLength)) * 0.7; // Max opacity 0.7
+        const progress = (i + 1) / (trailLength - 1); // oldest -> newest
+        const opacity = 0.06 + progress * 0.62;
 
         ctx.beginPath();
         ctx.moveTo(startPoint.x + agentCenterOffsetX, startPoint.y + agentCenterOffsetY);
         ctx.lineTo(endPoint.x + agentCenterOffsetX, endPoint.y + agentCenterOffsetY);
-        
-        ctx.lineWidth = 2 + 3 * (1 - (i/trailLength)); // Tapered line width
-        ctx.lineCap = 'round';
+
+        // The newest part of the trail should be strongest; the tail fades away.
+        ctx.lineWidth = 1.25 + progress * 3.25;
         ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${opacity})`;
         ctx.stroke();
     }
+
+    ctx.restore();
 };
 
 export const drawAgentLidarRays = (ctx: CanvasRenderingContext2D, agent: AgentState) => {

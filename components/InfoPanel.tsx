@@ -3,7 +3,7 @@
 import React from 'react';
 import type { AgentState, RewardBreakdown } from '../types';
 import { AgentStatus } from '../types';
-import { Radar, Shield, Swords, Zap } from 'lucide-react';
+import { Radar, Shield, Swords } from 'lucide-react';
 
 interface InfoPanelProps {
   agents: AgentState[];
@@ -12,8 +12,6 @@ interface InfoPanelProps {
   onToggleTrails: () => void;
   showLidar: boolean;
   onToggleLidar: () => void;
-  avgSurvivalTime: number;
-  avgTimeToTag: number;
   onOpenDiagnostics: () => void;
   chaserElo?: number;
   evaderElo?: number;
@@ -195,8 +193,6 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
   onToggleTrails,
   showLidar,
   onToggleLidar,
-  avgSurvivalTime,
-  avgTimeToTag,
   onOpenDiagnostics,
   chaserElo,
   evaderElo,
@@ -205,41 +201,6 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
     <aside className="w-80 bg-gray-800 rounded-lg shadow-lg p-4 flex flex-col gap-4 overflow-y-auto">
       <h2 className="text-xl font-bold text-cyan-400 border-b-2 border-cyan-400/30 pb-2">Simulation Status</h2>
       
-      {isSimulating && (
-        <div className="p-3 bg-gray-700 rounded-md text-sm">
-            <div className="flex items-center justify-between mb-2">
-                <h3 className="font-semibold text-gray-300 flex items-center gap-1.5">
-                    <Zap className="w-3.5 h-3.5 text-cyan-400" />
-                    Agent Abilities
-                </h3>
-                <span className="text-[10px] bg-cyan-950/80 text-cyan-300 border border-cyan-500/30 px-2 py-0.5 rounded-full font-medium">
-                    Base Movement
-                </span>
-            </div>
-            
-            <div className="text-xs space-y-1.5 text-gray-300">
-                <div className="flex justify-between items-center" title="Evader average survival time before tag">
-                    <span className="text-gray-400">Avg. Survival Time:</span>
-                    <span className="font-mono text-emerald-400 font-semibold">
-                        {(avgSurvivalTime / 1000).toFixed(2)}s
-                    </span>
-                </div>
-                <div className="flex justify-between items-center" title="Tagger average time to catch evaders">
-                    <span className="text-gray-400">Avg. Time to Tag:</span>
-                    <span className="font-mono text-amber-400 font-semibold">
-                        {(avgTimeToTag / 1000).toFixed(2)}s
-                    </span>
-                </div>
-            </div>
-
-            <div className="mt-2.5 pt-2 border-t border-gray-600">
-                <div className="text-[11px] text-gray-400 flex items-center justify-between">
-                    <span>Active Action Space:</span>
-                    <span className="text-gray-300 font-medium">Drive, Jump Power, Sprint</span>
-                </div>
-            </div>
-        </div>
-      )}
 
       <div className="flex justify-between items-center p-3 bg-gray-700 rounded-md">
         <h3 className="font-semibold text-gray-300">Show Trails</h3>
