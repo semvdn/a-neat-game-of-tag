@@ -63,6 +63,7 @@ The champion view and background trainer are fully independent.
 - 0.5x / 1x / 2x / 5x / 10x
 - pause/resume
 - reset visible champion game
+- individual agent respawn on falls; the other agents and visible world continue uninterrupted
 
 ### Background training
 

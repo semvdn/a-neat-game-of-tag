@@ -662,8 +662,8 @@ export const App: React.FC = () => {
             }
           }
 
-          // Fall Handling. The whole bout is repositioned below after all bodies have been stepped.
-          // Stamina is intentionally not refilled, matching evolutionary evaluation.
+          // Champion-view fall detection. Fallen bodies are respawned individually below;
+          // the continuous visible game itself never resets.
           if (newPosition.y > FALL_BOUNDARY) {
             fallEvents[agent.id] = true;
             visualFallsRef.current++;
@@ -696,69 +696,65 @@ export const App: React.FC = () => {
 
         const hadFall = Object.keys(fallEvents).length > 0;
         if (hadFall) {
-          const currentIt = newState.agents.find(a => a.status === AgentStatus.It) ?? newState.agents[0];
-          const itId = currentIt.id;
-
-          // Restore temporary crumble state for the new bout while keeping moving platforms at their
-          // current phase. This mirrors headless training rather than teleporting one body in isolation.
-          newState.platforms = newState.platforms.map(platform => ({
-            ...platform,
-            position: { ...(platform.basePosition ?? platform.position) },
-            active: true,
-            crumblePhase: platform.kind === 'crumbling' ? 'stable' : platform.crumblePhase,
-            crumble: platform.crumble ? { ...platform.crumble, triggeredAt: undefined } : undefined,
-          }));
-          newState.platforms = updateDynamicPlatforms(newState.platforms, newState.gameTime).platforms;
-
-          const backbone = newState.platforms.filter(platform =>
+          // Champion-view falls are local events: respawn only the fallen body and keep the
+          // rest of the continuous game untouched (other agents, terrain phase, camera, clock).
+          // Prefer the guaranteed backbone so a respawn can never land on a temporary branch.
+          const solidBackbone = newState.platforms.filter(platform =>
             (platform.routeRole === 'start' || platform.routeRole === 'backbone') && isPlatformSolid(platform)
           );
-          if (backbone.length >= 2) {
-            const maxAnchor = Math.max(0, Math.min(backbone.length - 2, Math.floor((backbone.length - 2) * 0.45)));
-            const anchorIndex = Math.floor(Math.random() * (maxAnchor + 1));
-            const chaserPlatform = backbone[anchorIndex];
-            const evaderPlatform = backbone[Math.min(backbone.length - 1, anchorIndex + 1)];
-            const evaders = newState.agents.filter(a => a.id !== itId);
+          const solidFallback = newState.platforms.filter(isPlatformSolid);
+          const respawnPlatforms = solidBackbone.length > 0 ? solidBackbone : solidFallback;
 
-            const place = (agent: AgentState, platform: PlatformState, ratio: number, role: 'chaser' | 'evader') => {
-              const usable = Math.max(AGENT_WIDTH + 8, platform.width - AGENT_WIDTH);
-              const x = platform.position.x + Math.max(4, Math.min(usable - 4, usable * ratio));
-              const y = platform.position.y - AGENT_HEIGHT;
-              agent.position = { x, y };
-              agent.velocity = { x: 0, y: 0 };
-              agent.acceleration = { x: 0, y: 0 };
-              agent.isOnGround = true;
-              agent.lastPlatformId = platform.id;
-              agent.energy = Math.max(0, Math.min(agent.maxEnergy, agent.energy));
-              agent.energyAtLastTakeoff = agent.energy;
-              agent.positionAtLastTakeoff = { x, y };
-              agent.survivalTime = 0;
-              agent.timeSinceBecameIt = 0;
-              agent.role = role;
-              agent.modelId = role === 'chaser'
-                ? `champion_chaser_g${installedChampionGenerationRef.current.chaser}`
-                : `champion_evader_g${installedChampionGenerationRef.current.evader}`;
-            };
+          if (respawnPlatforms.length > 0) {
+            newState.agents = newState.agents.map(agent => {
+              if (!fallEvents[agent.id]) return agent;
 
-            place(currentIt, chaserPlatform, visualFlowDirectionRef.current === 1 ? 0.68 : 0.32, 'chaser');
-            currentIt.status = AgentStatus.It;
-            currentIt.cooldownTimer = 700;
-            evaders.forEach((agent, index) => {
-              const ratios = visualFlowDirectionRef.current === 1 ? [0.30, 0.72] : [0.70, 0.28];
-              place(agent, evaderPlatform, ratios[index] ?? 0.5, 'evader');
-              agent.status = AgentStatus.Cooldown;
-              agent.cooldownTimer = 850;
+              const fallX = agent.position.x + AGENT_WIDTH / 2;
+              const targetPlatform = respawnPlatforms.reduce((best, candidate) => {
+                const bestCenter = best.position.x + best.width / 2;
+                const candidateCenter = candidate.position.x + candidate.width / 2;
+                return Math.abs(candidateCenter - fallX) < Math.abs(bestCenter - fallX) ? candidate : best;
+              });
+
+              const usableWidth = Math.max(0, targetPlatform.width - AGENT_WIDTH - 8);
+              // Spread the three bodies across a platform if more than one falls together.
+              const baseRatios = [0.28, 0.50, 0.72];
+              const rawRatio = baseRatios[Math.abs(agent.id) % baseRatios.length];
+              const ratio = visualFlowDirectionRef.current === 1 ? rawRatio : 1 - rawRatio;
+              const x = targetPlatform.position.x + 4 + usableWidth * ratio;
+              const y = targetPlatform.position.y - AGENT_HEIGHT;
+              const isChaser = agent.status === AgentStatus.It;
+              const role: 'chaser' | 'evader' = isChaser ? 'chaser' : 'evader';
+
+              return {
+                ...agent,
+                position: { x, y },
+                velocity: { x: 0, y: 0 },
+                acceleration: { x: 0, y: 0 },
+                isOnGround: true,
+                lastPlatformId: targetPlatform.id,
+                // A fall must not become a stamina refill. Preserve the remaining reserve.
+                energy: Math.max(0, Math.min(agent.maxEnergy, agent.energy)),
+                energyAtLastTakeoff: Math.max(0, Math.min(agent.maxEnergy, agent.energy)),
+                positionAtLastTakeoff: { x, y },
+                // Preserve who is It, but give the respawned body a brief no-contact window.
+                status: isChaser ? AgentStatus.It : AgentStatus.Cooldown,
+                cooldownTimer: Math.max(agent.cooldownTimer || 0, isChaser ? 750 : 900),
+                role,
+                modelId: role === 'chaser'
+                  ? `champion_chaser_g${installedChampionGenerationRef.current.chaser}`
+                  : `champion_evader_g${installedChampionGenerationRef.current.evader}`,
+                // Falling breaks the current individual chase/survival streak, not the game.
+                survivalTime: 0,
+                timeSinceBecameIt: 0,
+              };
             });
-
-            const minGroupX = Math.min(...newState.agents.map(a => a.position.x));
-            const maxGroupX = Math.max(...newState.agents.map(a => a.position.x + AGENT_WIDTH));
-            newState.cameraPosition.x = (minGroupX + maxGroupX) / 2 - viewportSize.width / 2;
           }
         }
 
         // 4. Tag Detection & role swap between the current NEAT champions
         let tagEvent: { taggerId?: number; taggedId?: number } = {};
-        const itAgent = hadFall ? undefined : newState.agents.find(a => a.status === AgentStatus.It);
+        const itAgent = newState.agents.find(a => a.status === AgentStatus.It);
 
         if (itAgent && (itAgent.cooldownTimer || 0) <= 0) {
           for (const otherAgent of newState.agents) {
