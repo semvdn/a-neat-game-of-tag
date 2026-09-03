@@ -5,7 +5,7 @@ import { PerformanceDiagnostics } from './components/PerformanceDiagnostics';
 import { useGameLoop } from './hooks/useGameLoop';
 import { LearningAgent, type AgentControls } from './learning/agent';
 import { getPhysiology, stepLocomotion, syncEnergyCapacity } from './learning/movement';
-import { updateEloRatings, createLeaderboardEntries } from './learning/elo';
+import { createLeaderboardEntries } from './learning/elo';
 import { getAgentStateVector } from './learning/state';
 import { generateCourse } from './level/generator';
 import { isPlatformSolid, triggerCrumblingPlatform, updateDynamicPlatforms } from './level/dynamics';
@@ -16,7 +16,6 @@ import type {
   RewardBreakdown,
   DiagnosticsState,
   PerformanceDataPoint,
-  EloLeaderboardEntry,
   PlatformState,
 } from './types';
 import { AgentStatus } from './types';
@@ -24,7 +23,6 @@ import {
   GRAVITY,
   AGENT_WIDTH,
   AGENT_HEIGHT,
-  MAX_SPEED,
   TAG_COOLDOWN,
   FALL_BOUNDARY,
   AGENT_COLORS,
@@ -35,7 +33,7 @@ import {
   NEAT_HOF_MAX_SIZE,
   NEAT_HOF_OPPONENTS_PER_GENOME,
 } from './constants';
-import { Activity, Play, Pause, FastForward, RotateCcw, Zap } from 'lucide-react';
+import { Activity, Play, Pause, FastForward, RotateCcw, MonitorPlay, Cpu } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState | null>(null);
@@ -47,9 +45,12 @@ export const App: React.FC = () => {
 
   // Diagnostics & Control State
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
-  const [simulationSpeed, setSimulationSpeed] = useState(1);
-  const [isPaused, setIsPaused] = useState(false);
+  const [visualSpeed, setVisualSpeed] = useState(1);
+  const [workerSpeed, setWorkerSpeed] = useState(50);
+  const [isVisualPaused, setIsVisualPaused] = useState(false);
+  const [isTrainingPaused, setIsTrainingPaused] = useState(false);
   const stepFrameRef = useRef(false);
+  const visualStepAccumulatorRef = useRef(0);
   const visualFlowDirectionRef = useRef<1 | -1>(1);
 
   const [diagnosticsState, setDiagnosticsState] = useState<DiagnosticsState>(() => ({
@@ -82,9 +83,14 @@ export const App: React.FC = () => {
     chaser: Record<string, number>;
     evader: Record<string, number>;
   }>({ all: {}, chaser: {}, evader: {} });
+  // Worker-owned training totals. Champion-view counters are kept separate so the
+  // visible arena can be reset or paused without changing evolutionary telemetry.
   const totalTagsRef = useRef(0);
   const totalFallsRef = useRef(0);
   const totalJumpsRef = useRef(0);
+  const visualTagsRef = useRef(0);
+  const visualFallsRef = useRef(0);
+  const visualJumpsRef = useRef(0);
 
   const mainContainerRef = useRef<HTMLDivElement>(null);
   const curriculumDifficultyRef = useRef(0.08);
@@ -100,14 +106,12 @@ export const App: React.FC = () => {
   const recentSurvivalTimes = useRef<number[]>([]);
   const recentTimesToTag = useRef<number[]>([]);
 
-  // Web Worker for Headless Accelerated Simulation
+  // The champion arena and evolutionary worker are intentionally independent.
   const workerRef = useRef<Worker | null>(null);
-  const isWorkerMode = simulationSpeed >= 25;
-  const isWorkerModeRef = useRef(isWorkerMode);
   const viewportSizeRef = useRef(viewportSize);
   const initializedRef = useRef(false);
+  const installedChampionGenerationRef = useRef({ chaser: 0, evader: 0 });
 
-  useEffect(() => { isWorkerModeRef.current = isWorkerMode; }, [isWorkerMode]);
   useEffect(() => { viewportSizeRef.current = viewportSize; }, [viewportSize]);
 
   const initializeGameState = useCallback(() => {
@@ -151,7 +155,7 @@ export const App: React.FC = () => {
         positionAtLastTakeoff: { x: visualStartXs[0], y: startY },
         survivalTime: 0,
         timeSinceBecameIt: 0,
-        modelId: 'current_evader',
+        modelId: 'champion_evader_g0',
       },
       {
         id: 2,
@@ -174,7 +178,7 @@ export const App: React.FC = () => {
         positionAtLastTakeoff: { x: visualStartXs[1], y: startY },
         survivalTime: 0,
         timeSinceBecameIt: 0,
-        modelId: 'current_evader',
+        modelId: 'champion_evader_g0',
       },
       {
         id: 3,
@@ -197,14 +201,14 @@ export const App: React.FC = () => {
         positionAtLastTakeoff: { x: visualStartXs[2], y: startY },
         survivalTime: 0,
         timeSinceBecameIt: 0,
-        modelId: 'current_evader',
+        modelId: 'champion_evader_g0',
       },
     ];
 
     const itAgent = initialAgents[0];
     itAgent.status = AgentStatus.It;
     itAgent.role = 'chaser';
-    itAgent.modelId = 'current_chaser';
+    itAgent.modelId = 'champion_chaser_g0';
     itAgent.elo = INITIAL_ELO;
 
     initialAgents.forEach(agent => {
@@ -283,15 +287,30 @@ export const App: React.FC = () => {
             curriculumDifficultyRef.current = payload.curriculum.difficulty;
           }
 
-          // The worker owns evolution. The main thread only renders the latest champions.
-          if (payload.chaserChampionGenome && chaserAgent.current) {
+          // Hot-swap the latest completed-generation champions into the persistent visual arena.
+          // Positions, stamina, roles, platforms and game time are deliberately left untouched.
+          const generation = payload.generation || 0;
+          const chaserChampionGeneration = payload.lastChaserNeatMetrics?.generation ?? generation;
+          const evaderChampionGeneration = payload.lastEvaderNeatMetrics?.generation ?? generation;
+          if (
+            payload.chaserChampionGenome &&
+            chaserAgent.current &&
+            chaserChampionGeneration !== installedChampionGenerationRef.current.chaser
+          ) {
             chaserAgent.current.setWeights(payload.chaserChampionGenome);
+            chaserAgent.current.setGeneration(chaserChampionGeneration);
+            installedChampionGenerationRef.current.chaser = chaserChampionGeneration;
           }
-          if (payload.evaderChampionGenome && evaderAgent.current) {
+          if (
+            payload.evaderChampionGenome &&
+            evaderAgent.current &&
+            evaderChampionGeneration !== installedChampionGenerationRef.current.evader
+          ) {
             evaderAgent.current.setWeights(payload.evaderChampionGenome);
+            evaderAgent.current.setGeneration(evaderChampionGeneration);
+            installedChampionGenerationRef.current.evader = evaderChampionGeneration;
           }
 
-          const generation = payload.generation || 0;
           const now = Date.now();
 
           setDiagnosticsState(prev => {
@@ -363,25 +382,6 @@ export const App: React.FC = () => {
             };
           });
 
-          if (isWorkerModeRef.current && payload.sampleGameState) {
-            setGameState(prev => {
-              if (!prev) return null;
-              const sample = payload.sampleGameState as GameState;
-              return {
-                ...prev,
-                gameTime: sample.gameTime,
-                avgSurvivalTime: sample.avgSurvivalTime,
-                avgTimeToTag: sample.avgTimeToTag,
-                agents: sample.agents.map((a: AgentState) => ({
-                  ...a,
-                  stateVector: getAgentStateVector(a, sample, viewportSizeRef.current),
-                })),
-                platforms: sample.platforms || prev.platforms,
-                cameraPosition: sample.cameraPosition || prev.cameraPosition,
-                courseGraph: sample.courseGraph || prev.courseGraph,
-              };
-            });
-          }
         } else if (type === 'SYNC_WEIGHTS_RESPONSE') {
           if (payload.chaserWeights && chaserAgent.current) {
             chaserAgent.current.setWeights(payload.chaserWeights);
@@ -403,27 +403,27 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Sync simulation speed with Web Worker
+  // Background evolution has its own speed and pause state. It never takes over the canvas.
   useEffect(() => {
     if (!workerRef.current || !isSimulating) return;
 
-    if (isWorkerMode && !isPaused) {
-      workerRef.current.postMessage({
-        type: 'START',
-        payload: {
-          speedMultiplier: simulationSpeed,
-          chaserWeights: chaserAgent.current?.getWeights(),
-          evaderWeights: evaderAgent.current?.getWeights(),
-          chaserElo: chaserElo.current,
-          evaderElo: evaderElo.current,
-          viewportSize,
-        },
-      });
-    } else {
+    if (isTrainingPaused) {
       workerRef.current.postMessage({ type: 'PAUSE' });
-      workerRef.current.postMessage({ type: 'SYNC_WEIGHTS_REQUEST' });
+      return;
     }
-  }, [simulationSpeed, isWorkerMode, isPaused, isSimulating, viewportSize]);
+
+    workerRef.current.postMessage({
+      type: 'START',
+      payload: {
+        speedMultiplier: workerSpeed,
+        chaserWeights: chaserAgent.current?.getWeights(),
+        evaderWeights: evaderAgent.current?.getWeights(),
+        chaserElo: chaserElo.current,
+        evaderElo: evaderElo.current,
+        viewportSize,
+      },
+    });
+  }, [workerSpeed, isTrainingPaused, isSimulating, viewportSize]);
 
   const calculateReward = (
     agent: AgentState,
@@ -461,7 +461,7 @@ export const App: React.FC = () => {
     const landedOnNewPlatform =
       agent.isOnGround && !prevState.isOnGround && agent.lastPlatformId !== prevState.lastPlatformId && prevState.lastPlatformId !== null;
     if (landedOnNewPlatform) {
-      totalJumpsRef.current++;
+      visualJumpsRef.current++;
       breakdown['successfulJump'] = 2.0;
     }
 
@@ -517,7 +517,7 @@ export const App: React.FC = () => {
   const updateGame = useCallback(
     (deltaTime: number) => {
       setGameState(prevGameState => {
-        if (!prevGameState || !isSimulating || isWorkerMode) return prevGameState;
+        if (!prevGameState || !isSimulating) return prevGameState;
 
         const nextGameTime = prevGameState.gameTime + deltaTime;
         const dynamicStep = updateDynamicPlatforms(prevGameState.platforms, nextGameTime);
@@ -565,7 +565,9 @@ export const App: React.FC = () => {
           const role: 'chaser' | 'evader' = isChaser ? 'chaser' : 'evader';
           agent.role = role;
           agent.elo = isChaser ? chaserElo.current : evaderElo.current;
-          agent.modelId = isChaser ? 'current_chaser' : 'current_evader';
+          agent.modelId = isChaser
+            ? `champion_chaser_g${installedChampionGenerationRef.current.chaser}`
+            : `champion_evader_g${installedChampionGenerationRef.current.evader}`;
 
           const model = isChaser ? chaserAgent.current : evaderAgent.current;
           if (!model) return;
@@ -655,7 +657,7 @@ export const App: React.FC = () => {
           // Stamina is intentionally not refilled, matching evolutionary evaluation.
           if (newPosition.y > FALL_BOUNDARY) {
             fallEvents[agent.id] = true;
-            totalFallsRef.current++;
+            visualFallsRef.current++;
             playFallSound();
             grounded = false;
           }
@@ -724,7 +726,9 @@ export const App: React.FC = () => {
               agent.survivalTime = 0;
               agent.timeSinceBecameIt = 0;
               agent.role = role;
-              agent.modelId = role === 'chaser' ? 'current_chaser' : 'current_evader';
+              agent.modelId = role === 'chaser'
+                ? `champion_chaser_g${installedChampionGenerationRef.current.chaser}`
+                : `champion_evader_g${installedChampionGenerationRef.current.evader}`;
             };
 
             place(currentIt, chaserPlatform, visualFlowDirectionRef.current === 1 ? 0.68 : 0.32, 'chaser');
@@ -760,7 +764,7 @@ export const App: React.FC = () => {
 
               if (distance < (AGENT_WIDTH + AGENT_HEIGHT) / 2) {
                 tagEvent = { taggerId: itAgent.id, taggedId: otherAgent.id };
-                totalTagsRef.current++;
+                visualTagsRef.current++;
 
                 const recordedSurvival = Math.max(otherAgent.survivalTime || 0, 100);
                 const recordedTimeToTag = Math.max(itAgent.timeSinceBecameIt || 0, 100);
@@ -774,11 +778,6 @@ export const App: React.FC = () => {
                   recentTimesToTag.current.shift();
                 }
 
-                // Update Elo
-                const eloResult = updateEloRatings(chaserElo.current, evaderElo.current, recordedSurvival);
-                chaserElo.current = eloResult.newChaserElo;
-                evaderElo.current = eloResult.newEvaderElo;
-
                 // Role swap; each role always uses its latest evolved champion
                 const oldTagger = itAgent;
                 const newTagger = otherAgent;
@@ -791,7 +790,7 @@ export const App: React.FC = () => {
                 newTagger.survivalTime = 0;
                 newTagger.timeSinceBecameIt = 0;
 
-                newTagger.modelId = 'current_chaser';
+                newTagger.modelId = `champion_chaser_g${installedChampionGenerationRef.current.chaser}`;
                 syncEnergyCapacity(newTagger, 'chaser');
 
                 // Old tagger becomes evader with full tag-immunity cooldown to escape safely
@@ -802,7 +801,7 @@ export const App: React.FC = () => {
                 oldTagger.survivalTime = 0;
                 oldTagger.timeSinceBecameIt = 0;
 
-                oldTagger.modelId = 'current_evader';
+                oldTagger.modelId = `champion_evader_g${installedChampionGenerationRef.current.evader}`;
                 syncEnergyCapacity(oldTagger, 'evader');
 
                 playTagSound();
@@ -856,49 +855,8 @@ export const App: React.FC = () => {
 
         // Evolution is intentionally absent from the main thread; the worker owns generations.
 
-        // Periodic visual telemetry sampling. NEAT population telemetry arrives separately from the worker.
-        const now = Date.now();
-        if (now - lastTelemetryTimeRef.current >= 800) {
-          lastTelemetryTimeRef.current = now;
-          const currentGeneration = Math.max(
-            chaserAgent.current?.getGeneration() || 0,
-            evaderAgent.current?.getGeneration() || 0
-          );
-          const currentLeaderboard = createLeaderboardEntries(
-            chaserElo.current,
-            evaderElo.current,
-            totalTagsRef.current,
-            totalFallsRef.current,
-            currentGeneration,
-            newState.avgTimeToTag,
-            newState.avgSurvivalTime
-          );
-
-          setDiagnosticsState(prev => {
-            const point: PerformanceDataPoint = {
-              timestamp: now,
-              gameTime: newState.gameTime,
-              generation: currentGeneration,
-              avgSurvivalTime: (newState.avgSurvivalTime || 0) / 1000,
-              avgTimeToTag: (newState.avgTimeToTag || 0) / 1000,
-              fallsPerMinute: totalFallsRef.current / Math.max(0.1, newState.gameTime / 60000),
-              tagsPerMinute: totalTagsRef.current / Math.max(0.1, newState.gameTime / 60000),
-              chaserElo: chaserElo.current,
-              evaderElo: evaderElo.current,
-            };
-            return {
-              ...prev,
-              eloLeaderboard: currentLeaderboard,
-              performanceHistory: [...prev.performanceHistory.slice(-59), point],
-              totalTags: totalTagsRef.current,
-              totalFalls: totalFallsRef.current,
-              totalSuccessfulJumps: totalJumpsRef.current,
-              actionDistribution: { ...actionCountsRef.current.all },
-              chaserActionDistribution: { ...actionCountsRef.current.chaser },
-              evaderActionDistribution: { ...actionCountsRef.current.evader },
-            };
-          });
-        }
+        // Training diagnostics are worker-owned. The champion view keeps only its local
+        // survival/tag-time history so resetting it cannot corrupt evolutionary metrics.
 
         // 7. Camera Tracking (Runners have dominant authority over camera progression)
         const evaders = newState.agents.filter(a => a.status !== AgentStatus.It);
@@ -938,27 +896,26 @@ export const App: React.FC = () => {
         return newState;
       });
     },
-    [isSimulating, isWorkerMode, viewportSize]
+    [isSimulating, viewportSize]
   );
 
   const updateSimulation = useCallback(
-    (deltaTime: number) => {
-      if (isPaused && !stepFrameRef.current) return;
+    (_deltaTime: number) => {
+      if (isVisualPaused && !stepFrameRef.current) return;
       if (stepFrameRef.current) {
         stepFrameRef.current = false;
         updateGame(16.67);
         return;
       }
-      if (isWorkerMode) {
-        // Headless worker handles steps directly, main thread skips synchronous heavy steps
-        return;
-      }
-      const speed = Math.min(10, Math.max(1, simulationSpeed));
-      for (let i = 0; i < speed; i++) {
-        updateGame(16.67);
-      }
+
+      // Champion-view speed is a rendering-time multiplier only. Fractional speeds are
+      // supported via an accumulator; training throughput is controlled separately.
+      visualStepAccumulatorRef.current += Math.max(0.25, Math.min(10, visualSpeed));
+      const steps = Math.floor(visualStepAccumulatorRef.current);
+      visualStepAccumulatorRef.current -= steps;
+      for (let i = 0; i < steps; i++) updateGame(16.67);
     },
-    [isPaused, isWorkerMode, simulationSpeed, updateGame]
+    [isVisualPaused, visualSpeed, updateGame]
   );
 
   useGameLoop(updateSimulation);
@@ -979,21 +936,7 @@ export const App: React.FC = () => {
   };
 
 
-  const handleResetWeights = () => {
-    if (chaserAgent.current) chaserAgent.current.resetWeights();
-    if (evaderAgent.current) evaderAgent.current.resetWeights();
-    if (workerRef.current) {
-      workerRef.current.postMessage({ type: 'RESET' });
-    }
-    chaserElo.current = INITIAL_ELO;
-    evaderElo.current = INITIAL_ELO;
-    recentSurvivalTimes.current = [];
-    recentTimesToTag.current = [];
-    actionCountsRef.current = { all: {}, chaser: {}, evader: {} };
-    totalTagsRef.current = 0;
-    totalFallsRef.current = 0;
-    totalJumpsRef.current = 0;
-    curriculumDifficultyRef.current = 0.08;
+  const handleResetChampionGame = useCallback(() => {
     const freshCourse = generateCourse({
       seed: (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0,
       difficulty: curriculumDifficultyRef.current,
@@ -1001,6 +944,14 @@ export const App: React.FC = () => {
       length: 24000,
     });
     visualFlowDirectionRef.current = freshCourse.flowDirection;
+    recentSurvivalTimes.current = [];
+    recentTimesToTag.current = [];
+    visualTagsRef.current = 0;
+    visualFallsRef.current = 0;
+    visualJumpsRef.current = 0;
+    actionCountsRef.current = { all: {}, chaser: {}, evader: {} };
+    visualStepAccumulatorRef.current = 0;
+
     setGameState(prev => {
       if (!prev) return prev;
       const startPlatform = freshCourse.platforms.find(p => p.id === 0) || freshCourse.platforms[0];
@@ -1022,7 +973,9 @@ export const App: React.FC = () => {
           survivalTime: 0,
           timeSinceBecameIt: 0,
           trajectory: [],
-          modelId: isChaser ? 'current_chaser' : 'current_evader',
+          modelId: isChaser
+            ? `champion_chaser_g${installedChampionGenerationRef.current.chaser}`
+            : `champion_evader_g${installedChampionGenerationRef.current.evader}`,
         };
       });
       return {
@@ -1037,10 +990,25 @@ export const App: React.FC = () => {
         avgTimeToTag: 0,
       };
     });
+  }, []);
+
+  const handleResetWeights = () => {
+    // Evolution reset is independent from the champion arena. The running visible match
+    // continues in-place and will hot-swap to the fresh worker champions when they arrive.
+    if (chaserAgent.current) chaserAgent.current.resetWeights();
+    if (evaderAgent.current) evaderAgent.current.resetWeights();
+    installedChampionGenerationRef.current = { chaser: -1, evader: -1 };
+    if (workerRef.current) workerRef.current.postMessage({ type: 'RESET' });
+    chaserElo.current = INITIAL_ELO;
+    evaderElo.current = INITIAL_ELO;
+    totalTagsRef.current = 0;
+    totalFallsRef.current = 0;
+    totalJumpsRef.current = 0;
+    curriculumDifficultyRef.current = 0.08;
 
     setDiagnosticsState(prev => ({
       ...prev,
-              chaserNeatHistory: [],
+      chaserNeatHistory: [],
       evaderNeatHistory: [],
       lastChaserNeatMetrics: null,
       lastEvaderNeatMetrics: null,
@@ -1187,45 +1155,51 @@ export const App: React.FC = () => {
               NEAT Multi-Agent Tag Studio
             </h1>
             <p className="text-xs text-gray-400">
-              Web Worker Headless Acceleration, Historical Snapshot Pool & Enhanced Lidar Perception
+              Persistent Champion Arena + Independent Background NEAT Evolution
             </p>
           </div>
         </div>
 
         {/* Global Controls & Diagnostics Launcher */}
         <div className="flex items-center gap-3">
-          {/* Simulation Speed Buttons */}
-          <div className="flex items-center bg-gray-950 border border-gray-800 rounded-lg p-1 gap-1">
-            {[1, 2, 5, 10, 25, 50].map(speed => (
-              <button
-                key={speed}
-                onClick={() => setSimulationSpeed(speed)}
-                className={`px-2.5 py-1 text-xs font-mono font-semibold rounded transition-all ${
-                  simulationSpeed === speed
-                    ? speed >= 25
-                      ? 'bg-amber-400 text-black font-extrabold shadow-sm'
-                      : 'bg-cyan-500 text-black shadow-sm font-extrabold'
-                    : 'text-gray-400 hover:text-cyan-300 hover:bg-gray-900'
-                }`}
-                title={speed >= 25 ? `${speed}x Web Worker Headless Acceleration` : `${speed}x Visual Canvas Simulation`}
-              >
-                {speed >= 25 ? `⚡${speed}x` : `${speed}x`}
-              </button>
-            ))}
+          {/* Champion-view controls */}
+          <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1 bg-gray-950 border border-gray-800 rounded-lg p-1" title="Persistent champion game speed">
+              <MonitorPlay className="w-3.5 h-3.5 text-cyan-300 ml-1" />
+              <span className="text-[10px] uppercase tracking-wider text-cyan-300 mr-1">View</span>
+              {[0.5, 1, 2, 5, 10].map(speed => (
+                <button
+                  key={speed}
+                  onClick={() => setVisualSpeed(speed)}
+                  className={`px-2 py-1 text-[11px] font-mono font-semibold rounded ${visualSpeed === speed ? 'bg-cyan-500 text-black' : 'text-gray-400 hover:text-cyan-300 hover:bg-gray-900'}`}
+                >{speed}x</button>
+              ))}
+            </div>
+            <button onClick={() => setIsVisualPaused(p => !p)} className="p-2 rounded-lg border border-gray-700 text-cyan-200 hover:bg-gray-800" title={isVisualPaused ? 'Resume champion view' : 'Pause champion view'}>
+              {isVisualPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+            </button>
+            <button onClick={handleResetChampionGame} className="px-2.5 py-2 rounded-lg border border-gray-700 text-cyan-200 hover:bg-gray-800 flex items-center gap-1.5 text-[11px] font-semibold" title="Reset champion game only">
+              <RotateCcw className="w-3.5 h-3.5" />Reset view
+            </button>
           </div>
 
-          {/* Pause / Play */}
-          <button
-            onClick={() => setIsPaused(p => !p)}
-            className={`p-2 rounded-lg border transition-all ${
-              isPaused
-                ? 'bg-amber-500/20 border-amber-500/50 text-amber-400 hover:bg-amber-500/30'
-                : 'bg-gray-850 border-gray-700 text-gray-300 hover:bg-gray-800'
-            }`}
-            title={isPaused ? 'Resume Simulation' : 'Pause Simulation'}
-          >
-            {isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
-          </button>
+          {/* Independent background-training controls */}
+          <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1 bg-gray-950 border border-gray-800 rounded-lg p-1" title="Background worker throughput">
+              <Cpu className="w-3.5 h-3.5 text-amber-300 ml-1" />
+              <span className="text-[10px] uppercase tracking-wider text-amber-300 mr-1">Train</span>
+              {[10, 25, 50, 100, 200].map(speed => (
+                <button
+                  key={speed}
+                  onClick={() => setWorkerSpeed(speed)}
+                  className={`px-2 py-1 text-[11px] font-mono font-semibold rounded ${workerSpeed === speed ? 'bg-amber-400 text-black' : 'text-gray-400 hover:text-amber-300 hover:bg-gray-900'}`}
+                >{speed}x</button>
+              ))}
+            </div>
+            <button onClick={() => setIsTrainingPaused(p => !p)} className="p-2 rounded-lg border border-gray-700 text-amber-200 hover:bg-gray-800" title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>
+              {isTrainingPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+            </button>
+          </div>
 
 
           {/* Diagnostics Button */}
@@ -1264,6 +1238,12 @@ export const App: React.FC = () => {
               </div>
             </div>
           )}
+          {isSimulating && (
+            <div className="absolute top-3 left-3 z-[5] pointer-events-none rounded-lg border border-cyan-500/25 bg-black/65 backdrop-blur px-3 py-2 text-[11px] text-gray-400 shadow-lg">
+              <div className="font-semibold text-cyan-200">Champion arena · continuous game</div>
+              <div className="font-mono mt-0.5">Chaser G{diagnosticsState.lastChaserNeatMetrics?.generation ?? 0} · Runner G{diagnosticsState.lastEvaderNeatMetrics?.generation ?? 0}</div>
+            </div>
+          )}
           {isSimulating && mainContainerRef.current && (
             <GameCanvas
               gameState={gameState}
@@ -1295,10 +1275,15 @@ export const App: React.FC = () => {
         isOpen={isDiagnosticsOpen}
         onClose={() => setIsDiagnosticsOpen(false)}
         diagnostics={diagnosticsState}
-        simulationSpeed={simulationSpeed}
-        onSetSimulationSpeed={setSimulationSpeed}
-        isPaused={isPaused}
-        onTogglePause={() => setIsPaused(p => !p)}
+        visualSpeed={visualSpeed}
+        onSetVisualSpeed={setVisualSpeed}
+        workerSpeed={workerSpeed}
+        onSetWorkerSpeed={setWorkerSpeed}
+        isVisualPaused={isVisualPaused}
+        onToggleVisualPause={() => setIsVisualPaused(p => !p)}
+        isTrainingPaused={isTrainingPaused}
+        onToggleTrainingPause={() => setIsTrainingPaused(p => !p)}
+        onResetChampionGame={handleResetChampionGame}
         onStepFrame={handleStepFrame}
         onResetWeights={handleResetWeights}
         avgSurvivalTime={gameState.avgSurvivalTime}

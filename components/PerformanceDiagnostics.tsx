@@ -17,14 +17,21 @@ import {
   Upload,
   Save,
   HardDrive,
+  MonitorPlay,
+  Cpu,
 } from 'lucide-react';
 
 interface PerformanceDiagnosticsProps {
   diagnostics: DiagnosticsState;
-  simulationSpeed: number;
-  onSetSimulationSpeed: (speed: number) => void;
-  isPaused: boolean;
-  onTogglePause: () => void;
+  visualSpeed: number;
+  onSetVisualSpeed: (speed: number) => void;
+  workerSpeed: number;
+  onSetWorkerSpeed: (speed: number) => void;
+  isVisualPaused: boolean;
+  onToggleVisualPause: () => void;
+  isTrainingPaused: boolean;
+  onToggleTrainingPause: () => void;
+  onResetChampionGame: () => void;
   onStepFrame: () => void;
   onResetWeights: () => void;
   avgSurvivalTime: number;
@@ -192,10 +199,15 @@ const FitnessSummary: React.FC<{ title: string; metrics?: NeatGenerationMetrics 
 
 export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   diagnostics,
-  simulationSpeed,
-  onSetSimulationSpeed,
-  isPaused,
-  onTogglePause,
+  visualSpeed,
+  onSetVisualSpeed,
+  workerSpeed,
+  onSetWorkerSpeed,
+  isVisualPaused,
+  onToggleVisualPause,
+  isTrainingPaused,
+  onToggleTrainingPause,
+  onResetChampionGame,
   onStepFrame,
   onResetWeights,
   avgSurvivalTime,
@@ -247,12 +259,25 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
           <div className="flex items-center gap-2"><h2 className="font-bold text-lg text-white">NEAT Evolution Diagnostics</h2><span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/30">population based</span></div>
           <p className="text-xs text-gray-500">Fitness, speciation and topology growth replace PPO loss, critic and gradient telemetry.</p>
         </div>
-        <div className="ml-auto flex items-center gap-2">
-          {[1, 2, 5, 10, 25, 50].map(speed => (
-            <button key={speed} onClick={() => onSetSimulationSpeed(speed)} className={`px-2 py-1 rounded text-xs font-mono border ${simulationSpeed === speed ? 'bg-violet-500/25 border-violet-400 text-violet-100' : 'border-gray-800 text-gray-500 hover:text-white'}`}>{speed}x</button>
-          ))}
-          <button onClick={onTogglePause} className="p-2 rounded border border-gray-800 hover:bg-gray-900">{isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}</button>
-          <button onClick={onStepFrame} className="p-2 rounded border border-gray-800 hover:bg-gray-900" title="Step visual frame"><FastForward className="w-4 h-4" /></button>
+        <div className="ml-auto flex items-center gap-3">
+          <div className="flex items-center gap-1 rounded-lg border border-gray-800 bg-black/30 p-1" title="Champion-view speed">
+            <MonitorPlay className="w-3.5 h-3.5 text-cyan-300 ml-1" />
+            <span className="text-[10px] uppercase tracking-wider text-cyan-300 mr-1">View</span>
+            {[0.5, 1, 2, 5, 10].map(speed => (
+              <button key={speed} onClick={() => onSetVisualSpeed(speed)} className={`px-2 py-1 rounded text-xs font-mono ${visualSpeed === speed ? 'bg-cyan-500 text-black' : 'text-gray-500 hover:text-white'}`}>{speed}x</button>
+            ))}
+            <button onClick={onToggleVisualPause} className="p-1.5 rounded hover:bg-gray-900 text-cyan-200" title={isVisualPaused ? 'Resume champion view' : 'Pause champion view'}>{isVisualPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}</button>
+            <button onClick={onStepFrame} className="p-1.5 rounded hover:bg-gray-900 text-cyan-200" title="Step champion view"><FastForward className="w-4 h-4" /></button>
+            <button onClick={onResetChampionGame} className="p-1.5 rounded hover:bg-gray-900 text-cyan-200" title="Reset champion game only"><RotateCcw className="w-4 h-4" /></button>
+          </div>
+          <div className="flex items-center gap-1 rounded-lg border border-gray-800 bg-black/30 p-1" title="Background worker throughput">
+            <Cpu className="w-3.5 h-3.5 text-amber-300 ml-1" />
+            <span className="text-[10px] uppercase tracking-wider text-amber-300 mr-1">Train</span>
+            {[10, 25, 50, 100, 200].map(speed => (
+              <button key={speed} onClick={() => onSetWorkerSpeed(speed)} className={`px-2 py-1 rounded text-xs font-mono ${workerSpeed === speed ? 'bg-amber-400 text-black' : 'text-gray-500 hover:text-white'}`}>{speed}x</button>
+            ))}
+            <button onClick={onToggleTrainingPause} className="p-1.5 rounded hover:bg-gray-900 text-amber-200" title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>{isTrainingPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}</button>
+          </div>
           <button onClick={onClose} className="p-2 rounded border border-gray-800 hover:bg-gray-900"><X className="w-4 h-4" /></button>
         </div>
       </header>
@@ -351,7 +376,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> both roles have identical physical abilities and evolve against rotating current opponents plus Hall-of-Fame champions. Evaluations are randomized 28–42 second 1v2 continuing matches: tags swap roles exactly like visual play, and the match continues. Evaders earn survival milestones every 10 uninterrupted seconds; falls end only the current bout, cost more than a tag, preserve stamina, and restart the group at another valid procedural-course section.
+              <strong className="text-violet-200">Training architecture:</strong> both roles have identical physical abilities and evolve against rotating current opponents plus Hall-of-Fame champions. The champion view is a persistent 1v2 game with its own speed and pause controls; newly evolved generation champions are hot-swapped into the running bodies without resetting positions or stamina. Background evolution runs independently with adaptive normal/stretch horizons, scheduled Hall-of-Fame tests, repeated tag role-swaps, and bout resets after falls.
             </div>
           </div>
         )}

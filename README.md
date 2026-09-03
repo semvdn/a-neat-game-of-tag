@@ -18,7 +18,7 @@ The main React thread no longer learns. It only renders the current champion gen
 
 ## Training cycle
 
-At `25x` and `50x`, the persistent training worker performs headless evolutionary evaluation.
+The persistent training worker performs headless evolutionary evaluation at its own independently selected throughput (`10x`–`200x`). Champion-view speed never changes worker throughput.
 
 For each generation:
 
@@ -31,7 +31,22 @@ For each generation:
 7. Each population is speciated independently. Elites survive, parents are selected, crossover aligns genes by innovation number, then mutations create the next generation.
 8. The worker sends the best chaser and evader genomes plus generation diagnostics to the UI.
 
-At `1x`, `2x`, `5x` and `10x`, the app shows normal visual play using the latest champions. Visual tags use the same role-swap semantics, and visual falls now reset the whole bout without refilling stamina, closely matching training. Switching between visual and turbo modes does **not** recreate the worker or discard the evolving populations.
+The visible canvas is now a **persistent champion arena** with its own `0.5x`–`10x` speed and pause control. It never switches into a worker/sample mode. When a generation completes, the worker hot-swaps the new generation-best chaser and runner networks into the bodies already playing on screen; positions, roles, velocity, stamina, cooldowns, platforms and game time are preserved. Visual tags use the same role-swap semantics, and visual falls reset the current bout without refilling stamina.
+
+The champion arena has an explicit **Reset view** control. Resetting it regenerates/repositions only the visible game at the current terrain difficulty and leaves populations, Hall of Fame, generation and worker state untouched. Conversely, resetting the evolutionary populations does not reset the visible arena; fresh champions are installed into the continuing game when worker telemetry arrives.
+
+Visual and training telemetry are also separated: playing the champion arena faster, pausing it, or resetting it cannot change worker Elo, evolutionary event counts, fitness or generation progression.
+
+## Decoupled champion view and background training
+
+The application now has two independent clocks:
+
+- **View:** `0.5x`, `1x`, `2x`, `5x`, `10x`, with its own pause, single-frame step and reset.
+- **Train:** `10x`, `25x`, `50x`, `100x`, `200x`, with its own pause. Worker throughput maps to the number of headless match evaluations processed per batch (up to 40 at `200x`).
+
+The worker no longer serializes sampled training game states to the React thread. This removes structured-clone overhead and, more importantly, prevents headless evaluation from ever replacing the visible champion game's camera/platform/body state.
+
+The canvas badge reports the champion generations currently driving the continuous game. Champion replacement occurs on completed generations rather than on every telemetry packet, avoiding unnecessary phenotype recompilation.
 
 ## Adaptive-horizon fitness and bout failures
 

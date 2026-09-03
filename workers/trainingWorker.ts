@@ -67,7 +67,7 @@ let lastChaserMetrics: NeatGenerationMetrics | null = null;
 let lastEvaderMetrics: NeatGenerationMetrics | null = null;
 
 let isRunning = false;
-let speedMultiplier = 25;
+let speedMultiplier = 50;
 let timerId: ReturnType<typeof setTimeout> | null = null;
 let viewportSize = { width: 1200, height: 800 };
 let seededFromStart = false;
@@ -149,7 +149,6 @@ let totalJumps = 0;
 let totalSimulatedTime = 0;
 let chaserElo = INITIAL_ELO;
 let evaderElo = INITIAL_ELO;
-let lastSampleGameState: GameState | null = null;
 const recentSurvivalTimes: number[] = [];
 const recentTimesToTag: number[] = [];
 const actionCountsChaser: Record<string, number> = {};
@@ -752,7 +751,6 @@ function recordMatchTelemetry(result: MatchStats, currentPopulationMatch = true)
     );
     chaserElo = eloResult.newChaserElo;
     evaderElo = eloResult.newEvaderElo;
-    lastSampleGameState = result.gameState;
   }
 }
 
@@ -1055,12 +1053,6 @@ function emitTelemetry() {
         chaserGenerations: hallOfFamePool(chaserHallOfFame).map(entry => entry.generation).sort((a, b) => a - b),
         evaderGenerations: hallOfFamePool(evaderHallOfFame).map(entry => entry.generation).sort((a, b) => a - b),
       },
-      sampleGameState: lastSampleGameState
-        ? {
-            ...lastSampleGameState,
-            agents: lastSampleGameState.agents.map(a => ({ ...a, trajectory: [] })),
-          }
-        : null,
     },
   });
 }
@@ -1068,7 +1060,7 @@ function emitTelemetry() {
 function runHeadlessBatch() {
   if (!isRunning) return;
 
-  const matchesThisBatch = Math.max(1, Math.min(12, Math.round(speedMultiplier / 5)));
+  const matchesThisBatch = Math.max(1, Math.min(40, Math.round(speedMultiplier / 5)));
   for (let i = 0; i < matchesThisBatch; i++) {
     const generationComplete = evaluateNextMatch();
     if (generationComplete) finishGeneration();
@@ -1174,7 +1166,6 @@ self.onmessage = (event: MessageEvent) => {
       recentTimesToTag.length = 0;
       Object.keys(actionCountsChaser).forEach(k => delete actionCountsChaser[k]);
       Object.keys(actionCountsEvader).forEach(k => delete actionCountsEvader[k]);
-      lastSampleGameState = null;
       clearHallOfFame();
       lastGenerationBalance = null;
       curriculumState = createCurriculumState();
