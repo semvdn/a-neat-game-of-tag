@@ -111,10 +111,52 @@ export const drawAgentLidarRays = (ctx: CanvasRenderingContext2D, agent: AgentSt
 };
 
 export const drawPlatform = (ctx: CanvasRenderingContext2D, platform: PlatformState) => {
-  ctx.fillStyle = '#4a5568'; // gray-700
-  ctx.fillRect(platform.position.x, platform.position.y, platform.width, platform.height);
-  ctx.fillStyle = '#2d3748'; // gray-800
-  ctx.fillRect(platform.position.x, platform.position.y + platform.height - 4, platform.width, 4);
+  const { x, y } = platform.position;
+
+  // Gone crumble platforms remain as a faint dashed ghost so the temporary route change is legible.
+  if (platform.active === false || platform.crumblePhase === 'gone') {
+    ctx.save();
+    ctx.globalAlpha = 0.20;
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 7]);
+    ctx.strokeRect(x, y, platform.width, platform.height);
+    ctx.restore();
+    return;
+  }
+
+  if (platform.kind === 'moving') {
+    ctx.fillStyle = '#2563eb';
+  } else if (platform.kind === 'crumbling') {
+    ctx.fillStyle = platform.crumblePhase === 'warning' ? '#f59e0b' : '#92400e';
+  } else if (platform.routeRole === 'branch') {
+    ctx.fillStyle = '#475569';
+  } else {
+    ctx.fillStyle = '#4a5568';
+  }
+
+  // A small shake during the warning window makes crumble timing visible without changing collision geometry.
+  const shake = platform.crumblePhase === 'warning' ? Math.sin(Date.now() / 28 + platform.id) * 2 : 0;
+  ctx.fillRect(x + shake, y, platform.width, platform.height);
+  ctx.fillStyle = platform.kind === 'moving' ? '#1e3a8a' : '#2d3748';
+  ctx.fillRect(x + shake, y + platform.height - 4, platform.width, 4);
+
+  if (platform.kind === 'moving') {
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    const arrowY = y + platform.height / 2;
+    const midX = x + platform.width / 2;
+    ctx.beginPath();
+    if (platform.motion?.axis === 'y') {
+      ctx.moveTo(midX, arrowY - 5);
+      ctx.lineTo(midX - 4, arrowY);
+      ctx.lineTo(midX + 4, arrowY);
+    } else {
+      ctx.moveTo(midX + 5, arrowY);
+      ctx.lineTo(midX, arrowY - 4);
+      ctx.lineTo(midX, arrowY + 4);
+    }
+    ctx.fill();
+  }
 };
 
 const drawItIndicator = (ctx: CanvasRenderingContext2D) => {

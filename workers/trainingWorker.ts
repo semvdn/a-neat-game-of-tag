@@ -3,21 +3,18 @@ import { getPhysiology, stepLocomotion } from '../learning/movement';
 import { NeatPopulation, DEFAULT_NEAT_CONFIG, cloneGenome, type NeatGenerationMetrics, type NeatGenomeData } from '../learning/neat';
 import { getAgentStateVector } from '../learning/state';
 import { updateEloRatings, createLeaderboardEntries } from '../learning/elo';
-import type { AgentState, BalanceTelemetry, GameState, PlatformState } from '../types';
+import type { AgentState, BalanceTelemetry, CurriculumTelemetry, GameState } from '../types';
 import { AgentStatus } from '../types';
+import { advanceCurriculum, createCurriculumState, curriculumSnapshot } from '../level/curriculum';
+import { countCourseFeatures, generateCourse } from '../level/generator';
+import { isPlatformSolid, triggerCrumblingPlatform, updateDynamicPlatforms } from '../level/dynamics';
+import { mulberry32 } from '../level/random';
 import {
   AGENT_WIDTH,
   AGENT_HEIGHT,
   AGENT_COLORS,
   GRAVITY,
-  MAX_ENERGY,
   FALL_BOUNDARY,
-  PLATFORM_MIN_WIDTH,
-  PLATFORM_MAX_WIDTH,
-  PLATFORM_HEIGHT,
-  MIN_PLATFORM_GAP_X,
-  MAX_PLATFORM_GAP_X,
-  MAX_PLATFORM_GAP_Y,
   INITIAL_ELO,
   SURVIVAL_TIME_HISTORY_LENGTH,
   TIME_TO_TAG_HISTORY_LENGTH,
@@ -88,6 +85,14 @@ let generationPopulationMatches = 0;
 let generationPopulationTags = 0;
 let generationPopulationTagTimeMs = 0;
 let lastGenerationBalance: BalanceTelemetry | null = null;
+let curriculumState = createCurriculumState();
+let lastCurriculumTelemetry: CurriculumTelemetry = curriculumSnapshot(curriculumState);
+let generationNavigationScoreTotal = 0;
+let generationPopulationFalls = 0;
+let lastCourseSeed = 0;
+let lastCourseBranchCount = 0;
+let lastCourseMovingPlatforms = 0;
+let lastCourseCrumblingPlatforms = 0;
 
 let totalTags = 0;
 let totalFalls = 0;
@@ -101,14 +106,6 @@ const recentTimesToTag: number[] = [];
 const actionCountsChaser: Record<string, number> = {};
 const actionCountsEvader: Record<string, number> = {};
 
-function mulberry32(seed: number) {
-  return function () {
-    let t = (seed += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 function makeAgent(id: number, x: number, role: 'chaser' | 'evader'): AgentState {
   const physiology = getPhysiology(role);
@@ -138,60 +135,33 @@ function makeAgent(id: number, x: number, role: 'chaser' | 'evader'): AgentState
 }
 
 function createEpisodeState(seed: number): { gameState: GameState; flowDirection: 1 | -1 } {
-  const rng = mulberry32(seed);
-  // Seed parity guarantees both orientations are seen across the three evaluation rounds.
-  const mirrored = (seed & 1) === 1;
-  const flowDirection: 1 | -1 = mirrored ? -1 : 1;
-  const baseY = viewportSize.height - 100;
-  let platforms: PlatformState[] = [
-    { id: 0, position: { x: -200, y: baseY }, width: viewportSize.width + 400, height: PLATFORM_HEIGHT },
-  ];
-
-  let last = platforms[0];
-  let id = 1;
-  const targetX = viewportSize.width + 6500;
-  while (last.position.x + last.width < targetX) {
-    let gapX = MIN_PLATFORM_GAP_X + rng() * (MAX_PLATFORM_GAP_X - MIN_PLATFORM_GAP_X);
-    const gapY = (rng() - 0.5) * MAX_PLATFORM_GAP_Y * 1.5;
-    const newY = Math.min(viewportSize.height - 120, Math.max(250, last.position.y + gapY));
-    const verticalDifference = newY - last.position.y;
-    if (verticalDifference < -100) gapX = Math.max(MIN_PLATFORM_GAP_X, Math.min(gapX, 90));
-    else if (verticalDifference > 80) gapX = Math.max(gapX, 140);
-    const width = PLATFORM_MIN_WIDTH + rng() * (PLATFORM_MAX_WIDTH - PLATFORM_MIN_WIDTH);
-    const next: PlatformState = {
-      id: id++,
-      position: { x: last.position.x + last.width + gapX, y: newY },
-      width,
-      height: PLATFORM_HEIGHT,
-    };
-    platforms.push(next);
-    last = next;
-  }
-
-  // Randomize spacing and translation enough to prevent memorizing exact start coordinates.
-  const spread = 0.88 + rng() * 0.24;
-  const shift = (rng() - 0.5) * 90;
-  let startXs = [120 + shift, 120 + 400 * spread + shift, 120 + 670 * spread + shift];
-
-  if (mirrored) {
-    const mirrorRectX = (x: number, width: number) => viewportSize.width - (x + width);
-    platforms = platforms.map(platform => ({
-      ...platform,
-      position: { ...platform.position, x: mirrorRectX(platform.position.x, platform.width) },
-    }));
-    startXs = startXs.map(x => mirrorRectX(x, AGENT_WIDTH));
-  }
+  const course = generateCourse({
+    seed,
+    difficulty: curriculumState.difficulty,
+    viewport: viewportSize,
+    length: viewportSize.width + 7200,
+  });
+  const features = countCourseFeatures(course.platforms);
+  lastCourseSeed = seed >>> 0;
+  lastCourseBranchCount = course.graph.branchCount;
+  lastCourseMovingPlatforms = features.moving;
+  lastCourseCrumblingPlatforms = features.crumbling;
 
   return {
-    flowDirection,
+    flowDirection: course.flowDirection,
     gameState: {
-      agents: [makeAgent(1, startXs[0], 'chaser'), makeAgent(2, startXs[1], 'evader'), makeAgent(3, startXs[2], 'evader')],
-      platforms,
+      agents: [
+        makeAgent(1, course.startXs[0], 'chaser'),
+        makeAgent(2, course.startXs[1], 'evader'),
+        makeAgent(3, course.startXs[2], 'evader'),
+      ],
+      platforms: course.platforms,
       cameraPosition: { x: 0, y: 0 },
       gameTime: 0,
       tagEffects: [],
       avgSurvivalTime: 0,
       avgTimeToTag: 0,
+      courseGraph: course.graph,
     },
   };
 }
@@ -203,6 +173,7 @@ interface EpisodeStats {
   elapsedMs: number;
   falls: number;
   jumps: number;
+  navigationScore: number;
   gameState: GameState;
 }
 
@@ -227,6 +198,8 @@ function runEpisode(
   let chaserJumps = 0;
   let evaderJumps = 0;
   let tagged = false;
+  const visitedPlatforms = new Map<number, Set<number>>();
+  gameState.agents.forEach(agent => visitedPlatforms.set(agent.id, new Set([agent.lastPlatformId ?? 0])));
 
   const maxSteps = Math.ceil(NEAT_EPISODE_MAX_MS / DT);
 
@@ -234,6 +207,23 @@ function runEpisode(
     gameState.gameTime += DT;
     chaserAgent.timeSinceBecameIt += DT;
     evaders.forEach(a => (a.survivalTime += DT));
+
+    // Advance dynamic terrain before perception. Grounded agents inherit platform motion.
+    const dynamicStep = updateDynamicPlatforms(gameState.platforms, gameState.gameTime);
+    gameState.platforms = dynamicStep.platforms;
+    for (const agent of gameState.agents) {
+      if (!agent.isOnGround || agent.lastPlatformId === null) continue;
+      const support = gameState.platforms.find(p => p.id === agent.lastPlatformId);
+      if (!support || !isPlatformSolid(support)) {
+        agent.isOnGround = false;
+        continue;
+      }
+      const delta = dynamicStep.deltas.get(support.id);
+      if (delta) {
+        agent.position.x += delta.x;
+        agent.position.y += delta.y;
+      }
+    }
 
     const controlsByAgent = new Map<number, AgentControls>();
     for (const agent of gameState.agents) {
@@ -248,6 +238,7 @@ function runEpisode(
       }
     }
 
+    const crumbleContacts = new Set<number>();
     for (const agent of gameState.agents) {
       const role: 'chaser' | 'evader' = agent.id === 1 ? 'chaser' : 'evader';
       const controls = controlsByAgent.get(agent.id) || {
@@ -288,6 +279,7 @@ function runEpisode(
       let grounded = false;
       let landedPlatformId = agent.lastPlatformId;
       for (const platform of gameState.platforms) {
+        if (!isPlatformSolid(platform)) continue;
         const prevBottom = agent.position.y + AGENT_HEIGHT;
         const nextBottom = nextPosition.y + AGENT_HEIGHT;
         const aligned = nextPosition.x + AGENT_WIDTH > platform.position.x && nextPosition.x < platform.position.x + platform.width;
@@ -296,6 +288,8 @@ function runEpisode(
           velocity.y = 0;
           grounded = true;
           landedPlatformId = platform.id;
+          visitedPlatforms.get(agent.id)?.add(platform.id);
+          if (platform.kind === 'crumbling') crumbleContacts.add(platform.id);
           break;
         }
       }
@@ -304,14 +298,16 @@ function runEpisode(
         totalFalls++;
         if (agent.id === 1) chaserFalls++;
         else evaderFalls++;
-        const candidates = gameState.platforms.filter(
+        const solidPlatforms = gameState.platforms.filter(isPlatformSolid);
+        const candidates = solidPlatforms.filter(
           p => p.position.x + p.width >= gameState.cameraPosition.x && p.position.x <= gameState.cameraPosition.x + viewportSize.width
         );
-        const spawn = (candidates.length ? candidates : gameState.platforms).reduce((best, p) => {
+        const spawnPool = candidates.length ? candidates : solidPlatforms;
+        const spawn = spawnPool.reduce((best, p) => {
           const d = Math.abs((p.position.x + p.width / 2) - agent.position.x);
           const bestD = Math.abs((best.position.x + best.width / 2) - agent.position.x);
           return d < bestD ? p : best;
-        });
+        }, spawnPool[0] ?? gameState.platforms[0]);
         nextPosition.x = spawn.position.x + spawn.width / 2 - AGENT_WIDTH / 2;
         nextPosition.y = spawn.position.y - AGENT_HEIGHT - 20;
         velocity.x = 0;
@@ -325,6 +321,12 @@ function runEpisode(
       agent.velocity = velocity;
       agent.isOnGround = grounded;
       agent.lastPlatformId = landedPlatformId;
+    }
+
+    if (crumbleContacts.size > 0) {
+      gameState.platforms = gameState.platforms.map(platform =>
+        crumbleContacts.has(platform.id) ? triggerCrumblingPlatform(platform, gameState.gameTime) : platform
+      );
     }
 
     // Tag ends the episode. Roles never swap during evolutionary evaluation.
@@ -360,6 +362,17 @@ function runEpisode(
   const closingGain = initialClosestDistance - finalClosestDistance;
   const chaserProgress = Math.max(0, maxChaserProgress);
   const evaderProgress = maxEvaderProgress.reduce((sum, progress) => sum + Math.max(0, progress), 0) / evaders.length;
+  const totalPlatformTransitions = Array.from(visitedPlatforms.values()).reduce(
+    (sum, visited) => sum + Math.max(0, visited.size - 1),
+    0,
+  );
+  const traversalScore = Math.max(0, Math.min(1, totalPlatformTransitions / Math.max(1, elapsedSec * gameState.agents.length * 0.22)));
+  const noFallScore = Math.max(0, 1 - (chaserFalls + evaderFalls) / Math.max(1, gameState.agents.length));
+  const progressScore = Math.max(
+    0,
+    Math.min(1, ((chaserProgress + evaderProgress) / 2) / Math.max(120, elapsedSec * 135)),
+  );
+  const navigationScore = 0.45 * traversalScore + 0.35 * noFallScore + 0.20 * progressScore;
 
   // Symmetric 0–200 terminal outcome scale. An early tag approaches 200/0, a late tag approaches
   // 100/100, and surviving the whole episode is 0/200. Small bounded shaping only bootstraps
@@ -400,6 +413,7 @@ function runEpisode(
     elapsedMs,
     falls: chaserFalls + evaderFalls,
     jumps: chaserJumps + evaderJumps,
+    navigationScore,
     gameState,
   };
 }
@@ -468,6 +482,8 @@ function resetEvaluationAccumulators() {
   generationPopulationMatches = 0;
   generationPopulationTags = 0;
   generationPopulationTagTimeMs = 0;
+  generationNavigationScoreTotal = 0;
+  generationPopulationFalls = 0;
 }
 
 function recordEpisodeTelemetry(result: EpisodeStats, currentPopulationMatch = true) {
@@ -501,6 +517,8 @@ function evaluateNextMatch(): boolean {
     evaderFitnessTotals[evaderIndex] += result.evaderFitness;
     evaderFitnessCounts[evaderIndex]++;
     generationPopulationMatches++;
+    generationNavigationScoreTotal += result.navigationScore;
+    generationPopulationFalls += result.falls;
     if (result.tagged) {
       generationPopulationTags++;
       generationPopulationTagTimeMs += result.elapsedMs;
@@ -578,6 +596,17 @@ function finishGeneration() {
     tagRate: generationPopulationTags / Math.max(1, generationPopulationMatches),
     survivalRate: (generationPopulationMatches - generationPopulationTags) / Math.max(1, generationPopulationMatches),
     avgTagTimeMs: generationPopulationTags > 0 ? generationPopulationTagTimeMs / generationPopulationTags : null,
+  };
+
+  const navigationScore = generationNavigationScoreTotal / Math.max(1, generationPopulationMatches);
+  const fallRatePerAgentEpisode = generationPopulationFalls / Math.max(1, generationPopulationMatches * 3);
+  const curriculum = advanceCurriculum(curriculumState, { navigationScore, fallRatePerAgentEpisode });
+  lastCurriculumTelemetry = {
+    ...curriculum,
+    lastCourseSeed,
+    lastCourseBranchCount,
+    lastCourseMovingPlatforms,
+    lastCourseCrumblingPlatforms,
   };
 
   chaserPopulation.genomes.forEach((g, i) => {
@@ -660,6 +689,7 @@ function emitTelemetry() {
       actionCountsEvader,
       eloLeaderboard: leaderboard,
       lastGenerationBalance,
+      curriculum: lastCurriculumTelemetry,
       hallOfFame: {
         chaserSize: hallOfFamePool(chaserHallOfFame).length,
         evaderSize: hallOfFamePool(evaderHallOfFame).length,
@@ -694,6 +724,7 @@ function runHeadlessBatch() {
 function seedPopulations(chaserWeights?: AgentWeights, evaderWeights?: AgentWeights, archiveSeed = false) {
   clearHallOfFame();
   lastGenerationBalance = null;
+  lastCurriculumTelemetry = curriculumSnapshot(curriculumState);
   if (chaserWeights?.nodes && chaserWeights?.connections) {
     chaserPopulation.seedFromChampion(chaserWeights as NeatGenomeData);
     championChaser.setWeights(chaserWeights);
@@ -780,6 +811,12 @@ self.onmessage = (event: MessageEvent) => {
       lastSampleGameState = null;
       clearHallOfFame();
       lastGenerationBalance = null;
+      curriculumState = createCurriculumState();
+      lastCurriculumTelemetry = curriculumSnapshot(curriculumState);
+      lastCourseSeed = 0;
+      lastCourseBranchCount = 0;
+      lastCourseMovingPlatforms = 0;
+      lastCourseCrumblingPlatforms = 0;
       resetEvaluationAccumulators();
       emitTelemetry();
       break;

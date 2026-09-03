@@ -7,11 +7,12 @@ import { LearningAgent, type AgentControls } from './learning/agent';
 import { getPhysiology, stepLocomotion, syncEnergyCapacity } from './learning/movement';
 import { updateEloRatings, createLeaderboardEntries } from './learning/elo';
 import { getAgentStateVector } from './learning/state';
+import { generateCourse } from './level/generator';
+import { isPlatformSolid, triggerCrumblingPlatform, updateDynamicPlatforms } from './level/dynamics';
 import { initAudio, playDynamicJumpSound, playTagSound, playFallSound, playToggleSound } from './services/soundService';
 import type {
   GameState,
   AgentState,
-  PlatformState,
   RewardBreakdown,
   DiagnosticsState,
   PerformanceDataPoint,
@@ -25,14 +26,6 @@ import {
   MAX_SPEED,
   TAG_COOLDOWN,
   FALL_BOUNDARY,
-  PLATFORM_MIN_WIDTH,
-  PLATFORM_MAX_WIDTH,
-  PLATFORM_HEIGHT,
-  PLATFORM_SPAWN_BUFFER,
-  MIN_PLATFORM_GAP_X,
-  MAX_PLATFORM_GAP_X,
-  MIN_PLATFORM_GAP_Y,
-  MAX_PLATFORM_GAP_Y,
   AGENT_COLORS,
   MAX_ENERGY,
   SURVIVAL_TIME_HISTORY_LENGTH,
@@ -92,7 +85,7 @@ export const App: React.FC = () => {
   const totalJumpsRef = useRef(0);
 
   const mainContainerRef = useRef<HTMLDivElement>(null);
-  const platformIdCounter = useRef(10);
+  const curriculumDifficultyRef = useRef(0.08);
 
   // Dual Policy Learning State
   const chaserAgent = useRef<LearningAgent | null>(null);
@@ -122,28 +115,28 @@ export const App: React.FC = () => {
     chaserElo.current = INITIAL_ELO;
     evaderElo.current = INITIAL_ELO;
 
-    const initialPlatforms: PlatformState[] = [
-      { id: 0, position: { x: 0, y: viewportSize.height - 100 }, width: viewportSize.width, height: PLATFORM_HEIGHT },
-    ];
-
-    // Visual playback also randomizes direction/spacing so champions are not only demonstrated moving right.
-    const mirroredStart = Math.random() < 0.5;
-    const startSpread = 0.90 + Math.random() * 0.20;
-    const startShift = (Math.random() - 0.5) * 70;
-    let visualStartXs = [100 + startShift, 100 + 300 * startSpread + startShift, 100 + 600 * startSpread + startShift];
-    if (mirroredStart) visualStartXs = visualStartXs.map(x => viewportSize.width - x - AGENT_WIDTH);
+    const visualCourse = generateCourse({
+      seed: (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0,
+      difficulty: curriculumDifficultyRef.current,
+      viewport: viewportSize,
+      length: 24000,
+    });
+    const initialPlatforms = visualCourse.platforms;
+    const visualStartXs = visualCourse.startXs;
+    const startPlatform = initialPlatforms.find(p => p.id === 0) || initialPlatforms[0];
+    const startY = startPlatform.position.y - AGENT_HEIGHT;
 
     const initialAgents: AgentState[] = [
       {
         id: 1,
-        position: { x: visualStartXs[0], y: 500 },
+        position: { x: visualStartXs[0], y: startY },
         velocity: { x: 0, y: 0 },
         acceleration: { x: 0, y: 0 },
         status: AgentStatus.Normal,
         role: 'evader',
         elo: INITIAL_ELO,
         color: AGENT_COLORS[0],
-        isOnGround: false,
+        isOnGround: true,
         cooldownTimer: 0,
         lastAction: 'wait',
         energy: MAX_ENERGY,
@@ -152,21 +145,21 @@ export const App: React.FC = () => {
         lastPlatformId: 0,
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
-        positionAtLastTakeoff: { x: visualStartXs[0], y: 500 },
+        positionAtLastTakeoff: { x: visualStartXs[0], y: startY },
         survivalTime: 0,
         timeSinceBecameIt: 0,
         modelId: 'current_evader',
       },
       {
         id: 2,
-        position: { x: visualStartXs[1], y: 500 },
+        position: { x: visualStartXs[1], y: startY },
         velocity: { x: 0, y: 0 },
         acceleration: { x: 0, y: 0 },
         status: AgentStatus.Normal,
         role: 'evader',
         elo: INITIAL_ELO,
         color: AGENT_COLORS[1],
-        isOnGround: false,
+        isOnGround: true,
         cooldownTimer: 0,
         lastAction: 'wait',
         energy: MAX_ENERGY,
@@ -175,21 +168,21 @@ export const App: React.FC = () => {
         lastPlatformId: 0,
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
-        positionAtLastTakeoff: { x: visualStartXs[1], y: 500 },
+        positionAtLastTakeoff: { x: visualStartXs[1], y: startY },
         survivalTime: 0,
         timeSinceBecameIt: 0,
         modelId: 'current_evader',
       },
       {
         id: 3,
-        position: { x: visualStartXs[2], y: 500 },
+        position: { x: visualStartXs[2], y: startY },
         velocity: { x: 0, y: 0 },
         acceleration: { x: 0, y: 0 },
         status: AgentStatus.Normal,
         role: 'evader',
         elo: INITIAL_ELO,
         color: AGENT_COLORS[2],
-        isOnGround: false,
+        isOnGround: true,
         cooldownTimer: 0,
         lastAction: 'wait',
         energy: MAX_ENERGY,
@@ -198,7 +191,7 @@ export const App: React.FC = () => {
         lastPlatformId: 0,
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
-        positionAtLastTakeoff: { x: visualStartXs[2], y: 500 },
+        positionAtLastTakeoff: { x: visualStartXs[2], y: startY },
         survivalTime: 0,
         timeSinceBecameIt: 0,
         modelId: 'current_evader',
@@ -224,6 +217,7 @@ export const App: React.FC = () => {
       tagEffects: [],
       avgSurvivalTime: 0,
       avgTimeToTag: 0,
+      courseGraph: visualCourse.graph,
     };
     recentSurvivalTimes.current = [];
     recentTimesToTag.current = [];
@@ -282,6 +276,9 @@ export const App: React.FC = () => {
           if (typeof payload.totalTags === 'number') totalTagsRef.current = payload.totalTags;
           if (typeof payload.totalFalls === 'number') totalFallsRef.current = payload.totalFalls;
           if (typeof payload.totalJumps === 'number') totalJumpsRef.current = payload.totalJumps;
+          if (typeof payload.curriculum?.difficulty === 'number') {
+            curriculumDifficultyRef.current = payload.curriculum.difficulty;
+          }
 
           // The worker owns evolution. The main thread only renders the latest champions.
           if (payload.chaserChampionGenome && chaserAgent.current) {
@@ -358,6 +355,7 @@ export const App: React.FC = () => {
               hallOfFame: payload.hallOfFame || prev.hallOfFame,
               lastGenerationBalance: balanceMetric || prev.lastGenerationBalance,
               balanceHistory: appendUnique(prev.balanceHistory, balanceMetric),
+              curriculum: payload.curriculum || prev.curriculum,
             };
           });
 
@@ -376,6 +374,7 @@ export const App: React.FC = () => {
                 })),
                 platforms: sample.platforms || prev.platforms,
                 cameraPosition: sample.cameraPosition || prev.cameraPosition,
+                courseGraph: sample.courseGraph || prev.courseGraph,
               };
             });
           }
@@ -443,7 +442,7 @@ export const App: React.FC = () => {
 
     const agentCenterX = agent.position.x + AGENT_WIDTH / 2;
     const platformBelow = currentGameState.platforms.find(
-      p => agentCenterX >= p.position.x && agentCenterX <= p.position.x + p.width
+      p => isPlatformSolid(p) && agentCenterX >= p.position.x && agentCenterX <= p.position.x + p.width
     );
 
     if (platformBelow) {
@@ -516,15 +515,32 @@ export const App: React.FC = () => {
       setGameState(prevGameState => {
         if (!prevGameState || !isSimulating || isWorkerMode) return prevGameState;
 
+        const nextGameTime = prevGameState.gameTime + deltaTime;
+        const dynamicStep = updateDynamicPlatforms(prevGameState.platforms, nextGameTime);
         let newState = {
           ...prevGameState,
-          agents: [...prevGameState.agents.map(a => ({ ...a, trajectory: a.trajectory || [] }))],
-          platforms: [...prevGameState.platforms],
-          gameTime: prevGameState.gameTime + deltaTime,
+          agents: [...prevGameState.agents.map(a => ({ ...a, position: { ...a.position }, velocity: { ...a.velocity }, trajectory: a.trajectory || [] }))],
+          platforms: dynamicStep.platforms,
+          gameTime: nextGameTime,
           tagEffects: [...prevGameState.tagEffects],
           avgSurvivalTime: prevGameState.avgSurvivalTime,
           avgTimeToTag: prevGameState.avgTimeToTag,
         };
+
+        // Moving platforms carry grounded agents. A disappearing support immediately releases them.
+        newState.agents.forEach(agent => {
+          if (!agent.isOnGround || agent.lastPlatformId === null) return;
+          const support = newState.platforms.find(p => p.id === agent.lastPlatformId);
+          if (!support || !isPlatformSolid(support)) {
+            agent.isOnGround = false;
+            return;
+          }
+          const delta = dynamicStep.deltas.get(support.id);
+          if (delta) {
+            agent.position.x += delta.x;
+            agent.position.y += delta.y;
+          }
+        });
 
         // 1. Update Timers
         newState.agents.forEach(agent => {
@@ -559,6 +575,7 @@ export const App: React.FC = () => {
 
         // 3. Update Physics & Boundaries
         let fallEvents: { [id: number]: boolean } = {};
+        const crumbleContacts = new Set<number>();
         newState.agents = newState.agents.map(agent => {
           let newPosition = { ...agent.position };
           let newCooldownTimer = Math.max(0, agent.cooldownTimer - deltaTime);
@@ -609,6 +626,7 @@ export const App: React.FC = () => {
           let landedPlatformId = agent.lastPlatformId;
 
           for (const platform of newState.platforms) {
+            if (!isPlatformSolid(platform)) continue;
             const prevBottom = agent.position.y + AGENT_HEIGHT;
             const newBottom = newPosition.y + AGENT_HEIGHT;
             const isHorizontallyAligned =
@@ -624,6 +642,7 @@ export const App: React.FC = () => {
               newVelocity.y = 0;
               grounded = true;
               landedPlatformId = platform.id;
+              if (platform.kind === 'crumbling') crumbleContacts.add(platform.id);
               break;
             }
           }
@@ -636,9 +655,15 @@ export const App: React.FC = () => {
             agent.survivalTime = 0;
 
             const visiblePlats = newState.platforms.filter(
-              p => p.position.x + p.width >= minVisibleX && p.position.x <= maxVisibleX + AGENT_WIDTH
+              p => isPlatformSolid(p) && p.position.x + p.width >= minVisibleX && p.position.x <= maxVisibleX + AGENT_WIDTH
             );
-            const spawnPlatform = visiblePlats.length > 0 ? visiblePlats[0] : newState.platforms[0];
+            const solidPlatforms = newState.platforms.filter(isPlatformSolid);
+            const candidates = visiblePlats.length > 0 ? visiblePlats : solidPlatforms;
+            const spawnPlatform = candidates.reduce((best, p) => {
+              const d = Math.abs((p.position.x + p.width / 2) - agent.position.x);
+              const bestD = Math.abs((best.position.x + best.width / 2) - agent.position.x);
+              return d < bestD ? p : best;
+            }, candidates[0] || newState.platforms[0]);
             newPosition.x = spawnPlatform.position.x + spawnPlatform.width / 2 - AGENT_WIDTH / 2;
             newPosition.y = spawnPlatform.position.y - AGENT_HEIGHT - 30;
             newVelocity.x = 0;
@@ -664,6 +689,12 @@ export const App: React.FC = () => {
             timeSinceBecameIt: agent.timeSinceBecameIt || 0,
           };
         });
+
+        if (crumbleContacts.size > 0) {
+          newState.platforms = newState.platforms.map(platform =>
+            crumbleContacts.has(platform.id) ? triggerCrumblingPlatform(platform, newState.gameTime) : platform
+          );
+        }
 
         // 4. Tag Detection & role swap between the current NEAT champions
         let tagEvent: { taggerId?: number; taggedId?: number } = {};
@@ -838,59 +869,7 @@ export const App: React.FC = () => {
         const desiredCameraX = runnersCenterX - viewportSize.width * 0.45;
         newState.cameraPosition.x += (desiredCameraX - newState.cameraPosition.x) * 0.12;
 
-        // 10. Platform Generation
-        const rightGenerationEdge = newState.cameraPosition.x + viewportSize.width + PLATFORM_SPAWN_BUFFER;
-        const leftGenerationEdge = newState.cameraPosition.x - PLATFORM_SPAWN_BUFFER;
-        const despawnMargin = PLATFORM_SPAWN_BUFFER * 2;
-        newState.platforms = newState.platforms.filter(
-          p =>
-            p.position.x + p.width > newState.cameraPosition.x - despawnMargin &&
-            p.position.x < newState.cameraPosition.x + viewportSize.width + despawnMargin
-        );
-
-        const sortedPlatforms = [...newState.platforms].sort((a, b) => a.position.x - b.position.x);
-
-        function generatePlatform(baseX: number, baseY: number, toLeft: boolean = false): PlatformState {
-          let gapX = MIN_PLATFORM_GAP_X + Math.random() * (MAX_PLATFORM_GAP_X - MIN_PLATFORM_GAP_X);
-          const gapY = (Math.random() - 0.5) * MAX_PLATFORM_GAP_Y * 1.5;
-          const newY = baseY + gapY;
-          const clampedY = Math.min(viewportSize.height - 120, Math.max(250, newY));
-          const verticalDifference = clampedY - baseY;
-
-          if (verticalDifference < -100) gapX = Math.max(MIN_PLATFORM_GAP_X, Math.min(gapX, 90));
-          else if (verticalDifference > 80) gapX = Math.max(gapX, 140);
-
-          const newWidth = Math.random() * (PLATFORM_MAX_WIDTH - PLATFORM_MIN_WIDTH) + PLATFORM_MIN_WIDTH;
-          return {
-            id: platformIdCounter.current++,
-            width: newWidth,
-            height: PLATFORM_HEIGHT,
-            position: {
-              x: toLeft ? baseX - newWidth - gapX : baseX + gapX,
-              y: clampedY,
-            },
-          };
-        }
-
-        if (sortedPlatforms.length > 0) {
-          let rightmostPlatform = sortedPlatforms[sortedPlatforms.length - 1];
-          while (rightmostPlatform.position.x + rightmostPlatform.width < rightGenerationEdge) {
-            const newPlatform = generatePlatform(
-              rightmostPlatform.position.x + rightmostPlatform.width,
-              rightmostPlatform.position.y
-            );
-            newState.platforms.push(newPlatform);
-            rightmostPlatform = newPlatform;
-          }
-        }
-        if (sortedPlatforms.length > 0) {
-          let leftmostPlatform = sortedPlatforms[0];
-          while (leftmostPlatform.position.x > leftGenerationEdge) {
-            const newPlatform = generatePlatform(leftmostPlatform.position.x, leftmostPlatform.position.y, true);
-            newState.platforms.unshift(newPlatform);
-            leftmostPlatform = newPlatform;
-          }
-        }
+        // 10. Course geometry is generated deterministically at episode/reset boundaries; only dynamic platform state changes here.
 
         // 11. Tag Visual Effects
         newState.tagEffects = newState.tagEffects
@@ -967,6 +946,49 @@ export const App: React.FC = () => {
     totalTagsRef.current = 0;
     totalFallsRef.current = 0;
     totalJumpsRef.current = 0;
+    curriculumDifficultyRef.current = 0.08;
+    const freshCourse = generateCourse({
+      seed: (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0,
+      difficulty: curriculumDifficultyRef.current,
+      viewport: viewportSizeRef.current,
+      length: 24000,
+    });
+    setGameState(prev => {
+      if (!prev) return prev;
+      const startPlatform = freshCourse.platforms.find(p => p.id === 0) || freshCourse.platforms[0];
+      const startY = startPlatform.position.y - AGENT_HEIGHT;
+      const agents = prev.agents.map((agent, index) => {
+        const isChaser = index === 0;
+        return {
+          ...agent,
+          position: { x: freshCourse.startXs[index] ?? freshCourse.startXs[0], y: startY },
+          velocity: { x: 0, y: 0 },
+          acceleration: { x: 0, y: 0 },
+          status: isChaser ? AgentStatus.It : AgentStatus.Normal,
+          role: isChaser ? 'chaser' as const : 'evader' as const,
+          cooldownTimer: 0,
+          isOnGround: true,
+          energy: MAX_ENERGY,
+          maxEnergy: MAX_ENERGY,
+          lastPlatformId: 0,
+          survivalTime: 0,
+          timeSinceBecameIt: 0,
+          trajectory: [],
+          modelId: isChaser ? 'current_chaser' : 'current_evader',
+        };
+      });
+      return {
+        ...prev,
+        agents,
+        platforms: freshCourse.platforms,
+        courseGraph: freshCourse.graph,
+        cameraPosition: { x: 0, y: 0 },
+        gameTime: 0,
+        tagEffects: [],
+        avgSurvivalTime: 0,
+        avgTimeToTag: 0,
+      };
+    });
 
     setDiagnosticsState(prev => ({
       ...prev,
@@ -990,6 +1012,7 @@ export const App: React.FC = () => {
       hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: NEAT_HOF_MAX_SIZE, opponentsPerGenome: NEAT_HOF_OPPONENTS_PER_GENOME, chaserGenerations: [], evaderGenerations: [] },
       lastGenerationBalance: null,
       balanceHistory: [],
+      curriculum: undefined,
     }));
   };
 

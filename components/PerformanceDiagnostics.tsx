@@ -218,6 +218,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   const evaderHistory = diagnostics.evaderNeatHistory || [];
   const balanceHistory = diagnostics.balanceHistory || [];
   const balance = diagnostics.lastGenerationBalance;
+  const curriculum = diagnostics.curriculum;
   const chaserMetrics = diagnostics.lastChaserNeatMetrics;
   const evaderMetrics = diagnostics.lastEvaderNeatMetrics;
   const selectedGenome = role === 'chaser' ? diagnostics.chaserChampionGenome : diagnostics.evaderChampionGenome;
@@ -292,6 +293,24 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <MetricCard label="Archived generations" value={(diagnostics.hallOfFame?.chaserGenerations?.length || diagnostics.hallOfFame?.evaderGenerations?.length) ? `${diagnostics.hallOfFame?.chaserGenerations?.[0] ?? '—'}–${diagnostics.hallOfFame?.chaserGenerations?.slice(-1)[0] ?? '—'}` : '—'} hint="recent + reservoir-sampled history" />
             </div>
 
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-950/10 p-4">
+              <div className="flex items-center justify-between gap-4 mb-3">
+                <div>
+                  <h3 className="font-semibold text-emerald-200">Adaptive terrain curriculum</h3>
+                  <p className="text-xs text-gray-500 mt-1">Difficulty rises only when the population is navigating reliably; it can step back if terrain failure becomes dominant.</p>
+                </div>
+                <div className="text-2xl font-bold font-mono text-emerald-300">{curriculum ? `${(curriculum.difficulty * 100).toFixed(0)}%` : '—'}</div>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                <MetricCard label="Navigation" value={curriculum ? `${(curriculum.lastNavigationScore * 100).toFixed(0)}%` : '—'} hint="last generation" />
+                <MetricCard label="Falls / agent" value={curriculum ? fmt(curriculum.lastFallRatePerAgentEpisode, 2) : '—'} hint="per episode" />
+                <MetricCard label="Branches" value={curriculum?.branchesUnlocked ? 'ON' : 'locked'} hint={curriculum?.lastCourseBranchCount != null ? `${curriculum.lastCourseBranchCount} in sampled course` : undefined} />
+                <MetricCard label="Moving" value={curriculum?.movingUnlocked ? 'ON' : 'locked'} hint={curriculum?.lastCourseMovingPlatforms != null ? `${curriculum.lastCourseMovingPlatforms} platforms` : undefined} />
+                <MetricCard label="Crumbling" value={curriculum?.crumblingUnlocked ? 'ON' : 'locked'} hint={curriculum?.lastCourseCrumblingPlatforms != null ? `${curriculum.lastCourseCrumblingPlatforms} platforms` : undefined} />
+                <MetricCard label="Course seed" value={curriculum?.lastCourseSeed ?? '—'} hint="deterministic replay seed" />
+              </div>
+            </div>
+
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
               <div className="flex items-center gap-2 mb-3"><Trophy className="w-4 h-4 text-amber-300" /><h3 className="font-semibold text-white">Best fitness by generation</h3></div>
               <LineChart series={[{ label: 'Chaser', values: chaserHistory.map(m => m.bestFitness) }, { label: 'Evader', values: evaderHistory.map(m => m.bestFitness) }]} />
@@ -310,7 +329,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> both roles now have identical speed, acceleration, jump, 100-point stamina and recovery. Every genome is evaluated against balanced rotating opponents plus historical Hall of Fame champions. Terminal fitness uses the same 0–200 outcome scale for both roles, with only small bounded movement shaping; selection then proceeds through speciation, elitism, crossover and mutation.
+              <strong className="text-violet-200">Training architecture:</strong> both roles have identical physical abilities and evolve against rotating current opponents plus Hall-of-Fame champions. Episodes are now generated from seeded course graphs with a guaranteed reachable backbone; as navigation competence rises the curriculum unlocks branch/rejoin routes, moving platforms and contact-triggered crumbling platforms while preserving conservative jump feasibility.
             </div>
           </div>
         )}

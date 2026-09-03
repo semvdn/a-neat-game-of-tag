@@ -36,23 +36,7 @@ At `1x`, `2x`, `5x` and `10x`, the app shows normal visual play using the latest
 
 Terminal performance is deliberately dominant, with modest dense shaping so locomotion can bootstrap before reliable tags emerge.
 
-**Chaser fitness** rewards:
-- making a tag;
-- tagging earlier;
-- closing distance;
-- progress in the episode's randomized escape direction;
-- a small jump/locomotion signal.
-
-It penalizes falls and excessive average separation.
-
-**Evader fitness** rewards:
-- survival time;
-- surviving the full episode;
-- maintaining separation;
-- progress in the episode's randomized escape direction;
-- a small jump/locomotion signal.
-
-It penalizes falls.
+Both roles use the same terminal 0–200 outcome scale. Early tags strongly favor the chaser, late tags approach 100/100, and a full-episode survival is 0/200. Only small bounded closing/separation, progress and fall shaping is added. Jumping and unused stamina are not rewarded directly.
 
 The exact coefficients are in `workers/trainingWorker.ts` and are intentionally easy to tune.
 
@@ -73,12 +57,7 @@ Stamina is a physical constraint rather than a direct fitness reward:
 - below 30% reserve, acceleration, top speed and jump power degrade smoothly;
 - an exhausted agent can still move and can make a weaker affordable jump.
 
-The roles have intentionally different physiology:
-
-- **Evader:** ~5% better burst speed/acceleration/jump, 90% base stamina capacity and 90% recovery.
-- **Chaser:** base burst ability, 110% stamina capacity and 115% recovery.
-
-This makes the evader better at creating an initial gap while giving the chaser a plausible endurance strategy: force expensive sprints/jumps, conserve energy, then attack a fatigued runner.
+The roles now have intentionally **identical physiology**: 100 stamina, the same maximum speed, acceleration, jump power, recovery and fatigue curve. Strategic asymmetry comes only from the chase/survive objectives and how each evolved controller chooses to spend stamina.
 
 The 39-input genome shape is preserved for checkpoint compatibility. The former constant bias input was redundant with NEAT node biases, so that slot now carries **target/threat energy reserve**. Own energy was already part of the state vector.
 
@@ -87,6 +66,42 @@ The 39-input genome shape is preserved for checkpoint compatibility. The former 
 Each generation now evaluates both leftward and rightward escape orientations. With the default three matchups per genome, seed parity guarantees that both orientations occur rather than relying on chance. Start spacing and translation are also randomized within a safe range.
 
 The headless course is geometrically mirrored for leftward episodes, camera tracking is allowed into negative world coordinates, and progress shaping is measured relative to the episode's flow direction. This removes the old shortcut where `move right` could become a globally correct policy. Visual champion playback also randomizes its initial orientation and spacing on reset.
+
+
+## Phase 1 adaptive procedural terrain
+
+Training episodes are now generated from deterministic seeded **course graphs** rather than a simple linear list of random platforms.
+
+The terrain system is split into shared modules so headless training and visible champion playback use the same rules:
+
+- `level/generator.ts` — seeded backbone + branch/rejoin course generation;
+- `level/reachability.ts` — conservative ballistic jump-envelope checks;
+- `level/dynamics.ts` — moving-platform motion and crumble/respawn lifecycle;
+- `level/curriculum.ts` — competence-driven terrain difficulty.
+
+### Guaranteed reachability
+
+Every graph edge is validated against a conservative jump envelope derived from the game's gravity, jump impulse and maximum horizontal speed. The generator uses only 68–90% of that conservative range as curriculum difficulty rises, and moving-platform amplitudes are included at their **worst relative phase**. This means generated jumps remain physically possible rather than merely possible at one lucky animation instant.
+
+The primary backbone is always available. In Phase 1, crumbling platforms are restricted to optional branch/shortcut routes, so temporary disappearance cannot delete the only traversable path.
+
+### Curriculum
+
+Difficulty starts low and is adjusted after each generation from navigation competence and terrain-related fall rate. It increases in small steps only when navigation is reliable and can step backward if falls become dominant.
+
+Feature unlocks currently occur around:
+
+- `0.20` — branch/rejoin paths;
+- `0.35` — horizontal and vertical moving platforms;
+- `0.52` — contact-triggered crumbling branch platforms.
+
+As difficulty rises, platform widths tighten, vertical variation grows, usable gaps approach more of the safe jump envelope, branches become more frequent, and moving/crumbling modifiers become more common.
+
+### Dynamic platforms
+
+Moving platforms use deterministic sinusoidal motion and carry grounded agents with them. Crumbling platforms enter a warning state on first contact, disappear after a seeded delay, remain absent briefly, then respawn and can be triggered again. Gone platforms are removed from collision and lidar calculations; the renderer leaves a faint dashed ghost to make the temporary route change legible.
+
+The diagnostics overview now reports curriculum difficulty, navigation score, falls per agent episode, unlocked terrain systems, feature counts in the latest sampled course and the deterministic course seed.
 
 ## NEAT implementation
 
@@ -170,9 +185,10 @@ The original AI Studio/Vite Gemini environment plumbing is left in place, althou
 
 - `learning/neat.ts` — genome, phenotype, mutation, crossover, speciation and population evolution
 - `learning/agent.ts` — lightweight runtime wrapper around one NEAT genome
-- `workers/trainingWorker.ts` — population ownership, headless matches, fitness and generation loop
+- `workers/trainingWorker.ts` — population ownership, headless matches, fitness, curriculum and generation loop
 - `components/PerformanceDiagnostics.tsx` — NEAT diagnostics and topology visualizer
 - `App.tsx` — champion rendering, worker lifecycle, persistence and UI integration
+- `level/` — seeded procedural course generation, reachability, dynamic platforms and adaptive curriculum
 - `constants.ts` — NEAT and game parameters
 
 The former PPO math/optimizer module (`learning/math.ts`) has been removed.
