@@ -1,4 +1,5 @@
-import { LearningAgent, type AgentWeights } from '../learning/agent';
+import { LearningAgent, type AgentWeights, type AgentControls } from '../learning/agent';
+import { getPhysiology, stepLocomotion } from '../learning/movement';
 import { NeatPopulation, DEFAULT_NEAT_CONFIG, type NeatGenerationMetrics, type NeatGenomeData } from '../learning/neat';
 import { getAgentStateVector } from '../learning/state';
 import { updateEloRatings, createLeaderboardEntries } from '../learning/elo';
@@ -8,14 +9,8 @@ import {
   AGENT_WIDTH,
   AGENT_HEIGHT,
   AGENT_COLORS,
-  AGENT_ACCELERATION,
-  FRICTION,
-  MAX_SPEED,
-  JUMP_STRENGTH,
   GRAVITY,
   MAX_ENERGY,
-  ENERGY_REGEN_RATE,
-  JUMP_ENERGY_COST,
   FALL_BOUNDARY,
   PLATFORM_MIN_WIDTH,
   PLATFORM_MAX_WIDTH,
@@ -94,6 +89,7 @@ function mulberry32(seed: number) {
 }
 
 function makeAgent(id: number, x: number, role: 'chaser' | 'evader'): AgentState {
+  const physiology = getPhysiology(role);
   return {
     id,
     position: { x, y: viewportSize.height - 100 - AGENT_HEIGHT },
@@ -106,12 +102,12 @@ function makeAgent(id: number, x: number, role: 'chaser' | 'evader'): AgentState
     isOnGround: true,
     cooldownTimer: 0,
     lastAction: 'wait',
-    energy: MAX_ENERGY,
-    maxEnergy: MAX_ENERGY,
+    energy: physiology.energyCapacity,
+    maxEnergy: physiology.energyCapacity,
     trajectory: [],
     lastPlatformId: 0,
     scale: { x: 1, y: 1 },
-    energyAtLastTakeoff: MAX_ENERGY,
+    energyAtLastTakeoff: physiology.energyCapacity,
     positionAtLastTakeoff: { x, y: viewportSize.height - 100 - AGENT_HEIGHT },
     survivalTime: 0,
     timeSinceBecameIt: 0,
@@ -119,10 +115,13 @@ function makeAgent(id: number, x: number, role: 'chaser' | 'evader'): AgentState
   };
 }
 
-function createEpisodeState(seed: number): GameState {
+function createEpisodeState(seed: number): { gameState: GameState; flowDirection: 1 | -1 } {
   const rng = mulberry32(seed);
+  // Seed parity guarantees both orientations are seen across the three evaluation rounds.
+  const mirrored = (seed & 1) === 1;
+  const flowDirection: 1 | -1 = mirrored ? -1 : 1;
   const baseY = viewportSize.height - 100;
-  const platforms: PlatformState[] = [
+  let platforms: PlatformState[] = [
     { id: 0, position: { x: -200, y: baseY }, width: viewportSize.width + 400, height: PLATFORM_HEIGHT },
   ];
 
@@ -147,14 +146,31 @@ function createEpisodeState(seed: number): GameState {
     last = next;
   }
 
+  // Randomize spacing and translation enough to prevent memorizing exact start coordinates.
+  const spread = 0.88 + rng() * 0.24;
+  const shift = (rng() - 0.5) * 90;
+  let startXs = [120 + shift, 120 + 400 * spread + shift, 120 + 670 * spread + shift];
+
+  if (mirrored) {
+    const mirrorRectX = (x: number, width: number) => viewportSize.width - (x + width);
+    platforms = platforms.map(platform => ({
+      ...platform,
+      position: { ...platform.position, x: mirrorRectX(platform.position.x, platform.width) },
+    }));
+    startXs = startXs.map(x => mirrorRectX(x, AGENT_WIDTH));
+  }
+
   return {
-    agents: [makeAgent(1, 120, 'chaser'), makeAgent(2, 520, 'evader'), makeAgent(3, 790, 'evader')],
-    platforms,
-    cameraPosition: { x: 0, y: 0 },
-    gameTime: 0,
-    tagEffects: [],
-    avgSurvivalTime: 0,
-    avgTimeToTag: 0,
+    flowDirection,
+    gameState: {
+      agents: [makeAgent(1, startXs[0], 'chaser'), makeAgent(2, startXs[1], 'evader'), makeAgent(3, startXs[2], 'evader')],
+      platforms,
+      cameraPosition: { x: 0, y: 0 },
+      gameTime: 0,
+      tagEffects: [],
+      avgSurvivalTime: 0,
+      avgTimeToTag: 0,
+    },
   };
 }
 
@@ -169,14 +185,14 @@ interface EpisodeStats {
 }
 
 function runEpisode(chaser: LearningAgent, evader: LearningAgent, seed: number): EpisodeStats {
-  const gameState = createEpisodeState(seed);
+  const { gameState, flowDirection } = createEpisodeState(seed);
   const chaserAgent = gameState.agents[0];
   const evaders = gameState.agents.slice(1);
   const initialClosestDistance = Math.min(...evaders.map(e => Math.hypot(e.position.x - chaserAgent.position.x, e.position.y - chaserAgent.position.y)));
   const initialChaserX = chaserAgent.position.x;
   const initialEvaderXs = evaders.map(e => e.position.x);
-  let maxChaserX = initialChaserX;
-  const maxEvaderXs = [...initialEvaderXs];
+  let maxChaserProgress = 0;
+  const maxEvaderProgress = initialEvaderXs.map(() => 0);
   let cumulativeClosestDistance = 0;
   let distanceSamples = 0;
   let chaserFalls = 0;
@@ -192,32 +208,30 @@ function runEpisode(chaser: LearningAgent, evader: LearningAgent, seed: number):
     chaserAgent.timeSinceBecameIt += DT;
     evaders.forEach(a => (a.survivalTime += DT));
 
-    const actions = new Map<number, string>();
+    const controlsByAgent = new Map<number, AgentControls>();
     for (const agent of gameState.agents) {
       const controller = agent.id === 1 ? chaser : evader;
       const state = getAgentStateVector(agent, gameState, viewportSize);
-      const { action } = controller.chooseAction(state);
-      actions.set(agent.id, action);
+      const controls = controller.chooseControls(state);
+      controlsByAgent.set(agent.id, controls);
       const counter = agent.id === 1 ? actionCountsChaser : actionCountsEvader;
-      counter[action] = (counter[action] || 0) + 1;
+      counter[controls.action] = (counter[controls.action] || 0) + 1;
     }
 
     for (const agent of gameState.agents) {
-      const action = actions.get(agent.id) || 'wait';
-      agent.lastAction = action;
-      agent.energy = Math.min(agent.maxEnergy, agent.energy + ENERGY_REGEN_RATE * (DT / 1000));
-      agent.acceleration.x = 0;
-      if (action === 'move_left') agent.acceleration.x = -AGENT_ACCELERATION;
-      else if (action === 'move_right') agent.acceleration.x = AGENT_ACCELERATION;
+      const role: 'chaser' | 'evader' = agent.id === 1 ? 'chaser' : 'evader';
+      const controls = controlsByAgent.get(agent.id) || {
+        move: 0, jump: 0, sprint: 0, outputs: [0, 0, 0, 0], action: 'left_drive', actionIndex: 0, label: 'wait',
+      };
+      agent.lastAction = controls.label;
 
-      const velocity = { ...agent.velocity };
-      if (Math.abs(agent.acceleration.x) < 0.1) velocity.x *= FRICTION;
-      velocity.x += agent.acceleration.x;
-      velocity.x = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, velocity.x));
+      const locomotion = stepLocomotion(agent, controls, DT, role);
+      agent.acceleration.x = locomotion.accelerationX;
+      agent.maxEnergy = getPhysiology(role).energyCapacity;
+      agent.energy = locomotion.energy;
+      const velocity = locomotion.velocity;
 
-      if (action === 'jump' && agent.isOnGround && agent.energy >= JUMP_ENERGY_COST) {
-        velocity.y = JUMP_STRENGTH;
-        agent.energy -= JUMP_ENERGY_COST;
+      if (locomotion.jumped) {
         totalJumps++;
         if (agent.id === 1) chaserJumps++;
         else evaderJumps++;
@@ -272,7 +286,7 @@ function runEpisode(chaser: LearningAgent, evader: LearningAgent, seed: number):
         nextPosition.y = spawn.position.y - AGENT_HEIGHT - 20;
         velocity.x = 0;
         velocity.y = 0;
-        agent.energy = MAX_ENERGY;
+        agent.energy = agent.maxEnergy;
         grounded = false;
         landedPlatformId = spawn.id;
       }
@@ -298,13 +312,14 @@ function runEpisode(chaser: LearningAgent, evader: LearningAgent, seed: number):
     const maxX = Math.max(...evaders.map(a => a.position.x + AGENT_WIDTH));
     const desiredCameraX = (minX + maxX) / 2 - viewportSize.width * 0.45;
     gameState.cameraPosition.x += (desiredCameraX - gameState.cameraPosition.x) * 0.12;
-    gameState.cameraPosition.x = Math.max(0, gameState.cameraPosition.x);
 
     const closestDistance = Math.min(...evaders.map(e => Math.hypot(e.position.x - chaserAgent.position.x, e.position.y - chaserAgent.position.y)));
     cumulativeClosestDistance += closestDistance;
     distanceSamples++;
-    maxChaserX = Math.max(maxChaserX, chaserAgent.position.x);
-    evaders.forEach((e, i) => (maxEvaderXs[i] = Math.max(maxEvaderXs[i], e.position.x)));
+    maxChaserProgress = Math.max(maxChaserProgress, flowDirection * (chaserAgent.position.x - initialChaserX));
+    evaders.forEach((e, i) => {
+      maxEvaderProgress[i] = Math.max(maxEvaderProgress[i], flowDirection * (e.position.x - initialEvaderXs[i]));
+    });
   }
 
   const elapsedMs = gameState.gameTime;
@@ -313,8 +328,8 @@ function runEpisode(chaser: LearningAgent, evader: LearningAgent, seed: number):
   const finalClosestDistance = Math.min(...evaders.map(e => Math.hypot(e.position.x - chaserAgent.position.x, e.position.y - chaserAgent.position.y)));
   const averageDistance = cumulativeClosestDistance / Math.max(1, distanceSamples);
   const closingGain = initialClosestDistance - finalClosestDistance;
-  const chaserProgress = Math.max(0, maxChaserX - initialChaserX);
-  const evaderProgress = maxEvaderXs.reduce((sum, x, i) => sum + Math.max(0, x - initialEvaderXs[i]), 0) / evaders.length;
+  const chaserProgress = Math.max(0, maxChaserProgress);
+  const evaderProgress = maxEvaderProgress.reduce((sum, progress) => sum + Math.max(0, progress), 0) / evaders.length;
 
   // Dense enough to bootstrap locomotion, but the dominant objective remains the terminal outcome.
   const chaserFitness = Math.max(

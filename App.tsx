@@ -3,7 +3,8 @@ import { GameCanvas } from './components/GameCanvas';
 import { InfoPanel } from './components/InfoPanel';
 import { PerformanceDiagnostics } from './components/PerformanceDiagnostics';
 import { useGameLoop } from './hooks/useGameLoop';
-import { LearningAgent } from './learning/agent';
+import { LearningAgent, type AgentControls } from './learning/agent';
+import { getPhysiology, stepLocomotion, syncEnergyCapacity } from './learning/movement';
 import { updateEloRatings, createLeaderboardEntries } from './learning/elo';
 import { getAgentStateVector } from './learning/state';
 import { initAudio, playDynamicJumpSound, playTagSound, playFallSound, playToggleSound } from './services/soundService';
@@ -23,7 +24,6 @@ import {
   AGENT_WIDTH,
   AGENT_HEIGHT,
   MAX_SPEED,
-  JUMP_STRENGTH,
   TAG_COOLDOWN,
   FALL_BOUNDARY,
   PLATFORM_MIN_WIDTH,
@@ -35,20 +35,10 @@ import {
   MIN_PLATFORM_GAP_Y,
   MAX_PLATFORM_GAP_Y,
   AGENT_COLORS,
-  AGENT_ACCELERATION,
-  FRICTION,
   MAX_ENERGY,
-  ENERGY_REGEN_RATE,
-  JUMP_ENERGY_COST,
   SURVIVAL_TIME_HISTORY_LENGTH,
   TIME_TO_TAG_HISTORY_LENGTH,
   INITIAL_ELO,
-  LEFT_BOUNDARY_TOUCH_PENALTY,
-  LEFT_BOUNDARY_PUSH_PENALTY,
-  LEFT_BOUNDARY_BUFFER_RATIO,
-  LEFT_BOUNDARY_PROXIMITY_PENALTY,
-  RIGHTWARD_VELOCITY_REWARD,
-  RIGHTWARD_PROGRESSION_REWARD,
 } from './constants';
 import { Activity, Play, Pause, FastForward, RotateCcw, Zap } from 'lucide-react';
 
@@ -144,10 +134,17 @@ export const App: React.FC = () => {
       { id: 0, position: { x: 0, y: viewportSize.height - 100 }, width: viewportSize.width, height: PLATFORM_HEIGHT },
     ];
 
+    // Visual playback also randomizes direction/spacing so champions are not only demonstrated moving right.
+    const mirroredStart = Math.random() < 0.5;
+    const startSpread = 0.90 + Math.random() * 0.20;
+    const startShift = (Math.random() - 0.5) * 70;
+    let visualStartXs = [100 + startShift, 100 + 300 * startSpread + startShift, 100 + 600 * startSpread + startShift];
+    if (mirroredStart) visualStartXs = visualStartXs.map(x => viewportSize.width - x - AGENT_WIDTH);
+
     const initialAgents: AgentState[] = [
       {
         id: 1,
-        position: { x: 100, y: 500 },
+        position: { x: visualStartXs[0], y: 500 },
         velocity: { x: 0, y: 0 },
         acceleration: { x: 0, y: 0 },
         status: AgentStatus.Normal,
@@ -163,14 +160,14 @@ export const App: React.FC = () => {
         lastPlatformId: 0,
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
-        positionAtLastTakeoff: { x: 100, y: 500 },
+        positionAtLastTakeoff: { x: visualStartXs[0], y: 500 },
         survivalTime: 0,
         timeSinceBecameIt: 0,
         modelId: 'current_evader',
       },
       {
         id: 2,
-        position: { x: 400, y: 500 },
+        position: { x: visualStartXs[1], y: 500 },
         velocity: { x: 0, y: 0 },
         acceleration: { x: 0, y: 0 },
         status: AgentStatus.Normal,
@@ -186,14 +183,14 @@ export const App: React.FC = () => {
         lastPlatformId: 0,
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
-        positionAtLastTakeoff: { x: 400, y: 500 },
+        positionAtLastTakeoff: { x: visualStartXs[1], y: 500 },
         survivalTime: 0,
         timeSinceBecameIt: 0,
         modelId: 'current_evader',
       },
       {
         id: 3,
-        position: { x: 700, y: 500 },
+        position: { x: visualStartXs[2], y: 500 },
         velocity: { x: 0, y: 0 },
         acceleration: { x: 0, y: 0 },
         status: AgentStatus.Normal,
@@ -209,7 +206,7 @@ export const App: React.FC = () => {
         lastPlatformId: 0,
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
-        positionAtLastTakeoff: { x: 700, y: 500 },
+        positionAtLastTakeoff: { x: visualStartXs[2], y: 500 },
         survivalTime: 0,
         timeSinceBecameIt: 0,
         modelId: 'current_evader',
@@ -221,6 +218,11 @@ export const App: React.FC = () => {
     itAgent.role = 'chaser';
     itAgent.modelId = 'current_chaser';
     itAgent.elo = INITIAL_ELO;
+
+    initialAgents.forEach(agent => {
+      syncEnergyCapacity(agent, agent.status === AgentStatus.It ? 'chaser' : 'evader');
+      agent.energyAtLastTakeoff = agent.energy;
+    });
 
     const newGameState: GameState = {
       agents: initialAgents,
@@ -443,12 +445,6 @@ export const App: React.FC = () => {
       breakdown['inactivity'] = -0.02;
     }
 
-    const energyRatio = agent.energy / MAX_ENERGY;
-    if (energyRatio > 0.5) {
-      const highEnergyFactor = (energyRatio - 0.5) / 0.5;
-      breakdown['highEnergy'] = highEnergyFactor * 0.03;
-    }
-
     const agentCenterX = agent.position.x + AGENT_WIDTH / 2;
     const platformBelow = currentGameState.platforms.find(
       p => agentCenterX >= p.position.x && agentCenterX <= p.position.x + p.width
@@ -470,37 +466,8 @@ export const App: React.FC = () => {
       breakdown['successfulJump'] = 2.0;
     }
 
-    // Left-Side Boundary Constraints & Rightward Flow Reward Shaping
-    const leftBoundary = currentGameState.cameraPosition.x;
-    const distFromLeft = agent.position.x - leftBoundary;
-
-    const isTouchingLeftEdge = distFromLeft <= 2.5 || (agent.touchingCameraFrame && agent.cameraFrameContact === 'left');
-    const isPushingLeft = isTouchingLeftEdge && (agent.lastAction.includes('left') || agent.velocity.x < 0);
-
-    if (isTouchingLeftEdge) {
-      breakdown['leftBoundaryTouchPenalty'] = LEFT_BOUNDARY_TOUCH_PENALTY;
-    }
-    if (isPushingLeft) {
-      breakdown['leftBoundaryPushPenalty'] = LEFT_BOUNDARY_PUSH_PENALTY;
-    }
-
-    const leftDangerZone = size.width * LEFT_BOUNDARY_BUFFER_RATIO;
-    if (distFromLeft < leftDangerZone) {
-      const penaltyFactor = (leftDangerZone - Math.max(0, distFromLeft)) / leftDangerZone;
-      breakdown['leftBoundaryProximityPenalty'] = LEFT_BOUNDARY_PROXIMITY_PENALTY * penaltyFactor;
-    }
-
-    // Rightward flow momentum incentives
-    if (agent.velocity.x > 0.5) {
-      const forwardRatio = Math.min(1.0, agent.velocity.x / MAX_SPEED);
-      breakdown['rightwardVelocityReward'] = RIGHTWARD_VELOCITY_REWARD * forwardRatio;
-    }
-
-    // Rightward spatial progression reward (moving further right than previous frame)
-    if (agent.position.x > prevState.position.x + 0.1) {
-      const deltaX = agent.position.x - prevState.position.x;
-      breakdown['rightwardProgressionReward'] = Math.min(RIGHTWARD_PROGRESSION_REWARD, deltaX * 0.02);
-    }
+    // Energy is intentionally not rewarded directly. It matters only through locomotion capability.
+    const isTouchingLeftEdge = agent.touchingCameraFrame && agent.cameraFrameContact === 'left';
 
     if (agent.status === AgentStatus.It) {
       if (tagEvent.taggerId === agent.id) {
@@ -574,8 +541,8 @@ export const App: React.FC = () => {
           }
         });
 
-        // 2. Champion action selection using the evolved 39-input / 4-output NEAT networks.
-        const agentActions: { [key: number]: string } = {};
+        // 2. Champion control selection. The four NEAT outputs are continuous drive/jump/sprint signals.
+        const agentControls: { [key: number]: AgentControls } = {};
         newState.agents.forEach(agent => {
           const stateVector = getAgentStateVector(agent, newState, viewportSize);
           const isChaser = agent.status === AgentStatus.It;
@@ -586,45 +553,38 @@ export const App: React.FC = () => {
 
           const model = isChaser ? chaserAgent.current : evaderAgent.current;
           if (!model) return;
-          const { action } = model.chooseAction(stateVector);
-          agentActions[agent.id] = action;
+          const controls = model.chooseControls(stateVector);
+          agentControls[agent.id] = controls;
 
-          actionCountsRef.current.all[action] = (actionCountsRef.current.all[action] || 0) + 1;
-          if (isChaser) actionCountsRef.current.chaser[action] = (actionCountsRef.current.chaser[action] || 0) + 1;
-          else actionCountsRef.current.evader[action] = (actionCountsRef.current.evader[action] || 0) + 1;
+          actionCountsRef.current.all[controls.action] = (actionCountsRef.current.all[controls.action] || 0) + 1;
+          if (isChaser) actionCountsRef.current.chaser[controls.action] = (actionCountsRef.current.chaser[controls.action] || 0) + 1;
+          else actionCountsRef.current.evader[controls.action] = (actionCountsRef.current.evader[controls.action] || 0) + 1;
         });
 
         // 3. Update Physics & Boundaries
         let fallEvents: { [id: number]: boolean } = {};
         newState.agents = newState.agents.map(agent => {
-          let newVelocity = { ...agent.velocity };
           let newPosition = { ...agent.position };
           let newCooldownTimer = Math.max(0, agent.cooldownTimer - deltaTime);
-          let newEnergy = Math.min(agent.maxEnergy, agent.energy + ENERGY_REGEN_RATE * (deltaTime / 1000));
           let newStatus = agent.status;
 
           if (newStatus === AgentStatus.Cooldown && newCooldownTimer === 0) {
             newStatus = AgentStatus.Normal;
           }
 
-          const action = agentActions[agent.id] || agent.lastAction;
-          agent.lastAction = action;
+          const role: 'chaser' | 'evader' = newStatus === AgentStatus.It ? 'chaser' : 'evader';
+          const controls = agentControls[agent.id] || {
+            move: 0, jump: 0, sprint: 0, outputs: [0, 0, 0, 0], action: 'left_drive', actionIndex: 0, label: 'wait',
+          };
+          agent.lastAction = controls.label;
 
-          agent.acceleration.x = 0;
-          if (action === 'move_left') agent.acceleration.x = -AGENT_ACCELERATION;
-          else if (action === 'move_right') agent.acceleration.x = AGENT_ACCELERATION;
+          const locomotion = stepLocomotion(agent, controls, deltaTime, role);
+          let newVelocity = locomotion.velocity;
+          let newEnergy = locomotion.energy;
+          const newMaxEnergy = getPhysiology(role).energyCapacity;
+          agent.acceleration.x = locomotion.accelerationX;
 
-          if (Math.abs(agent.acceleration.x) < 0.1) newVelocity.x *= FRICTION;
-          newVelocity.x += agent.acceleration.x;
-          newVelocity.x = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, newVelocity.x));
-
-          if (action === 'jump' && agent.isOnGround) {
-            if (newEnergy >= JUMP_ENERGY_COST) {
-              newVelocity.y = JUMP_STRENGTH;
-              newEnergy -= JUMP_ENERGY_COST;
-              playDynamicJumpSound(newVelocity.y);
-            }
-          }
+          if (locomotion.jumped) playDynamicJumpSound(locomotion.jumpImpulse);
 
           newVelocity.y += GRAVITY;
           newPosition.x += newVelocity.x;
@@ -687,7 +647,7 @@ export const App: React.FC = () => {
             newPosition.y = spawnPlatform.position.y - AGENT_HEIGHT - 30;
             newVelocity.x = 0;
             newVelocity.y = 0;
-            newEnergy = MAX_ENERGY;
+            newEnergy = newMaxEnergy;
             grounded = false;
             landedPlatformId = spawnPlatform.id;
           }
@@ -698,6 +658,7 @@ export const App: React.FC = () => {
             velocity: newVelocity,
             isOnGround: grounded,
             energy: newEnergy,
+            maxEnergy: newMaxEnergy,
             status: newStatus,
             cooldownTimer: newCooldownTimer,
             lastPlatformId: landedPlatformId,
@@ -757,6 +718,7 @@ export const App: React.FC = () => {
                 newTagger.timeSinceBecameIt = 0;
 
                 newTagger.modelId = 'current_chaser';
+                syncEnergyCapacity(newTagger, 'chaser');
 
                 // Old tagger becomes evader with full tag-immunity cooldown to escape safely
                 oldTagger.status = AgentStatus.Cooldown;
@@ -767,6 +729,7 @@ export const App: React.FC = () => {
                 oldTagger.timeSinceBecameIt = 0;
 
                 oldTagger.modelId = 'current_evader';
+                syncEnergyCapacity(oldTagger, 'evader');
 
                 playTagSound();
                 const effectLife = 500;

@@ -11,6 +11,25 @@ import {
 // Kept as an alias so the existing App persistence/worker plumbing needs only a small migration.
 export type AgentWeights = NeatGenomeData;
 
+export interface AgentControls {
+  /** Signed horizontal drive: -1 full left, +1 full right. */
+  move: number;
+  /** Requested jump power in [0, 1]. */
+  jump: number;
+  /** Requested sprint intensity in [0, 1]. */
+  sprint: number;
+  /** Raw NEAT output values, useful for diagnostics. */
+  outputs: number[];
+  /** Dominant output channel, kept for existing action-distribution diagnostics. */
+  action: string;
+  actionIndex: number;
+  /** Human-readable composite control state used by visual reward telemetry. */
+  label: string;
+}
+
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+const clampSigned = (value: number) => Math.max(-1, Math.min(1, value));
+
 /**
  * Runtime phenotype wrapper for a NEAT genome.
  *
@@ -89,11 +108,38 @@ export class LearningAgent {
     return this.genome.generation || 0;
   }
 
-  chooseAction(state: number[]): { action: string; actionIndex: number } {
+  chooseControls(state: number[]): AgentControls {
     const outputs = this.network.activate(state);
+    const leftDrive = clamp01(outputs[0] || 0);
+    const rightDrive = clamp01(outputs[1] || 0);
+    const move = clampSigned(rightDrive - leftDrive);
+    const jump = clamp01(outputs[2] || 0);
+    const sprint = clamp01(outputs[3] || 0);
+
     let actionIndex = 0;
     for (let i = 1; i < outputs.length; i++) if (outputs[i] > outputs[actionIndex]) actionIndex = i;
-    return { action: ACTION_SPACE[actionIndex], actionIndex };
+
+    const direction = move > 0.1 ? 'right' : move < -0.1 ? 'left' : 'still';
+    const jumping = jump > 0.15;
+    const sprinting = sprint > 0.35 && Math.abs(move) > 0.1;
+    let label = direction === 'still' ? 'wait' : `move_${direction}`;
+    if (sprinting) label = `sprint_${direction}`;
+    if (jumping) label = direction === 'still' ? 'jump' : `jump_${direction}`;
+
+    return {
+      move,
+      jump,
+      sprint,
+      outputs,
+      action: ACTION_SPACE[actionIndex],
+      actionIndex,
+      label,
+    };
+  }
+
+  chooseAction(state: number[]): { action: string; actionIndex: number } {
+    const controls = this.chooseControls(state);
+    return { action: controls.action, actionIndex: controls.actionIndex };
   }
 
 }

@@ -14,10 +14,33 @@ export const FRICTION = 0.9; // closer to 1 is less friction
 export const MAX_SPEED = 5;
 export const JUMP_STRENGTH = -13;
 
-// Energy System
+// Energy / stamina system
 export const MAX_ENERGY = 100;
-export const ENERGY_REGEN_RATE = 15; // points per second
-export const JUMP_ENERGY_COST = 10;
+export const FATIGUE_THRESHOLD = 0.30; // below 30% reserve, physical output falls smoothly
+export const FATIGUED_ACCELERATION_FACTOR = 0.55;
+export const FATIGUED_JUMP_FACTOR = 0.65;
+export const FATIGUED_SPEED_FACTOR = 0.72;
+export const CRUISE_SPEED_RATIO = 0.72; // sprint output blends from efficient cruise to peak speed
+export const MOVE_ENERGY_COST_PER_SEC = 4;
+export const SPRINT_ENERGY_COST_PER_SEC = 14; // full-effort full-sprint ~= 18 energy/s total
+export const STATIONARY_ENERGY_RECOVERY_PER_SEC = 20;
+export const WALK_ENERGY_RECOVERY_PER_SEC = 8;
+export const JUMP_MIN_ENERGY_COST = 3;
+export const JUMP_EXTRA_ENERGY_COST = 12; // maximum jump ~= 15 energy
+export const JUMP_MIN_POWER_RATIO = 0.45;
+export const JUMP_CONTROL_THRESHOLD = 0.15;
+
+// Role physiology: evader has slightly better burst; chaser has better endurance/recovery.
+export const CHASER_ENERGY_CAPACITY_MULTIPLIER = 1.10;
+export const CHASER_RECOVERY_MULTIPLIER = 1.15;
+export const CHASER_SPEED_MULTIPLIER = 1.00;
+export const CHASER_ACCELERATION_MULTIPLIER = 1.00;
+export const CHASER_JUMP_MULTIPLIER = 1.00;
+export const EVADER_ENERGY_CAPACITY_MULTIPLIER = 0.90;
+export const EVADER_RECOVERY_MULTIPLIER = 0.90;
+export const EVADER_SPEED_MULTIPLIER = 1.05;
+export const EVADER_ACCELERATION_MULTIPLIER = 1.05;
+export const EVADER_JUMP_MULTIPLIER = 1.05;
 
 // Tag mechanics
 export const TAG_COOLDOWN = 2000; // 2 seconds in ms
@@ -32,9 +55,9 @@ export const MAX_PLATFORM_GAP_X = 200;
 export const MIN_PLATFORM_GAP_Y = -120;
 export const MAX_PLATFORM_GAP_Y = 120;
 
-// Learning Agent - Base Abilities Action Space
-export const ACTION_SPACE = ["move_left", "move_right", "jump", "wait"];
-// 6 self + 3 explicit boundary + 4 platform ledge + (3 nearby_plats * 3 feats = 9) + 4 target + 4 teammate + 8 lidar_rays + 1 bias = 39
+// NEAT output channels. They are continuous signals, not mutually-exclusive discrete actions.
+export const ACTION_SPACE = ["left_drive", "right_drive", "jump_power", "sprint"];
+// 6 self + 3 boundary + 4 platform ledge + 9 nearby platforms + 4 target + 4 teammate + 8 lidar + 1 opponent energy = 39
 export const NUM_LIDAR_RAYS = 8;
 export const LIDAR_MAX_DISTANCE = 350;
 export const STATE_VECTOR_SIZE = 39;

@@ -9,7 +9,7 @@ The old actor/critic + Adam + trajectory/GAE training path has been removed. Tra
 - **Chaser population:** 48 genomes
 - **Evader population:** 48 genomes
 - **Inputs:** the existing 39-value state vector
-- **Outputs:** 4 actions (`move_left`, `move_right`, `jump`, `wait`)
+- **Outputs:** 4 continuous control channels (`left_drive`, `right_drive`, `jump_power`, `sprint`)
 - **Network type:** feed-forward NEAT graph (acyclic for this first implementation)
 - **Structural evolution:** add-node and add-connection mutation
 - **Genetic evolution:** innovation-number-aligned crossover, weight/bias mutation, elitism and speciation
@@ -40,7 +40,7 @@ Terminal performance is deliberately dominant, with modest dense shaping so loco
 - making a tag;
 - tagging earlier;
 - closing distance;
-- rightward progress;
+- progress in the episode's randomized escape direction;
 - a small jump/locomotion signal.
 
 It penalizes falls and excessive average separation.
@@ -49,12 +49,44 @@ It penalizes falls and excessive average separation.
 - survival time;
 - surviving the full episode;
 - maintaining separation;
-- rightward progress;
+- progress in the episode's randomized escape direction;
 - a small jump/locomotion signal.
 
 It penalizes falls.
 
 The exact coefficients are in `workers/trainingWorker.ts` and are intentionally easy to tune.
+
+## Continuous control + stamina
+
+The NEAT outputs are no longer collapsed to a single discrete action. Each frame the phenotype emits:
+
+- **left drive** and **right drive**, combined into a signed horizontal effort in `[-1, 1]`;
+- **jump power** in `[0, 1]`, allowing small hops through maximum jumps;
+- **sprint intensity** in `[0, 1]`, blending efficient cruise speed into peak speed.
+
+Stamina is a physical constraint rather than a direct fitness reward:
+
+- ordinary running has a modest nonlinear cost;
+- full sprint is much more expensive (about 18 energy/second at full effort);
+- jump cost scales quadratically from roughly 3 to 15 energy;
+- recovery happens only while grounded and is strongest while resting;
+- below 30% reserve, acceleration, top speed and jump power degrade smoothly;
+- an exhausted agent can still move and can make a weaker affordable jump.
+
+The roles have intentionally different physiology:
+
+- **Evader:** ~5% better burst speed/acceleration/jump, 90% base stamina capacity and 90% recovery.
+- **Chaser:** base burst ability, 110% stamina capacity and 115% recovery.
+
+This makes the evader better at creating an initial gap while giving the chaser a plausible endurance strategy: force expensive sprints/jumps, conserve energy, then attack a fatigued runner.
+
+The 39-input genome shape is preserved for checkpoint compatibility. The former constant bias input was redundant with NEAT node biases, so that slot now carries **target/threat energy reserve**. Own energy was already part of the state vector.
+
+## Mirrored and randomized evaluation
+
+Each generation now evaluates both leftward and rightward escape orientations. With the default three matchups per genome, seed parity guarantees that both orientations occur rather than relying on chance. Start spacing and translation are also randomized within a safe range.
+
+The headless course is geometrically mirrored for leftward episodes, camera tracking is allowed into negative world coordinates, and progress shaping is measured relative to the episode's flow direction. This removes the old shortcut where `move right` could become a globally correct policy. Visual champion playback also randomizes its initial orientation and spacing on reset.
 
 ## NEAT implementation
 

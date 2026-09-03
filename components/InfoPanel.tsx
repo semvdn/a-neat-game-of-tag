@@ -69,8 +69,8 @@ const stateVectorLabels = [
     { label: 'Ray 90° (D)' }, { label: 'Ray 135° (DL)' },
     { label: 'Ray 180° (L)' }, { label: 'Ray 225° (UL)' }, 
     { label: 'Ray 270° (U)' }, { label: 'Ray 315° (UR)' },
-    // Bias (1)
-    { label: 'Bias' },
+    // Opponent stamina (1)
+    { label: 'Opponent Energy' },
 ];
 
 const rewardTermOrder = [
@@ -93,9 +93,7 @@ const rewardTermOrder = [
     'successfulJump',
     'stayOnPlatform',
     'fallPenalty',
-    'highEnergyUse',
     'inactivity',
-    'highEnergy',
 ];
 
 const VectorBar: React.FC<{label: string, value: number}> = ({label, value}) => {
@@ -378,9 +376,16 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
                             {agent.status}
                         </span>
                     </div>
-                    {/* Energy Bar */}
+                    {/* Stamina Bar */}
+                    <div className="flex items-center justify-between text-[10px] text-gray-400 font-mono mb-1">
+                        <span>Stamina {agent.energy.toFixed(0)}/{agent.maxEnergy.toFixed(0)}</span>
+                        <span className="truncate max-w-[120px]" title={agent.lastAction}>{agent.lastAction}</span>
+                    </div>
                     <div className="w-full bg-gray-600 rounded-full h-2.5 mb-2">
-                        <div className="bg-green-500 h-2.5 rounded-full" style={{ width: `${(agent.energy / agent.maxEnergy) * 100}%` }}></div>
+                        <div
+                          className={`${agent.energy / Math.max(1, agent.maxEnergy) < 0.3 ? 'bg-amber-500' : 'bg-green-500'} h-2.5 rounded-full transition-all`}
+                          style={{ width: `${Math.max(0, Math.min(100, (agent.energy / Math.max(1, agent.maxEnergy)) * 100))}%` }}
+                        ></div>
                     </div>
                     
                     <div className="flex items-center justify-between text-xs text-gray-400 font-mono" title={agent.modelId}>

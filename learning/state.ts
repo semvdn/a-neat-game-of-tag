@@ -23,7 +23,7 @@ import { computeLidarRays, getLidarDistances } from './raycast';
  * - 4 Target / Threat Dynamics ([dx, dy, vx, vy])
  * - 4 Closest Teammate Dynamics ([dx, dy, vx, vy])
  * - 8 Multi-Ray Lidar Radial Obstacle Distances
- * - 1 Constant Bias Term
+ * - 1 Opponent Energy Reserve
  * Total: 39 Features
  */
 export function getAgentStateVector(
@@ -193,8 +193,8 @@ export function getAgentStateVector(
     // Multi-Ray Spatial Perception (8)
     ...lidarDistances,
 
-    // Bias (1)
-    1.0,
+    // Opponent Energy Reserve (1)
+    targetOrThreat ? targetOrThreat.energy / Math.max(1, targetOrThreat.maxEnergy) : 0,
   ];
 
   return state;
