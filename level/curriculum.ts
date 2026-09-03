@@ -6,12 +6,12 @@ export interface CurriculumState {
 
 export interface CurriculumObservation {
   navigationScore: number;
-  fallRatePerAgentEpisode: number;
+  fallTerminationRate: number;
 }
 
 export interface CurriculumSnapshot extends CurriculumState {
   lastNavigationScore: number;
-  lastFallRatePerAgentEpisode: number;
+  lastFallTerminationRate: number;
   branchesUnlocked: boolean;
   movingUnlocked: boolean;
   crumblingUnlocked: boolean;
@@ -34,14 +34,14 @@ export function advanceCurriculum(
   observation: CurriculumObservation,
 ): CurriculumSnapshot {
   const score = Math.max(0, Math.min(1, observation.navigationScore));
-  const fallRate = Math.max(0, observation.fallRatePerAgentEpisode);
+  const fallRate = Math.max(0, Math.min(1, observation.fallTerminationRate));
   const navigationEma = state.navigationEma * 0.72 + score * 0.28;
 
   let delta = 0;
   // Progress only when terrain is being navigated competently. The hysteresis prevents
   // difficulty from seesawing because of one odd coevolutionary generation.
-  if (navigationEma >= 0.68 && fallRate <= 0.55) delta = 0.03;
-  else if (navigationEma < 0.42 || fallRate > 1.0) delta = -0.02;
+  if (navigationEma >= 0.68 && fallRate <= 0.12) delta = 0.03;
+  else if (navigationEma < 0.42 || fallRate > 0.32) delta = -0.03;
 
   const difficulty = Math.max(0.04, Math.min(1, state.difficulty + delta));
   state.difficulty = difficulty;
@@ -51,7 +51,7 @@ export function advanceCurriculum(
   return {
     ...state,
     lastNavigationScore: score,
-    lastFallRatePerAgentEpisode: fallRate,
+    lastFallTerminationRate: fallRate,
     branchesUnlocked: difficulty >= BRANCH_UNLOCK_DIFFICULTY,
     movingUnlocked: difficulty >= MOVING_UNLOCK_DIFFICULTY,
     crumblingUnlocked: difficulty >= CRUMBLING_UNLOCK_DIFFICULTY,
@@ -61,12 +61,12 @@ export function advanceCurriculum(
 export function curriculumSnapshot(
   state: CurriculumState,
   lastNavigationScore = state.navigationEma,
-  lastFallRatePerAgentEpisode = 0,
+  lastFallTerminationRate = 0,
 ): CurriculumSnapshot {
   return {
     ...state,
     lastNavigationScore,
-    lastFallRatePerAgentEpisode,
+    lastFallTerminationRate,
     branchesUnlocked: state.difficulty >= BRANCH_UNLOCK_DIFFICULTY,
     movingUnlocked: state.difficulty >= MOVING_UNLOCK_DIFFICULTY,
     crumblingUnlocked: state.difficulty >= CRUMBLING_UNLOCK_DIFFICULTY,

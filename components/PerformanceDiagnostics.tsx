@@ -277,10 +277,10 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} hint="same 0–220 scale as runner" />
               <MetricCard label="Runner best" value={fmt(evaderMetrics?.bestFitness)} hint="same 0–220 scale as chaser" />
               <MetricCard label="Species C / R" value={`${chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.speciesCount ?? '—'}`} />
-              <MetricCard label="Tag rate" value={balance ? `${(balance.tagRate * 100).toFixed(1)}%` : '—'} hint="current-population matches" />
-              <MetricCard label="Survival rate" value={balance ? `${(balance.survivalRate * 100).toFixed(1)}%` : '—'} hint="current-population matches" />
-              <MetricCard label="Avg tag time" value={balance?.avgTagTimeMs != null ? `${(balance.avgTagTimeMs / 1000).toFixed(2)}s` : '—'} hint="when a tag occurs" />
-              <MetricCard label="Matches" value={balance?.matches ?? '—'} hint="last completed generation" />
+              <MetricCard label="Chaser win" value={balance ? `${(balance.chaserWinRate * 100).toFixed(1)}%` : '—'} hint="tag or runner fall" />
+              <MetricCard label="Runner win" value={balance ? `${(balance.evaderWinRate * 100).toFixed(1)}%` : '—'} hint="timeout or chaser fall" />
+              <MetricCard label="Fall-ended" value={balance ? `${(balance.fallRate * 100).toFixed(1)}%` : '—'} hint={balance ? `${balance.chaserFalls} chaser / ${balance.evaderFalls} runner` : 'terrain failures'} />
+              <MetricCard label="Avg tag time" value={balance?.avgTagTimeMs != null ? `${(balance.avgTagTimeMs / 1000).toFixed(2)}s` : '—'} hint={balance ? `${balance.matches} matches` : 'when a tag occurs'} />
             </div>
 
             <div className="grid lg:grid-cols-2 gap-4">
@@ -303,7 +303,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               </div>
               <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
                 <MetricCard label="Navigation" value={curriculum ? `${(curriculum.lastNavigationScore * 100).toFixed(0)}%` : '—'} hint="last generation" />
-                <MetricCard label="Falls / agent" value={curriculum ? fmt(curriculum.lastFallRatePerAgentEpisode, 2) : '—'} hint="per episode" />
+                <MetricCard label="Fall endings" value={curriculum ? `${(curriculum.lastFallTerminationRate * 100).toFixed(1)}%` : '—'} hint="matches ended by terrain failure" />
                 <MetricCard label="Branches" value={curriculum?.branchesUnlocked ? 'ON' : 'locked'} hint={curriculum?.lastCourseBranchCount != null ? `${curriculum.lastCourseBranchCount} in sampled course` : undefined} />
                 <MetricCard label="Moving" value={curriculum?.movingUnlocked ? 'ON' : 'locked'} hint={curriculum?.lastCourseMovingPlatforms != null ? `${curriculum.lastCourseMovingPlatforms} platforms` : undefined} />
                 <MetricCard label="Crumbling" value={curriculum?.crumblingUnlocked ? 'ON' : 'locked'} hint={curriculum?.lastCourseCrumblingPlatforms != null ? `${curriculum.lastCourseCrumblingPlatforms} platforms` : undefined} />
@@ -320,16 +320,18 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-cyan-300" /><h3 className="font-semibold text-white">Game balance by generation</h3></div>
               <LineChart
                 series={[
-                  { label: 'Chaser tag %', values: balanceHistory.map(m => m.tagRate * 100) },
-                  { label: 'Runner survival %', values: balanceHistory.map(m => m.survivalRate * 100) },
+                  { label: 'Tag %', values: balanceHistory.map(m => m.tagRate * 100) },
+                  { label: 'Runner timeout %', values: balanceHistory.map(m => m.survivalRate * 100) },
+                  { label: 'Chaser fall %', values: balanceHistory.map(m => (m.chaserFalls / Math.max(1, m.matches)) * 100) },
+                  { label: 'Runner fall %', values: balanceHistory.map(m => (m.evaderFalls / Math.max(1, m.matches)) * 100) },
                 ]}
                 emptyLabel="Complete generations to populate the balance chart."
               />
-              <p className="mt-2 text-xs text-gray-500">Measured only on current-population matchups; Hall-of-Fame tests are excluded so the balance signal stays comparable.</p>
+              <p className="mt-2 text-xs text-gray-500">Current-population matches only. A fall is a terminal loss in evolutionary evaluation; Hall-of-Fame tests remain excluded from this balance signal.</p>
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> both roles have identical physical abilities and evolve against rotating current opponents plus Hall-of-Fame champions. Episodes are now generated from seeded course graphs with a guaranteed reachable backbone; as navigation competence rises the curriculum unlocks branch/rejoin routes, moving platforms and contact-triggered crumbling platforms while preserving conservative jump feasibility.
+              <strong className="text-violet-200">Training architecture:</strong> both roles have identical physical abilities and evolve against rotating current opponents plus Hall-of-Fame champions. Episodes use seeded course graphs with a guaranteed reachable backbone; as navigation competence rises the curriculum unlocks branch/rejoin routes, moving platforms and contact-triggered crumbling platforms. Training falls are terminal losses, so neither role can exploit the void as a teleport, stamina refill or escape from an imminent tag.
             </div>
           </div>
         )}

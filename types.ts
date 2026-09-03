@@ -161,8 +161,15 @@ export interface BalanceTelemetry {
   generation: number;
   matches: number;
   tags: number;
+  timeouts: number;
+  chaserFalls: number;
+  evaderFalls: number;
+  doubleFalls: number;
   tagRate: number;
   survivalRate: number;
+  fallRate: number;
+  chaserWinRate: number;
+  evaderWinRate: number;
   avgTagTimeMs: number | null;
 }
 
@@ -170,7 +177,7 @@ export interface CurriculumTelemetry {
   difficulty: number;
   navigationEma: number;
   lastNavigationScore: number;
-  lastFallRatePerAgentEpisode: number;
+  lastFallTerminationRate: number;
   generationsObserved: number;
   branchesUnlocked: boolean;
   movingUnlocked: boolean;

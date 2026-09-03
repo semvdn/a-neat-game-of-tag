@@ -1,7 +1,7 @@
 
 // Game world
 export const GRAVITY = 0.5;
-export const FALL_BOUNDARY = 2000; // Y-coord to trigger respawn
+export const FALL_BOUNDARY = 2000; // Y-coord to trigger fall handling
 
 // Agent properties
 export const AGENT_WIDTH = 40;
