@@ -62,8 +62,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     );
     const renderedWorldWidth = WORLD_REF_WIDTH * cameraScale;
     const renderedWorldHeight = WORLD_REF_HEIGHT * cameraScale;
-    const offsetX = (cssWidth - renderedWorldWidth) / 2;
-    const offsetY = (cssHeight - renderedWorldHeight) / 2;
+
+    // Anchor the logical camera rectangle to the exact CSS-pixel center of the canvas.
+    // This remains correct for every aspect ratio (wide, tall, square, fractional resize, etc.).
+    const canvasCenterX = cssWidth / 2;
+    const canvasCenterY = cssHeight / 2;
+    const offsetX = canvasCenterX - renderedWorldWidth / 2;
+    const offsetY = canvasCenterY - renderedWorldHeight / 2;
 
     // Slightly distinguish the active camera area from any aspect-ratio letterboxing.
     ctx.fillStyle = '#1a202c';
@@ -74,10 +79,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     ctx.rect(offsetX, offsetY, renderedWorldWidth, renderedWorldHeight);
     ctx.clip();
 
-    // Canvas pixels -> logical camera units -> world coordinates.
-    ctx.translate(offsetX, offsetY);
+    // Transform around the CENTER of both the canvas and the logical camera viewport.
+    // Doing this explicitly prevents any resize/aspect-ratio path from biasing the view
+    // toward the top-left while still preserving one uniform X/Y scale factor.
+    const cameraCenterX = cameraPosition.x + WORLD_REF_WIDTH / 2;
+    const cameraCenterY = cameraPosition.y + WORLD_REF_HEIGHT / 2;
+    ctx.translate(canvasCenterX, canvasCenterY);
     ctx.scale(cameraScale, cameraScale);
-    ctx.translate(-cameraPosition.x, -cameraPosition.y);
+    ctx.translate(-cameraCenterX, -cameraCenterY);
 
     platforms.forEach(platform => drawPlatform(ctx, platform));
 
