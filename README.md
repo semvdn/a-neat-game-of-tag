@@ -1,0 +1,146 @@
+# NEAT Tag Agents
+
+This branch ports the original PPO tag agents to a population-based **NEAT (NeuroEvolution of Augmenting Topologies)** trainer while keeping the existing physics, rendering, lidar/state-vector code, sound, controls and benchmark UI.
+
+## What changed
+
+The old actor/critic + Adam + trajectory/GAE training path has been removed. Training is now owned by a single Web Worker and evolves two independent populations:
+
+- **Chaser population:** 48 genomes
+- **Evader population:** 48 genomes
+- **Inputs:** the existing 39-value state vector
+- **Outputs:** 4 actions (`move_left`, `move_right`, `jump`, `wait`)
+- **Network type:** feed-forward NEAT graph (acyclic for this first implementation)
+- **Structural evolution:** add-node and add-connection mutation
+- **Genetic evolution:** innovation-number-aligned crossover, weight/bias mutation, elitism and speciation
+
+The main React thread no longer learns. It only renders the current champion genomes. This avoids having a second trainer that can drift away from the worker population.
+
+## Training cycle
+
+At `25x` and `50x`, the persistent training worker performs headless evolutionary evaluation.
+
+For each generation:
+
+1. Every chaser genome is evaluated against rotating evader genomes.
+2. Every genome receives the same number of evaluations (currently 3).
+3. Episodes end on a tag or after 12 seconds of simulated time.
+4. Fitness is averaged across the genome's matchups.
+5. Each population is speciated independently.
+6. Elites survive, parents are selected, crossover aligns genes by innovation number, then mutations create the next generation.
+7. The worker sends the best chaser and evader genomes plus generation diagnostics to the UI.
+
+At `1x`, `2x`, `5x` and `10x`, the app shows normal visual play using the latest champions. Switching between visual and turbo modes does **not** recreate the worker or discard the evolving populations.
+
+## Fitness
+
+Terminal performance is deliberately dominant, with modest dense shaping so locomotion can bootstrap before reliable tags emerge.
+
+**Chaser fitness** rewards:
+- making a tag;
+- tagging earlier;
+- closing distance;
+- rightward progress;
+- a small jump/locomotion signal.
+
+It penalizes falls and excessive average separation.
+
+**Evader fitness** rewards:
+- survival time;
+- surviving the full episode;
+- maintaining separation;
+- rightward progress;
+- a small jump/locomotion signal.
+
+It penalizes falls.
+
+The exact coefficients are in `workers/trainingWorker.ts` and are intentionally easy to tune.
+
+## NEAT implementation
+
+`learning/neat.ts` contains the evolutionary core:
+
+- node and connection genes;
+- global innovation tracking;
+- innovation-consistent node splits;
+- genome cloning and phenotype compilation;
+- feed-forward topological execution;
+- compatibility distance;
+- species assignment with an adaptive compatibility threshold;
+- fitter-parent crossover;
+- cycle-safe inheritance/mutation;
+- weight, bias, add-node, add-connection and toggle mutations;
+- tournament selection and elitism;
+- generation metrics.
+
+No third-party NEAT library is required.
+
+## Diagnostics
+
+The PPO diagnostics have been replaced by NEAT metrics:
+
+- best / mean / minimum fitness per generation;
+- species count;
+- compatibility threshold;
+- average node count;
+- average enabled connection count;
+- champion node/connection count;
+- generation counter;
+- chaser and evader action distributions;
+- champion network graph visualizer.
+
+Role-level Elo is retained only as a human-readable evaluation signal. It is **not** used for evolutionary selection.
+
+## Persistence
+
+Export/save now stores the current **chaser and evader champion genomes** and their generation metadata.
+
+When champions are imported, the worker reconstructs a fresh population around each champion and mutates the non-elite copies. Full population/species state is not yet serialized, so an export is a champion checkpoint rather than an exact pause/resume snapshot.
+
+Old PPO actor/critic JSON is intentionally rejected because its tensors cannot be mapped meaningfully onto NEAT genome topology.
+
+## Main tuning constants
+
+See `constants.ts`:
+
+```ts
+NEAT_POPULATION_SIZE = 48
+NEAT_OPPONENTS_PER_GENOME = 3
+NEAT_EPISODE_MAX_MS = 12000
+NEAT_COMPATIBILITY_THRESHOLD = 0.8
+NEAT_TARGET_SPECIES = 8
+NEAT_CROSSOVER_RATE = 0.75
+NEAT_WEIGHT_MUTATION_RATE = 0.8
+NEAT_ADD_NODE_RATE = 0.03
+NEAT_ADD_CONNECTION_RATE = 0.08
+```
+
+Additional compatibility and mutation parameters live in `DEFAULT_NEAT_CONFIG` in `learning/neat.ts`.
+
+## Run locally
+
+Prerequisite: Node.js.
+
+```bash
+npm install
+npm run dev
+```
+
+For a production build:
+
+```bash
+npm run build
+```
+
+The original AI Studio/Vite Gemini environment plumbing is left in place, although the tag-agent trainer itself does not depend on Gemini.
+
+## File map
+
+- `learning/neat.ts` — genome, phenotype, mutation, crossover, speciation and population evolution
+- `learning/agent.ts` — lightweight runtime wrapper around one NEAT genome
+- `workers/trainingWorker.ts` — population ownership, headless matches, fitness and generation loop
+- `components/PerformanceDiagnostics.tsx` — NEAT diagnostics and topology visualizer
+- `App.tsx` — champion rendering, worker lifecycle, persistence and UI integration
+- `constants.ts` — NEAT and game parameters
+
+The former PPO math/optimizer module (`learning/math.ts`) has been removed.

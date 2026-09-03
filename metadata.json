@@ -1,0 +1,8 @@
+{
+  "name": "Tag Agents",
+  "description": "A digital artwork and reinforcement learning testbed where AI agents learn to play tag on an infinite platformer level using NEAT neuroevolution, with speciation, structural mutation, dual populations, and performance diagnostics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
