@@ -33,6 +33,8 @@ import {
   NEAT_WEIGHT_MUTATION_RATE,
   NEAT_ADD_NODE_RATE,
   NEAT_ADD_CONNECTION_RATE,
+  WORLD_REF_WIDTH,
+  WORLD_REF_HEIGHT,
 } from '../constants';
 
 const DT = 16.67;
@@ -60,7 +62,7 @@ let lastEvaderMetrics: NeatGenerationMetrics | null = null;
 let isRunning = false;
 let speedMultiplier = 50;
 let timerId: ReturnType<typeof setTimeout> | null = null;
-let viewportSize = { width: 1200, height: 800 };
+const viewportSize = { width: WORLD_REF_WIDTH, height: WORLD_REF_HEIGHT };
 let seededFromStart = false;
 
 type EvaluationPhase = 'population' | 'chaser_hof' | 'evader_hof';
@@ -706,7 +708,6 @@ self.onmessage = (event: MessageEvent) => {
   switch (type) {
     case 'START': {
       if (typeof payload?.speedMultiplier === 'number') speedMultiplier = Math.max(1, Math.min(200, payload.speedMultiplier));
-      if (payload?.viewportSize) viewportSize = payload.viewportSize;
       if (!seededFromStart && (payload?.chaserWeights || payload?.evaderWeights)) {
         seedPopulations(payload?.chaserWeights, payload?.evaderWeights);
         seededFromStart = true;

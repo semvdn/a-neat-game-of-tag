@@ -202,3 +202,6 @@ Chaser and runner now use identical physiology: 100 stamina, the same accelerati
 Evolutionary fitness is comparable across roles. Terminal outcomes share the same 0–200 scale: an early tag approaches 200 for the chaser and 0 for the runner; a late tag approaches 100/100; a full-episode survival is 0/200. Small bounded progress/separation/fall shaping helps bootstrap locomotion but cannot dominate the terminal result, and neither jumping nor unused energy is rewarded directly.
 
 Diagnostics also report per-generation tag rate, runner survival rate and mean tag time from current-population matches only. Hall-of-Fame evaluations still affect selection but are excluded from these balance metrics.
+
+### Fixed world geometry
+The champion arena now uses fixed world geometry independent of the responsive canvas. Agents remain 40×60 world/CSS pixels, platform heights remain 20 pixels, generated platform widths remain within their fixed configured range, and the initial course is based on the 1200×800 world reference. Resizing the UI changes only the visible viewport/camera framing; it does not rescale or regenerate the world. Background NEAT evaluation likewise stays on the fixed 1200×800 training world.

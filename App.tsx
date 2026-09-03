@@ -38,11 +38,17 @@ import {
   INITIAL_ELO,
   NEAT_HOF_MAX_SIZE,
   NEAT_HOF_OPPONENTS_PER_GENOME,
+  WORLD_REF_WIDTH,
+  WORLD_REF_HEIGHT,
 } from './constants';
 import { Activity, Play, Pause, FastForward, RotateCcw, MonitorPlay, Cpu } from 'lucide-react';
 
 const MAX_TRAIL_POINTS = 96;
 const TRAIL_SAMPLE_DISTANCE = 4;
+
+// The champion simulation always sees the same logical camera window. The HTML canvas
+// may resize freely; GameCanvas scales this world viewport uniformly for presentation.
+const CHAMPION_WORLD_VIEWPORT = { width: WORLD_REF_WIDTH, height: WORLD_REF_HEIGHT } as const;
 
 const appendTrailPoint = (trajectory: AgentState['trajectory'] | undefined, position: AgentState['position']) => {
   const trail = trajectory || [];
@@ -123,10 +129,8 @@ export const App: React.FC = () => {
 
   // Web Worker for Headless Accelerated Simulation
   const workerRef = useRef<Worker | null>(null);
-  const viewportSizeRef = useRef(viewportSize);
   const initializedRef = useRef(false);
   const installedChampionGenerationRef = useRef({ chaser: 0, evader: 0 });
-  useEffect(() => { viewportSizeRef.current = viewportSize; }, [viewportSize]);
 
   const initializeGameState = useCallback(() => {
     chaserAgent.current = new LearningAgent('chaser');
@@ -136,7 +140,7 @@ export const App: React.FC = () => {
     evaderElo.current = INITIAL_ELO;
 
     const initialPlatforms: PlatformState[] = [
-      { id: 0, position: { x: 0, y: viewportSize.height - 100 }, width: viewportSize.width, height: PLATFORM_HEIGHT },
+      { id: 0, position: { x: 0, y: WORLD_REF_HEIGHT - 100 }, width: WORLD_REF_WIDTH, height: PLATFORM_HEIGHT },
     ];
 
     // Visual playback also randomizes direction/spacing so champions are not only demonstrated moving right.
@@ -144,7 +148,7 @@ export const App: React.FC = () => {
     const startSpread = 0.90 + Math.random() * 0.20;
     const startShift = (Math.random() - 0.5) * 70;
     let visualStartXs = [100 + startShift, 100 + 300 * startSpread + startShift, 100 + 600 * startSpread + startShift];
-    if (mirroredStart) visualStartXs = visualStartXs.map(x => viewportSize.width - x - AGENT_WIDTH);
+    if (mirroredStart) visualStartXs = visualStartXs.map(x => WORLD_REF_WIDTH - x - AGENT_WIDTH);
 
     const initialAgents: AgentState[] = [
       {
@@ -259,7 +263,7 @@ export const App: React.FC = () => {
       performanceHistory: prev.performanceHistory.length === 0 ? [initialPoint] : prev.performanceHistory,
     }));
     setIsLoading(false);
-  }, [viewportSize]);
+  }, []);
 
   useEffect(() => {
     const observer = new ResizeObserver(entries => {
@@ -419,10 +423,10 @@ export const App: React.FC = () => {
         evaderWeights: evaderAgent.current?.getWeights(),
         chaserElo: chaserElo.current,
         evaderElo: evaderElo.current,
-        viewportSize,
+        viewportSize: { width: WORLD_REF_WIDTH, height: WORLD_REF_HEIGHT },
       },
     });
-  }, [workerSpeed, isTrainingPaused, isSimulating, viewportSize]);
+  }, [workerSpeed, isTrainingPaused, isSimulating]);
 
   const calculateReward = (
     agent: AgentState,
@@ -542,7 +546,7 @@ export const App: React.FC = () => {
         // 2. Champion control selection. The four NEAT outputs are continuous drive/jump/sprint signals.
         const agentControls: { [key: number]: AgentControls } = {};
         newState.agents.forEach(agent => {
-          const stateVector = getAgentStateVector(agent, newState, viewportSize);
+          const stateVector = getAgentStateVector(agent, newState, CHAMPION_WORLD_VIEWPORT);
           const isChaser = agent.status === AgentStatus.It;
           const role: 'chaser' | 'evader' = isChaser ? 'chaser' : 'evader';
           agent.role = role;
@@ -592,7 +596,7 @@ export const App: React.FC = () => {
 
           // Camera Frame Wall Collisions
           const minVisibleX = newState.cameraPosition.x;
-          const maxVisibleX = newState.cameraPosition.x + viewportSize.width - AGENT_WIDTH;
+          const maxVisibleX = newState.cameraPosition.x + CHAMPION_WORLD_VIEWPORT.width - AGENT_WIDTH;
           let isTouchingFrame = false;
           let contactSide: 'left' | 'right' | null = null;
 
@@ -777,7 +781,7 @@ export const App: React.FC = () => {
             newState,
             tagEvent,
             fallEvents[agent.id] || false,
-            viewportSize
+            CHAMPION_WORLD_VIEWPORT
           );
           rewardBreakdowns[agent.id] = breakdown;
         });
@@ -799,17 +803,17 @@ export const App: React.FC = () => {
 
         // Center on runner cluster with slight forward horizon bias (+5% right)
         const runnersCenterX = (minRunnerX + maxRunnerX) / 2;
-        const desiredCameraX = runnersCenterX - viewportSize.width * 0.45;
+        const desiredCameraX = runnersCenterX - CHAMPION_WORLD_VIEWPORT.width * 0.45;
         newState.cameraPosition.x += (desiredCameraX - newState.cameraPosition.x) * 0.12;
 
         // 10. Platform Generation
-        const rightGenerationEdge = newState.cameraPosition.x + viewportSize.width + PLATFORM_SPAWN_BUFFER;
+        const rightGenerationEdge = newState.cameraPosition.x + CHAMPION_WORLD_VIEWPORT.width + PLATFORM_SPAWN_BUFFER;
         const leftGenerationEdge = newState.cameraPosition.x - PLATFORM_SPAWN_BUFFER;
         const despawnMargin = PLATFORM_SPAWN_BUFFER * 2;
         newState.platforms = newState.platforms.filter(
           p =>
             p.position.x + p.width > newState.cameraPosition.x - despawnMargin &&
-            p.position.x < newState.cameraPosition.x + viewportSize.width + despawnMargin
+            p.position.x < newState.cameraPosition.x + CHAMPION_WORLD_VIEWPORT.width + despawnMargin
         );
 
         const sortedPlatforms = [...newState.platforms].sort((a, b) => a.position.x - b.position.x);
@@ -818,7 +822,7 @@ export const App: React.FC = () => {
           let gapX = MIN_PLATFORM_GAP_X + Math.random() * (MAX_PLATFORM_GAP_X - MIN_PLATFORM_GAP_X);
           const gapY = (Math.random() - 0.5) * MAX_PLATFORM_GAP_Y * 1.5;
           const newY = baseY + gapY;
-          const clampedY = Math.min(viewportSize.height - 120, Math.max(250, newY));
+          const clampedY = Math.min(WORLD_REF_HEIGHT - 120, Math.max(250, newY));
           const verticalDifference = clampedY - baseY;
 
           if (verticalDifference < -100) gapX = Math.max(MIN_PLATFORM_GAP_X, Math.min(gapX, 90));
@@ -864,7 +868,7 @@ export const App: React.FC = () => {
         // Attach UI State
         newState.agents = newState.agents.map(agent => {
           const breakdown = rewardBreakdowns[agent.id] || {};
-          const stateVector = getAgentStateVector(agent, newState, viewportSize);
+          const stateVector = getAgentStateVector(agent, newState, CHAMPION_WORLD_VIEWPORT);
 
           return {
             ...agent,
@@ -876,7 +880,7 @@ export const App: React.FC = () => {
         return newState;
       });
     },
-    [isSimulating, viewportSize]
+    [isSimulating]
   );
 
   const updateSimulation = useCallback(
@@ -920,12 +924,12 @@ export const App: React.FC = () => {
     const startSpread = 0.90 + Math.random() * 0.20;
     const startShift = (Math.random() - 0.5) * 70;
     let xs = [100 + startShift, 100 + 300 * startSpread + startShift, 100 + 600 * startSpread + startShift];
-    if (mirroredStart) xs = xs.map(x => viewportSize.width - x - AGENT_WIDTH);
+    if (mirroredStart) xs = xs.map(x => WORLD_REF_WIDTH - x - AGENT_WIDTH);
 
-    const groundY = viewportSize.height - 100;
+    const groundY = WORLD_REF_HEIGHT - 100;
     const startY = Math.max(40, groundY - AGENT_HEIGHT - 30);
     const platforms: PlatformState[] = [
-      { id: 0, position: { x: 0, y: groundY }, width: viewportSize.width, height: PLATFORM_HEIGHT },
+      { id: 0, position: { x: 0, y: groundY }, width: WORLD_REF_WIDTH, height: PLATFORM_HEIGHT },
     ];
 
     recentSurvivalTimes.current = [];
@@ -977,7 +981,7 @@ export const App: React.FC = () => {
         avgTimeToTag: 0,
       };
     });
-  }, [viewportSize]);
+  }, []);
 
 
   const handleResetWeights = () => {
