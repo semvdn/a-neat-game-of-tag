@@ -1,4 +1,4 @@
-import type { AgentState, GameState, Vector2D } from '../types';
+import type { AgentState, GameState } from '../types';
 import { AgentStatus } from '../types';
 import {
   AGENT_WIDTH,
@@ -9,22 +9,18 @@ import {
   WORLD_REF_HEIGHT,
   PLATFORM_MAX_WIDTH,
   FALL_BOUNDARY,
-  NUM_LIDAR_RAYS,
-  LIDAR_MAX_DISTANCE,
 } from '../constants';
-import { computeLidarRays, getLidarDistances } from './raycast';
 
 /**
- * Computes the enhanced 39-dimensional state vector for an agent:
+ * Computes the enhanced 31-dimensional state vector for an agent:
  * - 6 Self Kinematics & Status
  * - 3 Explicit Boundary Distances (Left Screen, Right Screen, Fall Boundary)
  * - 4 Explicit Platform Ledge Distances (Left Ledge, Right Ledge, Closest Ledge, Ledge Proximity Alert)
  * - 9 Nearby Platforms Features (3 closest platforms * [dx, dy, width])
  * - 4 Target / Threat Dynamics ([dx, dy, vx, vy])
  * - 4 Closest Teammate Dynamics ([dx, dy, vx, vy])
- * - 8 Multi-Ray Lidar Radial Obstacle Distances
  * - 1 Opponent Energy Reserve
- * Total: 39 Features
+ * Total: 31 Features
  */
 export function getAgentStateVector(
   agent: AgentState,
@@ -146,18 +142,7 @@ export function getAgentStateVector(
     }
   }
 
-  // --- 6. Multi-Ray Spatial Perception (8 Lidar Rays) ---
-  const lidarRays = computeLidarRays(
-    { x: agentCenterX, y: agentCenterY },
-    gameState.platforms,
-    NUM_LIDAR_RAYS,
-    LIDAR_MAX_DISTANCE,
-    { minX: screenLeft, maxX: screenRight }
-  );
-  agent.lidarRays = lidarRays;
-  const lidarDistances = getLidarDistances(lidarRays);
-
-  // --- Assemble Full 39-D State Vector ---
+  // --- Assemble Full 31-D State Vector ---
   const state: number[] = [
     // Self Kinematics & Status (6)
     agent.velocity.x / MAX_SPEED,
@@ -192,9 +177,6 @@ export function getAgentStateVector(
     closestTeammate ? (closestTeammate.position.y - agent.position.y) / WORLD_REF_HEIGHT : 0,
     closestTeammate ? closestTeammate.velocity.x / MAX_SPEED : 0,
     closestTeammate ? closestTeammate.velocity.y / Math.abs(JUMP_STRENGTH) : 0,
-
-    // Multi-Ray Spatial Perception (8)
-    ...lidarDistances,
 
     // Opponent Energy Reserve (1)
     targetOrThreat ? targetOrThreat.energy / Math.max(1, targetOrThreat.maxEnergy) : 0,

@@ -1040,7 +1040,7 @@ export const App: React.FC = () => {
   const handleSaveModels = () => {
     if (!chaserAgent.current || !evaderAgent.current) return;
     const payload = {
-      version: '3.0.0',
+      version: '3.1.0',
       algorithm: 'NEAT',
       timestamp: Date.now(),
       chaser: JSON.parse(chaserAgent.current.exportJson()),
@@ -1061,10 +1061,10 @@ export const App: React.FC = () => {
       if (!raw) return false;
       const payload = JSON.parse(raw);
       if (payload.chaser && chaserAgent.current) {
-        chaserAgent.current.importJson(JSON.stringify(payload.chaser));
+        if (!chaserAgent.current.importJson(JSON.stringify(payload.chaser))) return false;
       }
       if (payload.evader && evaderAgent.current) {
-        evaderAgent.current.importJson(JSON.stringify(payload.evader));
+        if (!evaderAgent.current.importJson(JSON.stringify(payload.evader))) return false;
       }
       installedChampionGenerationRef.current = {
         chaser: chaserAgent.current?.getGeneration() || 0,
@@ -1093,7 +1093,7 @@ export const App: React.FC = () => {
   const handleExportModels = () => {
     if (!chaserAgent.current || !evaderAgent.current) return;
     const payload = {
-      version: '3.0.0',
+      version: '3.1.0',
       algorithm: 'NEAT',
       timestamp: Date.now(),
       chaser: JSON.parse(chaserAgent.current.exportJson()),
@@ -1118,10 +1118,10 @@ export const App: React.FC = () => {
     try {
       const payload = JSON.parse(jsonString);
       if (payload.chaser && chaserAgent.current) {
-        chaserAgent.current.importJson(JSON.stringify(payload.chaser));
+        if (!chaserAgent.current.importJson(JSON.stringify(payload.chaser))) return false;
       }
       if (payload.evader && evaderAgent.current) {
-        evaderAgent.current.importJson(JSON.stringify(payload.evader));
+        if (!evaderAgent.current.importJson(JSON.stringify(payload.evader))) return false;
       }
       installedChampionGenerationRef.current = {
         chaser: chaserAgent.current?.getGeneration() || 0,
@@ -1285,7 +1285,7 @@ export const App: React.FC = () => {
                 <h2 className="text-2xl font-bold text-cyan-400 mb-2">Autonomous Agent Arena</h2>
                 <p className="text-sm text-gray-400 mb-6 leading-relaxed">
                   Three autonomous agents evolve chasing, dodging, jumping, and spatial awareness using
-                  dual NEAT populations, speciation, structural mutation, 8-ray lidar, and headless generation evaluation.
+                  dual NEAT populations, speciation, structural mutation, compact spatial senses, and headless generation evaluation.
                 </p>
                 <button
                   onClick={startSimulation}

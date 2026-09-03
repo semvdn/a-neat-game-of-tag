@@ -51,11 +51,6 @@ const stateVectorLabels = [
     // Teammate (4)
     { label: 'Mate dX' }, { label: 'Mate dY' }, 
     { label: 'Mate Vel X' }, { label: 'Mate Vel Y' },
-    // Lidar Perception Rays (8)
-    { label: 'Ray 0° (R)' }, { label: 'Ray 45° (DR)' }, 
-    { label: 'Ray 90° (D)' }, { label: 'Ray 135° (DL)' },
-    { label: 'Ray 180° (L)' }, { label: 'Ray 225° (UL)' }, 
-    { label: 'Ray 270° (U)' }, { label: 'Ray 315° (UR)' },
     // Opponent stamina (1)
     { label: 'Opponent Energy' },
 ];
@@ -212,7 +207,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
           <Radar className="w-4 h-4 text-cyan-400" />
           <div>
             <h3 className="font-semibold text-gray-300">Agent Senses</h3>
-            <p className="text-[10px] text-gray-400">39-D brain inputs + 8 live raycasts · press S</p>
+            <p className="text-[10px] text-gray-400">31-D brain inputs · press S</p>
           </div>
         </div>
         <ToggleSwitch id="senses-toggle" checked={showSenses} onChange={onToggleSenses} />

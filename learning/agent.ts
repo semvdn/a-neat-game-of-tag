@@ -67,6 +67,13 @@ export class LearningAgent {
     if (!weights || !Array.isArray(weights.nodes) || !Array.isArray(weights.connections)) {
       throw new Error('This build expects a NEAT genome. Legacy PPO weight files are not directly compatible.');
     }
+    const inputCount = weights.nodes.filter(node => node.type === 'input').length;
+    const outputCount = weights.nodes.filter(node => node.type === 'output').length;
+    if (inputCount !== STATE_VECTOR_SIZE || outputCount !== ACTION_SPACE.length) {
+      throw new Error(
+        `Incompatible NEAT genome shape: expected ${STATE_VECTOR_SIZE} inputs and ${ACTION_SPACE.length} outputs, received ${inputCount} inputs and ${outputCount} outputs.`
+      );
+    }
     this.genome = cloneGenome(weights);
     this.role = weights.role || this.role;
     this.network = new NeatNetwork(this.genome);
@@ -79,7 +86,7 @@ export class LearningAgent {
   public exportJson(): string {
     return JSON.stringify({
       algorithm: 'NEAT',
-      version: 1,
+      version: 2,
       role: this.role,
       generation: this.genome.generation,
       genome: this.getWeights(),

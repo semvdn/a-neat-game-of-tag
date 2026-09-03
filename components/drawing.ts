@@ -77,7 +77,7 @@ const rgbaFromHex = (hex: string, alpha: number) => {
 };
 
 /**
- * Draw the actual observation channels that feed the current 39-input NEAT policy.
+ * Draw the actual observation channels that feed the current 31-input NEAT policy.
  * Geometry selection is not recomputed here: getAgentStateVector() stores sensesDebug
  * from the exact observation pass used by the network, and this renderer consumes it.
  */
@@ -123,36 +123,6 @@ export const drawAgentSenses = (
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-
-    // 8 lidar inputs. These rays hit platforms and the camera's left/right walls only.
-    if (agent.lidarRays) {
-        agent.lidarRays.forEach((ray, index) => {
-            const endX = cx + ray.direction.x * ray.distance;
-            const endY = cy + ray.direction.y * ray.distance;
-            const hit = ray.hitPoint !== null;
-            const norm = ray.normalizedDistance;
-
-            ctx.setLineDash([]);
-            ctx.beginPath();
-            ctx.moveTo(cx, cy);
-            ctx.lineTo(endX, endY);
-            ctx.lineWidth = (hit ? 1.45 : 0.9) * unit;
-            ctx.strokeStyle = hit ? medium : faint;
-            ctx.stroke();
-
-            if (hit) {
-                ctx.beginPath();
-                ctx.arc(endX, endY, 3 * unit, 0, Math.PI * 2);
-                ctx.fillStyle = primary;
-                ctx.fill();
-            }
-
-            // Keep labels close to the endpoint but slightly inset from it.
-            const labelX = cx + ray.direction.x * Math.max(24 * unit, ray.distance - 18 * unit);
-            const labelY = cy + ray.direction.y * Math.max(24 * unit, ray.distance - 18 * unit);
-            label(`R${index} ${norm.toFixed(2)}`, labelX, labelY, 'center');
-        });
-    }
 
     // Target / threat dynamics: dx, dy, vx, vy + opponent energy.
     if (debug.target) {
@@ -289,25 +259,6 @@ export const drawAgentSenses = (
         'center',
     );
 
-    ctx.restore();
-};
-
-// Kept as a small compatibility helper for any external caller that only wants raycasts.
-export const drawAgentLidarRays = (ctx: CanvasRenderingContext2D, agent: AgentState) => {
-    if (!agent.lidarRays || agent.lidarRays.length === 0) return;
-    const cx = agent.position.x + AGENT_WIDTH / 2;
-    const cy = agent.position.y + AGENT_HEIGHT / 2;
-    ctx.save();
-    for (const ray of agent.lidarRays) {
-        const endX = cx + ray.direction.x * ray.distance;
-        const endY = cy + ray.direction.y * ray.distance;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(endX, endY);
-        ctx.lineWidth = ray.hitPoint ? 1.2 : 0.8;
-        ctx.strokeStyle = ray.hitPoint ? 'rgba(6, 182, 212, 0.5)' : 'rgba(100, 116, 139, 0.18)';
-        ctx.stroke();
-    }
     ctx.restore();
 };
 

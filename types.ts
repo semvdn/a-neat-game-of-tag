@@ -15,16 +15,6 @@ export enum AgentStatus {
 
 export type RewardBreakdown = { [key: string]: number };
 
-export interface LidarRayData {
-  angle: number;
-  direction: Vector2D;
-  distance: number;
-  normalizedDistance: number;
-  hitPoint: Vector2D | null;
-  maxDistance: number;
-}
-
-
 export interface AgentSensePlatformSlot {
   id: number;
   dx: number;
@@ -88,7 +78,6 @@ export interface AgentState {
   modelPerformance?: number;
   elo?: number;
   role?: 'chaser' | 'evader';
-  lidarRays?: LidarRayData[];
   sensesDebug?: AgentSenseDebug;
   touchingCameraFrame?: boolean;
   cameraFrameContact?: 'left' | 'right' | null;

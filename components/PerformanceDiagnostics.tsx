@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import type { DiagnosticsState } from '../types';
 import type { NeatGenerationMetrics, NeatGenomeData } from '../learning/neat';
-import { ACTION_SPACE } from '../constants';
+import { ACTION_SPACE, STATE_VECTOR_SIZE } from '../constants';
 import {
   Activity,
   X,
@@ -173,7 +173,7 @@ const NetworkGraph: React.FC<{ genome?: NeatGenomeData | null }> = ({ genome }) 
           const cls = n.type === 'input' ? 'text-gray-400' : n.type === 'output' ? 'text-amber-300' : 'text-violet-300';
           return <circle key={n.id} cx={p.x} cy={p.y} r={n.type === 'hidden' ? 5 : 3.5} fill="currentColor" className={cls} />;
         })}
-        <text x="8" y="12" className="fill-gray-500 text-[8px]">39 INPUTS</text>
+        <text x="8" y="12" className="fill-gray-500 text-[8px]">{STATE_VECTOR_SIZE} INPUTS</text>
         <text x="155" y="12" className="fill-gray-500 text-[8px]">HIDDEN</text>
         <text x="314" y="12" className="fill-gray-500 text-[8px]">4 OUTPUTS</text>
       </svg>

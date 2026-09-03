@@ -57,10 +57,8 @@ export const MAX_PLATFORM_GAP_Y = 120;
 
 // NEAT output channels. They are continuous signals, not mutually-exclusive discrete actions.
 export const ACTION_SPACE = ["left_drive", "right_drive", "jump_power", "sprint"];
-// 6 self + 3 boundary + 4 platform ledge + 9 nearby platforms + 4 target + 4 teammate + 8 lidar + 1 opponent energy = 39
-export const NUM_LIDAR_RAYS = 8;
-export const LIDAR_MAX_DISTANCE = 350;
-export const STATE_VECTOR_SIZE = 39;
+// 6 self + 3 boundary + 4 platform ledge + 9 nearby platforms + 4 target + 4 teammate + 1 opponent energy = 31
+export const STATE_VECTOR_SIZE = 31;
 // Invariant Coordinate Reference (prevents window resizing from changing neural network inputs)
 export const WORLD_REF_WIDTH = 1200;
 export const WORLD_REF_HEIGHT = 800;

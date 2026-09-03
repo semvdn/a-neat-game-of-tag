@@ -1,6 +1,6 @@
 # NEAT Tag Agents
 
-This branch ports the original PPO tag agents to a population-based **NEAT (NeuroEvolution of Augmenting Topologies)** trainer while keeping the existing physics, rendering, lidar/state-vector code, sound and controls.
+This branch ports the original PPO tag agents to a population-based **NEAT (NeuroEvolution of Augmenting Topologies)** trainer while keeping the existing physics, rendering, state-vector code, sound and controls.
 
 ## What changed
 
@@ -8,7 +8,7 @@ The old actor/critic + Adam + trajectory/GAE training path has been removed. Tra
 
 - **Chaser population:** 48 genomes
 - **Evader population:** 48 genomes
-- **Inputs:** the existing 39-value state vector
+- **Inputs:** a compact 31-value state vector
 - **Outputs:** 4 continuous control channels (`left_drive`, `right_drive`, `jump_power`, `sprint`)
 - **Network type:** feed-forward NEAT graph (acyclic for this first implementation)
 - **Structural evolution:** add-node and add-connection mutation
@@ -80,7 +80,7 @@ The roles have intentionally different physiology:
 
 This makes the evader better at creating an initial gap while giving the chaser a plausible endurance strategy: force expensive sprints/jumps, conserve energy, then attack a fatigued runner.
 
-The 39-input genome shape is preserved for checkpoint compatibility. The former constant bias input was redundant with NEAT node biases, so that slot now carries **target/threat energy reserve**. Own energy was already part of the state vector.
+The observation vector contains **31 inputs**: self kinematics/status, explicit camera/fall boundaries, platform ledge distances, three nearby-platform geometry slots, target/threat dynamics, closest-teammate dynamics, and target/threat energy reserve. The redundant eight-ray lidar block was removed because its obstacle information is already represented by the explicit boundary, ledge, and nearby-platform senses. This changes the NEAT input topology, so older 39-input checkpoints are intentionally rejected rather than loaded with mismatched semantics.
 
 ## Mirrored and randomized evaluation
 
@@ -208,14 +208,14 @@ The champion arena uses fixed world geometry independent of the responsive canva
 
 ## Agent senses overlay
 
-The champion arena includes an **Agent Senses** overlay (sidebar toggle or `S` key). It is generated from the same `getAgentStateVector()` observation pass that feeds the NEAT policy, so the visualization follows the current 39-input schema rather than a duplicated approximation.
+The champion arena includes an **Agent Senses** overlay (sidebar toggle or `S` key). It is generated from the same `getAgentStateVector()` observation pass that feeds the NEAT policy, so the visualization follows the current 31-input schema rather than a duplicated approximation.
 
-The overlay shows, per agent: normalized self velocity/energy/status, camera-left/right and fall-boundary distances, current/nearest-platform ledge distances and alert, the three nearest platform slots (`dx`, `dy`, width), target/threat dynamics plus opponent stamina, evader teammate dynamics, and all eight lidar rays with normalized distances and exact hit points. Lidar collides with platforms and the left/right camera walls only; other agents are perceived through the separate target/threat and teammate channels.
+The overlay shows, per agent: normalized self velocity/energy/status, camera-left/right and fall-boundary distances, current/nearest-platform ledge distances and alert, the three nearest platform slots (`dx`, `dy`, width), target/threat dynamics plus opponent stamina, and evader teammate dynamics.
 
 ### Camera zoom and framing
 The Champion Arena header includes a visual-only **− / percentage / +** camera control from 50% to 200% in 25% steps. The presentation camera is now separate from the fixed 1200×800 policy/sensor frame. It fills the entire canvas at every aspect ratio and zoom level, while the active platform band is kept at roughly 72% of canvas height so standing agents, full jumps, and the platform remain visible even at maximum zoom. Horizontal presentation tracking remains aligned with the policy camera. No red side-contact flash is drawn.
 
-Canvas sizing is owned by `GameCanvas` itself via `ResizeObserver`, avoiding transient black seams during browser/panel resize. Visual zoom never changes physics, platform/agent world dimensions, raycasts, observation inputs, or worker training. Click the percentage to return to 100%.
+Canvas sizing is owned by `GameCanvas` itself via `ResizeObserver`, avoiding transient black seams during browser/panel resize. Visual zoom never changes physics, platform/agent world dimensions, observation inputs, or worker training. Click the percentage to return to 100%.
 
 ### UI density
 The application shell is rendered at a built-in 75% presentation scale with a compensated layout viewport, matching the previous appearance at 75% browser zoom while filling the browser at normal 100% zoom.

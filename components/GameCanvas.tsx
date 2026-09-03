@@ -177,13 +177,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.textBaseline = 'top';
       ctx.fillStyle = '#d1d5db';
       ctx.fillText(
-        'SENSES · 39 policy inputs · T target/threat · M teammate · P1–P3 nearest platforms',
+        'SENSES · 31 policy inputs · T target/threat · M teammate · P1–P3 nearest platforms',
         legendX + 7,
         legendY + 7
       );
       ctx.fillStyle = '#94a3b8';
       ctx.fillText(
-        'R0–R7 lidar hits platforms + policy-camera side walls only · S toggles view',
+        'Boundaries + ledges + platform geometry + agent dynamics · S toggles view',
         legendX + 7,
         legendY + 24
       );
