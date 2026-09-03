@@ -62,7 +62,6 @@ export const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSimulating, setIsSimulating] = useState(false);
-  const [viewportSize, setViewportSize] = useState({ width: 1200, height: 800 });
   const [showTrails, setShowTrails] = useState(true);
   const [showSenses, setShowSenses] = useState(false);
 
@@ -114,7 +113,6 @@ export const App: React.FC = () => {
   const visualFallsRef = useRef(0);
   const visualJumpsRef = useRef(0);
 
-  const mainContainerRef = useRef<HTMLDivElement>(null);
   const platformIdCounter = useRef(10);
 
   // Dual Policy Learning State
@@ -264,19 +262,6 @@ export const App: React.FC = () => {
       performanceHistory: prev.performanceHistory.length === 0 ? [initialPoint] : prev.performanceHistory,
     }));
     setIsLoading(false);
-  }, []);
-
-  useEffect(() => {
-    const observer = new ResizeObserver(entries => {
-      const entry = entries[0];
-      if (entry) {
-        setViewportSize({ width: entry.contentRect.width, height: entry.contentRect.height });
-      }
-    });
-    if (mainContainerRef.current) {
-      observer.observe(mainContainerRef.current);
-    }
-    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -1161,12 +1146,30 @@ export const App: React.FC = () => {
     });
   };
 
+  const uiScale = 0.75;
+  const scaledViewportStyle = {
+    width: `${100 / uiScale}vw`,
+    height: `${100 / uiScale}vh`,
+    transform: `scale(${uiScale})`,
+    transformOrigin: 'top left',
+  };
+
   if (isLoading || !gameState) {
-    return <div className="flex items-center justify-center h-screen text-cyan-400 font-mono">Loading Artwork...</div>;
+    return (
+      <div
+        className="flex items-center justify-center bg-gray-950 text-cyan-400 font-mono"
+        style={scaledViewportStyle}
+      >
+        Loading Artwork...
+      </div>
+    );
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-950 font-sans p-4 gap-3 select-none">
+    <div
+      className="flex flex-col overflow-hidden bg-gray-950 font-sans p-4 gap-3 select-none"
+      style={scaledViewportStyle}
+    >
       <header className="flex items-center justify-between bg-gray-900/80 backdrop-blur border border-gray-800 px-5 py-3 rounded-xl shadow-lg">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-cyan-600 to-emerald-500 flex items-center justify-center text-white font-bold shadow-md shadow-cyan-500/20">
@@ -1258,8 +1261,7 @@ export const App: React.FC = () => {
 
       <div className="flex flex-1 gap-4 min-h-0">
         <main
-          ref={mainContainerRef}
-          className="flex-grow bg-black rounded-xl border border-gray-800 shadow-2xl overflow-hidden relative"
+          className="flex-grow bg-[#1a202c] rounded-xl border border-gray-800 shadow-2xl overflow-hidden relative"
         >
           {!isSimulating && (
             <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center gap-4">
@@ -1284,11 +1286,9 @@ export const App: React.FC = () => {
               <div className="font-mono mt-0.5">Chaser G{installedChampionGenerationRef.current.chaser} · Runner G{installedChampionGenerationRef.current.evader}</div>
             </div>
           )}
-          {isSimulating && mainContainerRef.current && (
+          {isSimulating && (
             <GameCanvas
               gameState={gameState}
-              viewportWidth={viewportSize.width}
-              viewportHeight={viewportSize.height}
               onFrameReady={() => {}}
               showTrails={showTrails}
               showSenses={showSenses}

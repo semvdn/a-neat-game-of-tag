@@ -204,7 +204,7 @@ Evolutionary fitness is comparable across roles. Terminal outcomes share the sam
 Diagnostics also report per-generation tag rate, runner survival rate and mean tag time from current-population matches only. Hall-of-Fame evaluations still affect selection but are excluded from these balance metrics.
 
 ### Fixed world geometry
-The champion arena now uses fixed world geometry independent of the responsive canvas. Agents remain 40×60 world/CSS pixels, platform heights remain 20 pixels, generated platform widths remain within their fixed configured range, and the initial course is based on the 1200×800 world reference. Resizing the UI changes only the visible viewport/camera framing; it does not rescale or regenerate the world. Background NEAT evaluation likewise stays on the fixed 1200×800 training world.
+The champion arena uses fixed world geometry independent of the responsive canvas. Agents remain 40×60 world units, platform heights remain 20 world units, generated platform widths remain within their fixed configured range, and the initial course is based on the 1200×800 policy reference. The visual camera may uniformly scale those world units, but X/Y always share one scale so geometry never deforms. Background NEAT evaluation likewise stays on the fixed 1200×800 training world.
 
 ## Agent senses overlay
 
@@ -212,5 +212,10 @@ The champion arena includes an **Agent Senses** overlay (sidebar toggle or `S` k
 
 The overlay shows, per agent: normalized self velocity/energy/status, camera-left/right and fall-boundary distances, current/nearest-platform ledge distances and alert, the three nearest platform slots (`dx`, `dy`, width), target/threat dynamics plus opponent stamina, evader teammate dynamics, and all eight lidar rays with normalized distances and exact hit points. Lidar collides with platforms and the left/right camera walls only; other agents are perceived through the separate target/threat and teammate channels.
 
-### Camera zoom
-The Champion Arena header includes a visual-only **− / percentage / +** camera control. It ranges from 50% to 200% in 25% steps, stays centered, and never changes world physics, platform/agent dimensions, raycasts, observation inputs, or worker training. Click the percentage to return to 100%.
+### Camera zoom and framing
+The Champion Arena header includes a visual-only **− / percentage / +** camera control from 50% to 200% in 25% steps. The presentation camera is now separate from the fixed 1200×800 policy/sensor frame. It fills the entire canvas at every aspect ratio and zoom level, while the active platform band is kept at roughly 72% of canvas height so standing agents, full jumps, and the platform remain visible even at maximum zoom. Horizontal presentation tracking remains aligned with the policy camera. No red side-contact flash is drawn.
+
+Canvas sizing is owned by `GameCanvas` itself via `ResizeObserver`, avoiding transient black seams during browser/panel resize. Visual zoom never changes physics, platform/agent world dimensions, raycasts, observation inputs, or worker training. Click the percentage to return to 100%.
+
+### UI density
+The application shell is rendered at a built-in 75% presentation scale with a compensated layout viewport, matching the previous appearance at 75% browser zoom while filling the browser at normal 100% zoom.
