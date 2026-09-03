@@ -3,7 +3,7 @@ import { getPhysiology, stepLocomotion } from '../learning/movement';
 import { NeatPopulation, DEFAULT_NEAT_CONFIG, cloneGenome, type NeatGenerationMetrics, type NeatGenomeData } from '../learning/neat';
 import { getAgentStateVector } from '../learning/state';
 import { updateEloRatings, createLeaderboardEntries } from '../learning/elo';
-import type { AgentState, GameState, PlatformState } from '../types';
+import type { AgentState, BalanceTelemetry, GameState, PlatformState } from '../types';
 import { AgentStatus } from '../types';
 import {
   AGENT_WIDTH,
@@ -84,6 +84,10 @@ let chaserFitnessTotals = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
 let evaderFitnessTotals = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
 let chaserFitnessCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
 let evaderFitnessCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
+let generationPopulationMatches = 0;
+let generationPopulationTags = 0;
+let generationPopulationTagTimeMs = 0;
+let lastGenerationBalance: BalanceTelemetry | null = null;
 
 let totalTags = 0;
 let totalFalls = 0;
@@ -357,25 +361,30 @@ function runEpisode(
   const chaserProgress = Math.max(0, maxChaserProgress);
   const evaderProgress = maxEvaderProgress.reduce((sum, progress) => sum + Math.max(0, progress), 0) / evaders.length;
 
-  // Dense enough to bootstrap locomotion, but the dominant objective remains the terminal outcome.
-  const chaserFitness = Math.max(
-    0.01,
-    (tagged ? 120 + (maxSec - elapsedSec) * 8 : 10) +
-      closingGain * 0.12 +
-      chaserProgress * 0.025 +
-      chaserJumps * 0.2 -
-      chaserFalls * 12 -
-      averageDistance * 0.01
-  );
-  const evaderFitness = Math.max(
-    0.01,
-    elapsedSec * 8 +
-      (tagged ? 0 : 80) +
-      averageDistance * 0.015 +
-      evaderProgress * 0.02 +
-      evaderJumps * 0.15 -
-      evaderFalls * 15
-  );
+  // Symmetric 0–200 terminal outcome scale. An early tag approaches 200/0, a late tag approaches
+  // 100/100, and surviving the whole episode is 0/200. Small bounded shaping only bootstraps
+  // useful locomotion; it cannot overwhelm the win/loss objective. Energy and jumping are not
+  // rewarded directly — they matter only through whether they help the agent win.
+  const timeFraction = Math.max(0, Math.min(1, elapsedSec / Math.max(1e-6, maxSec)));
+  const chaserOutcome = tagged ? 100 + 100 * (1 - timeFraction) : 0;
+  const evaderOutcome = tagged ? 100 * timeFraction : 200;
+
+  const closingNorm = Math.max(-1, Math.min(1, closingGain / Math.max(150, initialClosestDistance)));
+  const chaserProgressNorm = Math.max(0, Math.min(1, chaserProgress / 600));
+  const evaderProgressNorm = Math.max(0, Math.min(1, evaderProgress / 600));
+  const evaderFallsPerAgent = evaderFalls / Math.max(1, evaders.length);
+
+  const chaserShaping =
+    10 * closingNorm +
+    5 * chaserProgressNorm -
+    5 * Math.min(2, chaserFalls);
+  const evaderShaping =
+    -10 * closingNorm +
+    5 * evaderProgressNorm -
+    5 * Math.min(2, evaderFallsPerAgent);
+
+  const chaserFitness = Math.max(0.01, Math.min(220, chaserOutcome + chaserShaping));
+  const evaderFitness = Math.max(0.01, Math.min(220, evaderOutcome + evaderShaping));
 
   gameState.avgSurvivalTime = elapsedMs;
   gameState.avgTimeToTag = tagged ? elapsedMs : NEAT_EPISODE_MAX_MS;
@@ -456,6 +465,9 @@ function resetEvaluationAccumulators() {
   evaderFitnessTotals = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
   chaserFitnessCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
   evaderFitnessCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
+  generationPopulationMatches = 0;
+  generationPopulationTags = 0;
+  generationPopulationTagTimeMs = 0;
 }
 
 function recordEpisodeTelemetry(result: EpisodeStats, currentPopulationMatch = true) {
@@ -488,6 +500,11 @@ function evaluateNextMatch(): boolean {
     chaserFitnessCounts[chaserIndex]++;
     evaderFitnessTotals[evaderIndex] += result.evaderFitness;
     evaderFitnessCounts[evaderIndex]++;
+    generationPopulationMatches++;
+    if (result.tagged) {
+      generationPopulationTags++;
+      generationPopulationTagTimeMs += result.elapsedMs;
+    }
     recordEpisodeTelemetry(result);
 
     evaluationIndex++;
@@ -553,6 +570,16 @@ function evaluateNextMatch(): boolean {
 }
 
 function finishGeneration() {
+  const evaluatedGeneration = chaserPopulation.generation;
+  lastGenerationBalance = {
+    generation: evaluatedGeneration,
+    matches: generationPopulationMatches,
+    tags: generationPopulationTags,
+    tagRate: generationPopulationTags / Math.max(1, generationPopulationMatches),
+    survivalRate: (generationPopulationMatches - generationPopulationTags) / Math.max(1, generationPopulationMatches),
+    avgTagTimeMs: generationPopulationTags > 0 ? generationPopulationTagTimeMs / generationPopulationTags : null,
+  };
+
   chaserPopulation.genomes.forEach((g, i) => {
     g.fitness = chaserFitnessTotals[i] / Math.max(1, chaserFitnessCounts[i]);
   });
@@ -632,6 +659,7 @@ function emitTelemetry() {
       actionCountsChaser,
       actionCountsEvader,
       eloLeaderboard: leaderboard,
+      lastGenerationBalance,
       hallOfFame: {
         chaserSize: hallOfFamePool(chaserHallOfFame).length,
         evaderSize: hallOfFamePool(evaderHallOfFame).length,
@@ -665,6 +693,7 @@ function runHeadlessBatch() {
 
 function seedPopulations(chaserWeights?: AgentWeights, evaderWeights?: AgentWeights, archiveSeed = false) {
   clearHallOfFame();
+  lastGenerationBalance = null;
   if (chaserWeights?.nodes && chaserWeights?.connections) {
     chaserPopulation.seedFromChampion(chaserWeights as NeatGenomeData);
     championChaser.setWeights(chaserWeights);
@@ -750,6 +779,7 @@ self.onmessage = (event: MessageEvent) => {
       Object.keys(actionCountsEvader).forEach(k => delete actionCountsEvader[k]);
       lastSampleGameState = null;
       clearHallOfFame();
+      lastGenerationBalance = null;
       resetEvaluationAccumulators();
       emitTelemetry();
       break;

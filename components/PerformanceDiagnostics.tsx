@@ -48,6 +48,15 @@ const MetricCard: React.FC<{ label: string; value: React.ReactNode; hint?: strin
   </div>
 );
 
+const lineColors = [
+  { stroke: 'text-red-400', legend: 'text-red-300' },
+  { stroke: 'text-cyan-400', legend: 'text-cyan-300' },
+  { stroke: 'text-orange-400', legend: 'text-orange-300' },
+  { stroke: 'text-violet-400', legend: 'text-violet-300' },
+  { stroke: 'text-emerald-400', legend: 'text-emerald-300' },
+  { stroke: 'text-pink-400', legend: 'text-pink-300' },
+];
+
 const LineChart: React.FC<{
   series: { label: string; values: number[] }[];
   height?: number;
@@ -74,22 +83,30 @@ const LineChart: React.FC<{
         {[0.25, 0.5, 0.75].map(frac => (
           <line key={frac} x1={pad} x2={width - pad} y1={height * frac} y2={height * frac} stroke="currentColor" className="text-gray-800" strokeWidth="1" />
         ))}
-        {series.map((s, idx) => (
-          <polyline
-            key={s.label}
-            points={points(s.values)}
-            fill="none"
-            stroke="currentColor"
-            className={idx === 0 ? 'text-red-400' : idx === 1 ? 'text-cyan-400' : 'text-amber-300'}
-            strokeWidth="2.5"
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
+        {series.map((s, idx) => {
+          const color = lineColors[idx % lineColors.length];
+          return (
+            <polyline
+              key={s.label}
+              points={points(s.values)}
+              fill="none"
+              stroke="currentColor"
+              className={color.stroke}
+              strokeWidth="2.5"
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        })}
       </svg>
       <div className="mt-2 flex flex-wrap gap-4 text-xs text-gray-400">
-        {series.map((s, idx) => (
-          <span key={s.label} className={idx === 0 ? 'text-red-300' : idx === 1 ? 'text-cyan-300' : 'text-amber-200'}>● {s.label}</span>
-        ))}
+        {series.map((s, idx) => {
+          const color = lineColors[idx % lineColors.length];
+          return (
+            <span key={s.label} className={color.legend}>
+              ● {s.label}
+            </span>
+          );
+        })}
         <span className="ml-auto font-mono text-gray-500">range {fmt(min)} – {fmt(max)}</span>
       </div>
     </div>
@@ -199,6 +216,8 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
 
   const chaserHistory = diagnostics.chaserNeatHistory || [];
   const evaderHistory = diagnostics.evaderNeatHistory || [];
+  const balanceHistory = diagnostics.balanceHistory || [];
+  const balance = diagnostics.lastGenerationBalance;
   const chaserMetrics = diagnostics.lastChaserNeatMetrics;
   const evaderMetrics = diagnostics.lastEvaderNeatMetrics;
   const selectedGenome = role === 'chaser' ? diagnostics.chaserChampionGenome : diagnostics.evaderChampionGenome;
@@ -254,13 +273,13 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
           <div className="max-w-7xl mx-auto space-y-5">
             <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
               <MetricCard label="Generation" value={generation} hint="one full population evaluation" />
-              <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} />
-              <MetricCard label="Evader best" value={fmt(evaderMetrics?.bestFitness)} />
-              <MetricCard label="Species C / E" value={`${chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.speciesCount ?? '—'}`} />
-              <MetricCard label="Survival" value={`${(avgSurvivalTime / 1000).toFixed(2)}s`} />
-              <MetricCard label="Time to tag" value={`${(avgTimeToTag / 1000).toFixed(2)}s`} />
-              <MetricCard label="Tags" value={diagnostics.totalTags} />
-              <MetricCard label="Falls" value={diagnostics.totalFalls} />
+              <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} hint="same 0–220 scale as runner" />
+              <MetricCard label="Runner best" value={fmt(evaderMetrics?.bestFitness)} hint="same 0–220 scale as chaser" />
+              <MetricCard label="Species C / R" value={`${chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.speciesCount ?? '—'}`} />
+              <MetricCard label="Tag rate" value={balance ? `${(balance.tagRate * 100).toFixed(1)}%` : '—'} hint="current-population matches" />
+              <MetricCard label="Survival rate" value={balance ? `${(balance.survivalRate * 100).toFixed(1)}%` : '—'} hint="current-population matches" />
+              <MetricCard label="Avg tag time" value={balance?.avgTagTimeMs != null ? `${(balance.avgTagTimeMs / 1000).toFixed(2)}s` : '—'} hint="when a tag occurs" />
+              <MetricCard label="Matches" value={balance?.matches ?? '—'} hint="last completed generation" />
             </div>
 
             <div className="grid lg:grid-cols-2 gap-4">
@@ -278,8 +297,20 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <LineChart series={[{ label: 'Chaser', values: chaserHistory.map(m => m.bestFitness) }, { label: 'Evader', values: evaderHistory.map(m => m.bestFitness) }]} />
             </div>
 
+            <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
+              <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-cyan-300" /><h3 className="font-semibold text-white">Game balance by generation</h3></div>
+              <LineChart
+                series={[
+                  { label: 'Chaser tag %', values: balanceHistory.map(m => m.tagRate * 100) },
+                  { label: 'Runner survival %', values: balanceHistory.map(m => m.survivalRate * 100) },
+                ]}
+                emptyLabel="Complete generations to populate the balance chart."
+              />
+              <p className="mt-2 text-xs text-gray-500">Measured only on current-population matchups; Hall-of-Fame tests are excluded so the balance signal stays comparable.</p>
+            </div>
+
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> the Web Worker owns two populations. Every genome is evaluated against balanced rotating opponents plus historical Hall of Fame champions; fitness is averaged, genomes are speciated by innovation-aligned compatibility distance, and the next generation is produced by elitism, crossover and mutation. The main thread only renders the latest champions.
+              <strong className="text-violet-200">Training architecture:</strong> both roles now have identical speed, acceleration, jump, 100-point stamina and recovery. Every genome is evaluated against balanced rotating opponents plus historical Hall of Fame champions. Terminal fitness uses the same 0–200 outcome scale for both roles, with only small bounded movement shaping; selection then proceeds through speciation, elitism, crossover and mutation.
             </div>
           </div>
         )}
@@ -292,6 +323,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                 { label: 'Chaser best', values: chaserHistory.map(m => m.bestFitness) },
                 { label: 'Evader best', values: evaderHistory.map(m => m.bestFitness) },
                 { label: 'Chaser mean', values: chaserHistory.map(m => m.averageFitness) },
+                { label: 'Runner mean', values: evaderHistory.map(m => m.averageFitness) },
               ]} />
             </div>
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">

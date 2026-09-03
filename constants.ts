@@ -30,17 +30,17 @@ export const JUMP_EXTRA_ENERGY_COST = 12; // maximum jump ~= 15 energy
 export const JUMP_MIN_POWER_RATIO = 0.45;
 export const JUMP_CONTROL_THRESHOLD = 0.15;
 
-// Role physiology: evader has slightly better burst; chaser has better endurance/recovery.
-export const CHASER_ENERGY_CAPACITY_MULTIPLIER = 1.10;
-export const CHASER_RECOVERY_MULTIPLIER = 1.15;
+// Role physiology is deliberately identical. Strategy should emerge from objectives, stamina use, terrain and coevolution — not baked-in physical advantages.
+export const CHASER_ENERGY_CAPACITY_MULTIPLIER = 1.00;
+export const CHASER_RECOVERY_MULTIPLIER = 1.00;
 export const CHASER_SPEED_MULTIPLIER = 1.00;
 export const CHASER_ACCELERATION_MULTIPLIER = 1.00;
 export const CHASER_JUMP_MULTIPLIER = 1.00;
-export const EVADER_ENERGY_CAPACITY_MULTIPLIER = 0.90;
-export const EVADER_RECOVERY_MULTIPLIER = 0.90;
-export const EVADER_SPEED_MULTIPLIER = 1.05;
-export const EVADER_ACCELERATION_MULTIPLIER = 1.05;
-export const EVADER_JUMP_MULTIPLIER = 1.05;
+export const EVADER_ENERGY_CAPACITY_MULTIPLIER = 1.00;
+export const EVADER_RECOVERY_MULTIPLIER = 1.00;
+export const EVADER_SPEED_MULTIPLIER = 1.00;
+export const EVADER_ACCELERATION_MULTIPLIER = 1.00;
+export const EVADER_JUMP_MULTIPLIER = 1.00;
 
 // Tag mechanics
 export const TAG_COOLDOWN = 2000; // 2 seconds in ms

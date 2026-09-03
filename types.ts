@@ -114,6 +114,15 @@ export interface PerformanceDataPoint {
 }
 
 
+export interface BalanceTelemetry {
+  generation: number;
+  matches: number;
+  tags: number;
+  tagRate: number;
+  survivalRate: number;
+  avgTagTimeMs: number | null;
+}
+
 export interface HallOfFameTelemetry {
   chaserSize: number;
   evaderSize: number;
@@ -143,4 +152,6 @@ export interface DiagnosticsState {
   eloLeaderboard: EloLeaderboardEntry[];
   showLidar?: boolean;
   hallOfFame?: HallOfFameTelemetry;
+  lastGenerationBalance?: BalanceTelemetry | null;
+  balanceHistory?: BalanceTelemetry[];
 }

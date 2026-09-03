@@ -76,6 +76,8 @@ export const App: React.FC = () => {
     evaderElo: INITIAL_ELO,
     eloLeaderboard: createLeaderboardEntries(INITIAL_ELO, INITIAL_ELO, 0, 0, 0, 0, 0),
     hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: NEAT_HOF_MAX_SIZE, opponentsPerGenome: NEAT_HOF_OPPONENTS_PER_GENOME, chaserGenerations: [], evaderGenerations: [] },
+    lastGenerationBalance: null,
+    balanceHistory: [],
   }));
 
 
@@ -316,6 +318,7 @@ export const App: React.FC = () => {
 
             const chaserMetric = payload.lastChaserNeatMetrics;
             const evaderMetric = payload.lastEvaderNeatMetrics;
+            const balanceMetric = payload.lastGenerationBalance;
             const appendUnique = <T extends { generation: number },>(history: T[] | undefined, metric?: T) => {
               if (!metric) return history || [];
               const current = history || [];
@@ -353,6 +356,8 @@ export const App: React.FC = () => {
               chaserChampionGenome: payload.chaserChampionGenome || prev.chaserChampionGenome,
               evaderChampionGenome: payload.evaderChampionGenome || prev.evaderChampionGenome,
               hallOfFame: payload.hallOfFame || prev.hallOfFame,
+              lastGenerationBalance: balanceMetric || prev.lastGenerationBalance,
+              balanceHistory: appendUnique(prev.balanceHistory, balanceMetric),
             };
           });
 
@@ -983,6 +988,8 @@ export const App: React.FC = () => {
       evaderElo: INITIAL_ELO,
       eloLeaderboard: createLeaderboardEntries(INITIAL_ELO, INITIAL_ELO, 0, 0, 0, 0, 0),
       hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: NEAT_HOF_MAX_SIZE, opponentsPerGenome: NEAT_HOF_OPPONENTS_PER_GENOME, chaserGenerations: [], evaderGenerations: [] },
+      lastGenerationBalance: null,
+      balanceHistory: [],
     }));
   };
 
