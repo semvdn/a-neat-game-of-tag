@@ -123,6 +123,18 @@ The PPO diagnostics have been replaced by NEAT metrics:
 
 Role-level Elo is retained only as a human-readable evaluation signal. It is **not** used for evolutionary selection.
 
+
+## Decoupled champion view and training speed
+
+The visible canvas and the evolutionary worker now run on independent clocks.
+
+- **View:** `0.5x`, `1x`, `2x`, `5x`, `10x`, with its own pause, single-frame step, and **Reset view** control.
+- **Train:** `10x`, `25x`, `50x`, `100x`, `200x`, with its own pause. Training speed only changes how many headless evaluations the worker processes per batch.
+- The worker no longer sends sampled training game states to replace the canvas. The visible game is always one continuous champion arena.
+- After each completed generation, newly reported chaser and evader champions are hot-swapped into the running arena without resetting positions, velocity, stamina, roles, cooldowns, platforms, or game time.
+- **Reset view** resets only the visible arena and its local match history; populations, Hall of Fame, generation, and worker state continue untouched.
+- Worker counters/Elo remain worker-owned, so playing or resetting the champion view cannot distort training diagnostics.
+
 ## Persistence
 
 Export/save now stores the current **chaser and evader champion genomes** and their generation metadata.
