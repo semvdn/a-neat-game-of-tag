@@ -1,6 +1,6 @@
 import { LearningAgent, type AgentWeights, type AgentControls } from '../learning/agent';
 import { getPhysiology, stepLocomotion } from '../learning/movement';
-import { NeatPopulation, DEFAULT_NEAT_CONFIG, type NeatGenerationMetrics, type NeatGenomeData } from '../learning/neat';
+import { NeatPopulation, DEFAULT_NEAT_CONFIG, cloneGenome, type NeatGenerationMetrics, type NeatGenomeData } from '../learning/neat';
 import { getAgentStateVector } from '../learning/state';
 import { updateEloRatings, createLeaderboardEntries } from '../learning/elo';
 import type { AgentState, GameState, PlatformState } from '../types';
@@ -23,6 +23,9 @@ import {
   TIME_TO_TAG_HISTORY_LENGTH,
   NEAT_POPULATION_SIZE,
   NEAT_OPPONENTS_PER_GENOME,
+  NEAT_HOF_OPPONENTS_PER_GENOME,
+  NEAT_HOF_MAX_SIZE,
+  NEAT_HOF_RECENT_SLOTS,
   NEAT_EPISODE_MAX_MS,
   NEAT_COMPATIBILITY_THRESHOLD,
   NEAT_TARGET_SPECIES,
@@ -60,8 +63,23 @@ let timerId: ReturnType<typeof setTimeout> | null = null;
 let viewportSize = { width: 1200, height: 800 };
 let seededFromStart = false;
 
+type EvaluationPhase = 'population' | 'chaser_hof' | 'evader_hof';
+interface HallOfFameEntry {
+  generation: number;
+  genome: NeatGenomeData;
+  controller: LearningAgent;
+}
+interface HallOfFameArchive {
+  recent: HallOfFameEntry[];
+  reservoir: HallOfFameEntry[];
+  historicalSeen: number;
+}
+
+let evaluationPhase: EvaluationPhase = 'population';
 let evaluationIndex = 0;
 let evaluationRound = 0;
+const chaserHallOfFame: HallOfFameArchive = { recent: [], reservoir: [], historicalSeen: 0 };
+const evaderHallOfFame: HallOfFameArchive = { recent: [], reservoir: [], historicalSeen: 0 };
 let chaserFitnessTotals = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
 let evaderFitnessTotals = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
 let chaserFitnessCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
@@ -184,7 +202,12 @@ interface EpisodeStats {
   gameState: GameState;
 }
 
-function runEpisode(chaser: LearningAgent, evader: LearningAgent, seed: number): EpisodeStats {
+function runEpisode(
+  chaser: LearningAgent,
+  evader: LearningAgent,
+  seed: number,
+  trackActions: { chaser: boolean; evader: boolean } = { chaser: true, evader: true }
+): EpisodeStats {
   const { gameState, flowDirection } = createEpisodeState(seed);
   const chaserAgent = gameState.agents[0];
   const evaders = gameState.agents.slice(1);
@@ -214,8 +237,11 @@ function runEpisode(chaser: LearningAgent, evader: LearningAgent, seed: number):
       const state = getAgentStateVector(agent, gameState, viewportSize);
       const controls = controller.chooseControls(state);
       controlsByAgent.set(agent.id, controls);
-      const counter = agent.id === 1 ? actionCountsChaser : actionCountsEvader;
-      counter[controls.action] = (counter[controls.action] || 0) + 1;
+      const roleForTelemetry = agent.id === 1 ? 'chaser' : 'evader';
+      if (trackActions[roleForTelemetry]) {
+        const counter = roleForTelemetry === 'chaser' ? actionCountsChaser : actionCountsEvader;
+        counter[controls.action] = (counter[controls.action] || 0) + 1;
+      }
     }
 
     for (const agent of gameState.agents) {
@@ -369,12 +395,61 @@ function runEpisode(chaser: LearningAgent, evader: LearningAgent, seed: number):
   };
 }
 
+function hallOfFamePool(archive: HallOfFameArchive): HallOfFameEntry[] {
+  return [...archive.reservoir, ...archive.recent];
+}
+
+function archiveChampion(archive: HallOfFameArchive, genome: NeatGenomeData, role: 'chaser' | 'evader') {
+  const snapshot = cloneGenome(genome, `${role}_hof_g${genome.generation}`);
+  snapshot.role = role;
+  const entry: HallOfFameEntry = {
+    generation: snapshot.generation,
+    genome: snapshot,
+    controller: new LearningAgent(role, snapshot),
+  };
+
+  archive.recent.push(entry);
+  const recentLimit = Math.min(NEAT_HOF_RECENT_SLOTS, NEAT_HOF_MAX_SIZE);
+  if (archive.recent.length <= recentLimit) return;
+
+  const historical = archive.recent.shift()!;
+  archive.historicalSeen++;
+  const reservoirLimit = Math.max(0, NEAT_HOF_MAX_SIZE - recentLimit);
+  if (reservoirLimit === 0) return;
+  if (archive.reservoir.length < reservoirLimit) {
+    archive.reservoir.push(historical);
+    return;
+  }
+
+  // Reservoir sampling keeps a bounded, approximately uniform sample of older strategies.
+  const rng = mulberry32((historical.generation + 1) * 2654435761 >>> 0);
+  const slot = Math.floor(rng() * archive.historicalSeen);
+  if (slot < reservoirLimit) archive.reservoir[slot] = historical;
+}
+
+function clearHallOfFame() {
+  chaserHallOfFame.recent.length = 0;
+  chaserHallOfFame.reservoir.length = 0;
+  chaserHallOfFame.historicalSeen = 0;
+  evaderHallOfFame.recent.length = 0;
+  evaderHallOfFame.reservoir.length = 0;
+  evaderHallOfFame.historicalSeen = 0;
+}
+
+function selectHallOpponent(archive: HallOfFameArchive, genomeIndex: number, round: number, generation: number): HallOfFameEntry | null {
+  const pool = hallOfFamePool(archive);
+  if (pool.length === 0) return null;
+  const index = (genomeIndex * 7 + round * 5 + generation * 3) % pool.length;
+  return pool[index];
+}
+
 function refreshControllers() {
   chaserControllers = chaserPopulation.genomes.map(g => new LearningAgent('chaser', g));
   evaderControllers = evaderPopulation.genomes.map(g => new LearningAgent('evader', g));
 }
 
 function resetEvaluationAccumulators() {
+  evaluationPhase = 'population';
   evaluationIndex = 0;
   evaluationRound = 0;
   chaserFitnessTotals = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
@@ -383,7 +458,7 @@ function resetEvaluationAccumulators() {
   evaderFitnessCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
 }
 
-function recordEpisodeTelemetry(result: EpisodeStats) {
+function recordEpisodeTelemetry(result: EpisodeStats, currentPopulationMatch = true) {
   totalSimulatedTime += result.elapsedMs;
   recentSurvivalTimes.push(result.elapsedMs);
   if (recentSurvivalTimes.length > SURVIVAL_TIME_HISTORY_LENGTH) recentSurvivalTimes.shift();
@@ -391,33 +466,90 @@ function recordEpisodeTelemetry(result: EpisodeStats) {
     recentTimesToTag.push(result.elapsedMs);
     if (recentTimesToTag.length > TIME_TO_TAG_HISTORY_LENGTH) recentTimesToTag.shift();
   }
-  const eloResult = updateEloRatings(chaserElo, evaderElo, result.elapsedMs, undefined, result.tagged);
-  chaserElo = eloResult.newChaserElo;
-  evaderElo = eloResult.newEvaderElo;
-  lastSampleGameState = result.gameState;
+  if (currentPopulationMatch) {
+    const eloResult = updateEloRatings(chaserElo, evaderElo, result.elapsedMs, undefined, result.tagged);
+    chaserElo = eloResult.newChaserElo;
+    evaderElo = eloResult.newEvaderElo;
+    lastSampleGameState = result.gameState;
+  }
 }
 
 function evaluateNextMatch(): boolean {
   const n = chaserPopulation.genomes.length;
-  const chaserIndex = evaluationIndex;
-  // Rotating opponents prevents index-lock coevolution while keeping every role equally sampled.
-  const evaderIndex = (evaluationIndex + evaluationRound * 17 + chaserPopulation.generation * 7) % n;
-  const environmentSeed = chaserPopulation.generation * 100003 + evaluationRound * 7919;
-  const result = runEpisode(chaserControllers[chaserIndex], evaderControllers[evaderIndex], environmentSeed);
 
-  chaserFitnessTotals[chaserIndex] += result.chaserFitness;
-  chaserFitnessCounts[chaserIndex]++;
-  evaderFitnessTotals[evaderIndex] += result.evaderFitness;
-  evaderFitnessCounts[evaderIndex]++;
-  recordEpisodeTelemetry(result);
+  if (evaluationPhase === 'population') {
+    const chaserIndex = evaluationIndex;
+    // Rotating opponents prevents index-lock coevolution while keeping every role equally sampled.
+    const evaderIndex = (evaluationIndex + evaluationRound * 17 + chaserPopulation.generation * 7) % n;
+    const environmentSeed = chaserPopulation.generation * 100003 + evaluationRound * 7919;
+    const result = runEpisode(chaserControllers[chaserIndex], evaderControllers[evaderIndex], environmentSeed);
+
+    chaserFitnessTotals[chaserIndex] += result.chaserFitness;
+    chaserFitnessCounts[chaserIndex]++;
+    evaderFitnessTotals[evaderIndex] += result.evaderFitness;
+    evaderFitnessCounts[evaderIndex]++;
+    recordEpisodeTelemetry(result);
+
+    evaluationIndex++;
+    if (evaluationIndex >= n) {
+      evaluationIndex = 0;
+      evaluationRound++;
+    }
+
+    if (evaluationRound < NEAT_OPPONENTS_PER_GENOME) return false;
+    evaluationRound = 0;
+    evaluationIndex = 0;
+    if (NEAT_HOF_OPPONENTS_PER_GENOME > 0 && hallOfFamePool(evaderHallOfFame).length > 0) {
+      evaluationPhase = 'chaser_hof';
+      return false;
+    }
+    if (NEAT_HOF_OPPONENTS_PER_GENOME > 0 && hallOfFamePool(chaserHallOfFame).length > 0) {
+      evaluationPhase = 'evader_hof';
+      return false;
+    }
+    return true;
+  }
+
+  if (evaluationPhase === 'chaser_hof') {
+    const opponent = selectHallOpponent(evaderHallOfFame, evaluationIndex, evaluationRound, chaserPopulation.generation);
+    if (opponent) {
+      const environmentSeed = chaserPopulation.generation * 200003 + evaluationRound * 12011 + 101;
+      const result = runEpisode(chaserControllers[evaluationIndex], opponent.controller, environmentSeed, { chaser: true, evader: false });
+      chaserFitnessTotals[evaluationIndex] += result.chaserFitness;
+      chaserFitnessCounts[evaluationIndex]++;
+      recordEpisodeTelemetry(result, false);
+    }
+
+    evaluationIndex++;
+    if (evaluationIndex >= n) {
+      evaluationIndex = 0;
+      evaluationRound++;
+    }
+    if (evaluationRound < NEAT_HOF_OPPONENTS_PER_GENOME) return false;
+    evaluationRound = 0;
+    evaluationIndex = 0;
+    if (hallOfFamePool(chaserHallOfFame).length > 0) {
+      evaluationPhase = 'evader_hof';
+      return false;
+    }
+    return true;
+  }
+
+  const opponent = selectHallOpponent(chaserHallOfFame, evaluationIndex, evaluationRound, evaderPopulation.generation);
+  if (opponent) {
+    const environmentSeed = evaderPopulation.generation * 300007 + evaluationRound * 16001 + 211;
+    const result = runEpisode(opponent.controller, evaderControllers[evaluationIndex], environmentSeed, { chaser: false, evader: true });
+    evaderFitnessTotals[evaluationIndex] += result.evaderFitness;
+    evaderFitnessCounts[evaluationIndex]++;
+    recordEpisodeTelemetry(result, false);
+  }
 
   evaluationIndex++;
   if (evaluationIndex >= n) {
     evaluationIndex = 0;
     evaluationRound++;
   }
-
-  return evaluationRound >= NEAT_OPPONENTS_PER_GENOME;
+  return evaluationRound >= NEAT_HOF_OPPONENTS_PER_GENOME;
 }
 
 function finishGeneration() {
@@ -432,6 +564,8 @@ function finishGeneration() {
   const evaderResult = evaderPopulation.evolve();
   lastChaserMetrics = chaserResult.metrics;
   lastEvaderMetrics = evaderResult.metrics;
+  archiveChampion(chaserHallOfFame, chaserResult.champion, 'chaser');
+  archiveChampion(evaderHallOfFame, evaderResult.champion, 'evader');
   championChaser = new LearningAgent('chaser', chaserResult.champion);
   championEvader = new LearningAgent('evader', evaderResult.champion);
   championChaser.setGeneration(chaserResult.metrics.generation);
@@ -443,6 +577,26 @@ function finishGeneration() {
 
 function average(values: number[]): number {
   return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+}
+
+function evaluationProgress(): number {
+  const n = NEAT_POPULATION_SIZE;
+  const hasEvaderHof = NEAT_HOF_OPPONENTS_PER_GENOME > 0 && hallOfFamePool(evaderHallOfFame).length > 0;
+  const hasChaserHof = NEAT_HOF_OPPONENTS_PER_GENOME > 0 && hallOfFamePool(chaserHallOfFame).length > 0;
+  const populationEpisodes = n * NEAT_OPPONENTS_PER_GENOME;
+  const chaserHofEpisodes = hasEvaderHof ? n * NEAT_HOF_OPPONENTS_PER_GENOME : 0;
+  const evaderHofEpisodes = hasChaserHof ? n * NEAT_HOF_OPPONENTS_PER_GENOME : 0;
+  const total = populationEpisodes + chaserHofEpisodes + evaderHofEpisodes;
+
+  let completed = 0;
+  if (evaluationPhase === 'population') {
+    completed = evaluationRound * n + evaluationIndex;
+  } else if (evaluationPhase === 'chaser_hof') {
+    completed = populationEpisodes + evaluationRound * n + evaluationIndex;
+  } else {
+    completed = populationEpisodes + chaserHofEpisodes + evaluationRound * n + evaluationIndex;
+  }
+  return Math.max(0, Math.min(1, completed / Math.max(1, total)));
 }
 
 function emitTelemetry() {
@@ -462,7 +616,7 @@ function emitTelemetry() {
     payload: {
       algorithm: 'NEAT',
       generation,
-      evaluationProgress: (evaluationRound * NEAT_POPULATION_SIZE + evaluationIndex) / (NEAT_POPULATION_SIZE * NEAT_OPPONENTS_PER_GENOME),
+      evaluationProgress: evaluationProgress(),
       gameTime: totalSimulatedTime,
       chaserElo,
       evaderElo,
@@ -478,6 +632,14 @@ function emitTelemetry() {
       actionCountsChaser,
       actionCountsEvader,
       eloLeaderboard: leaderboard,
+      hallOfFame: {
+        chaserSize: hallOfFamePool(chaserHallOfFame).length,
+        evaderSize: hallOfFamePool(evaderHallOfFame).length,
+        maxSize: NEAT_HOF_MAX_SIZE,
+        opponentsPerGenome: NEAT_HOF_OPPONENTS_PER_GENOME,
+        chaserGenerations: hallOfFamePool(chaserHallOfFame).map(entry => entry.generation).sort((a, b) => a - b),
+        evaderGenerations: hallOfFamePool(evaderHallOfFame).map(entry => entry.generation).sort((a, b) => a - b),
+      },
       sampleGameState: lastSampleGameState
         ? {
             ...lastSampleGameState,
@@ -501,14 +663,17 @@ function runHeadlessBatch() {
   if (isRunning) timerId = setTimeout(runHeadlessBatch, 16);
 }
 
-function seedPopulations(chaserWeights?: AgentWeights, evaderWeights?: AgentWeights) {
+function seedPopulations(chaserWeights?: AgentWeights, evaderWeights?: AgentWeights, archiveSeed = false) {
+  clearHallOfFame();
   if (chaserWeights?.nodes && chaserWeights?.connections) {
     chaserPopulation.seedFromChampion(chaserWeights as NeatGenomeData);
     championChaser.setWeights(chaserWeights);
+    if (archiveSeed) archiveChampion(chaserHallOfFame, chaserWeights as NeatGenomeData, 'chaser');
   }
   if (evaderWeights?.nodes && evaderWeights?.connections) {
     evaderPopulation.seedFromChampion(evaderWeights as NeatGenomeData);
     championEvader.setWeights(evaderWeights);
+    if (archiveSeed) archiveChampion(evaderHallOfFame, evaderWeights as NeatGenomeData, 'evader');
   }
   refreshControllers();
   resetEvaluationAccumulators();
@@ -558,7 +723,7 @@ self.onmessage = (event: MessageEvent) => {
       break;
 
     case 'SET_WEIGHTS':
-      seedPopulations(payload?.chaserWeights, payload?.evaderWeights);
+      seedPopulations(payload?.chaserWeights, payload?.evaderWeights, true);
       seededFromStart = true;
       if (typeof payload?.chaserElo === 'number') chaserElo = payload.chaserElo;
       if (typeof payload?.evaderElo === 'number') evaderElo = payload.evaderElo;
@@ -584,6 +749,7 @@ self.onmessage = (event: MessageEvent) => {
       Object.keys(actionCountsChaser).forEach(k => delete actionCountsChaser[k]);
       Object.keys(actionCountsEvader).forEach(k => delete actionCountsEvader[k]);
       lastSampleGameState = null;
+      clearHallOfFame();
       resetEvaluationAccumulators();
       emitTelemetry();
       break;

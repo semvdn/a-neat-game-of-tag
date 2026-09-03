@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import type { DiagnosticsState, BenchmarkResult } from '../types';
+import type { DiagnosticsState } from '../types';
 import type { NeatGenerationMetrics, NeatGenomeData } from '../learning/neat';
 import { ACTION_SPACE } from '../constants';
 import {
@@ -10,7 +10,6 @@ import {
   FastForward,
   RotateCcw,
   Brain,
-  GitBranch,
   Network,
   Trophy,
   BarChart3,
@@ -18,9 +17,6 @@ import {
   Upload,
   Save,
   HardDrive,
-  Gauge,
-  Swords,
-  Clock,
 } from 'lucide-react';
 
 interface PerformanceDiagnosticsProps {
@@ -31,11 +27,8 @@ interface PerformanceDiagnosticsProps {
   onTogglePause: () => void;
   onStepFrame: () => void;
   onResetWeights: () => void;
-  onRunBenchmark: (durationSeconds?: number) => void;
-  onCancelBenchmark: () => void;
   avgSurvivalTime: number;
   avgTimeToTag: number;
-  isSimulating: boolean;
   isOpen: boolean;
   onClose: () => void;
   onExportModels?: () => void;
@@ -188,8 +181,6 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   onTogglePause,
   onStepFrame,
   onResetWeights,
-  onRunBenchmark,
-  onCancelBenchmark,
   avgSurvivalTime,
   avgTimeToTag,
   isOpen,
@@ -200,7 +191,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   onLoadLocalStorage,
   hasSavedModel,
 }) => {
-  const [tab, setTab] = useState<'overview' | 'fitness' | 'network' | 'actions' | 'benchmark'>('overview');
+  const [tab, setTab] = useState<'overview' | 'fitness' | 'network' | 'actions' | 'models'>('overview');
   const [role, setRole] = useState<'chaser' | 'evader'>('chaser');
   const [confirmReset, setConfirmReset] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -227,8 +218,6 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
     event.target.value = '';
   };
 
-  const benchmarkResults: BenchmarkResult[] = diagnostics.benchmarkResults || [];
-
   return (
     <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex flex-col text-gray-200">
       <header className="border-b border-gray-800 bg-gray-950 px-5 py-3 flex items-center gap-4">
@@ -253,7 +242,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
           ['fitness', Trophy, 'Fitness'],
           ['network', Network, 'Topology'],
           ['actions', BarChart3, 'Actions'],
-          ['benchmark', Gauge, 'Benchmark & Models'],
+          ['models', HardDrive, 'Models'],
         ].map(([id, Icon, label]) => {
           const C = Icon as React.FC<{ className?: string }>;
           return <button key={String(id)} onClick={() => setTab(id as typeof tab)} className={`flex items-center gap-2 px-3 py-2 text-xs border-b-2 ${tab === id ? 'border-violet-400 text-violet-200' : 'border-transparent text-gray-500 hover:text-gray-300'}`}><C className="w-4 h-4" />{String(label)}</button>;
@@ -278,6 +267,11 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <FitnessSummary title="Chaser population" metrics={chaserMetrics} />
               <FitnessSummary title="Evader population" metrics={evaderMetrics} />
             </div>
+            <div className="grid md:grid-cols-3 gap-3">
+              <MetricCard label="Hall of Fame C / E" value={`${diagnostics.hallOfFame?.chaserSize ?? 0} / ${diagnostics.hallOfFame?.evaderSize ?? 0}`} hint={`max ${diagnostics.hallOfFame?.maxSize ?? 0} champions per role`} />
+              <MetricCard label="Historical opponents" value={diagnostics.hallOfFame?.opponentsPerGenome ?? 0} hint="extra archive matchups per genome" />
+              <MetricCard label="Archived generations" value={(diagnostics.hallOfFame?.chaserGenerations?.length || diagnostics.hallOfFame?.evaderGenerations?.length) ? `${diagnostics.hallOfFame?.chaserGenerations?.[0] ?? '—'}–${diagnostics.hallOfFame?.chaserGenerations?.slice(-1)[0] ?? '—'}` : '—'} hint="recent + reservoir-sampled history" />
+            </div>
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
               <div className="flex items-center gap-2 mb-3"><Trophy className="w-4 h-4 text-amber-300" /><h3 className="font-semibold text-white">Best fitness by generation</h3></div>
@@ -285,7 +279,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> the Web Worker owns two populations. Every genome is evaluated against the same number of rotating opponents; fitness is averaged, genomes are speciated by innovation-aligned compatibility distance, and the next generation is produced by elitism, crossover and mutation. The main thread only renders the latest champions.
+              <strong className="text-violet-200">Training architecture:</strong> the Web Worker owns two populations. Every genome is evaluated against balanced rotating opponents plus historical Hall of Fame champions; fitness is averaged, genomes are speciated by innovation-aligned compatibility distance, and the next generation is produced by elitism, crossover and mutation. The main thread only renders the latest champions.
             </div>
           </div>
         )}
@@ -352,39 +346,22 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
           </div>
         )}
 
-        {tab === 'benchmark' && (
-          <div className="max-w-6xl mx-auto space-y-5">
-            <div className="grid lg:grid-cols-2 gap-4">
-              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-                <div className="flex items-center gap-2 mb-4"><Gauge className="w-4 h-4 text-cyan-300" /><h3 className="font-semibold text-white">Champion benchmark</h3></div>
-                <div className="flex gap-2">
-                  <button disabled={diagnostics.benchmarkActive} onClick={() => onRunBenchmark(20)} className="px-4 py-2 rounded-lg bg-cyan-500 text-black font-semibold text-xs disabled:opacity-40">Run 20s benchmark</button>
-                  {diagnostics.benchmarkActive && <button onClick={onCancelBenchmark} className="px-4 py-2 rounded-lg border border-gray-700 text-xs">Cancel</button>}
-                </div>
-                {diagnostics.benchmarkActive && <div className="mt-3 text-xs font-mono text-cyan-300"><Clock className="inline w-3.5 h-3.5 mr-1" />{(diagnostics.benchmarkTimeRemaining / 1000).toFixed(1)}s remaining</div>}
-              </div>
-
-              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-                <div className="flex items-center gap-2 mb-4"><HardDrive className="w-4 h-4 text-violet-300" /><h3 className="font-semibold text-white">Champion persistence</h3></div>
-                <div className="flex flex-wrap gap-2">
-                  <button onClick={() => { onSaveLocalStorage?.(); setStatus('Saved NEAT champions locally.'); }} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1"><Save className="w-3.5 h-3.5" />Save</button>
-                  <button disabled={!hasSavedModel} onClick={() => { onLoadLocalStorage?.(); setStatus('Loaded local champions.'); }} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1 disabled:opacity-40"><HardDrive className="w-3.5 h-3.5" />Load</button>
-                  <button onClick={onExportModels} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1"><Download className="w-3.5 h-3.5" />Export JSON</button>
-                  <label className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1 cursor-pointer"><Upload className="w-3.5 h-3.5" />Import JSON<input type="file" accept="application/json" className="hidden" onChange={upload} /></label>
-                </div>
-                {status && <div className="mt-3 text-xs text-violet-200">{status}</div>}
-              </div>
-            </div>
-
+        {tab === 'models' && (
+          <div className="max-w-4xl mx-auto space-y-5">
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-              <div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2"><Swords className="w-4 h-4 text-amber-300" /><h3 className="font-semibold text-white">Benchmark history</h3></div><span className="text-xs text-gray-500">{benchmarkResults.length} runs</span></div>
-              {benchmarkResults.length === 0 ? <div className="text-sm text-gray-500 py-8 text-center">No benchmark runs yet.</div> : (
-                <div className="overflow-auto"><table className="w-full text-xs"><thead className="text-gray-500"><tr><th className="text-left py-2">Model</th><th>Grade</th><th>Tags</th><th>Falls</th><th>Survival</th><th>Tag time</th></tr></thead><tbody>{benchmarkResults.slice().reverse().map(r => <tr key={r.id} className="border-t border-gray-800"><td className="py-2 text-gray-300">{r.modelLabel}</td><td className="text-center font-bold text-amber-300">{r.scoreGrade}</td><td className="text-center">{r.tagsCompleted}</td><td className="text-center">{r.fallsCount}</td><td className="text-center">{r.avgSurvivalTimeSec.toFixed(2)}s</td><td className="text-center">{r.avgTimeToTagSec.toFixed(2)}s</td></tr>)}</tbody></table></div>
-              )}
+              <div className="flex items-center gap-2 mb-4"><HardDrive className="w-4 h-4 text-violet-300" /><h3 className="font-semibold text-white">Champion persistence</h3></div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => { onSaveLocalStorage?.(); setStatus('Saved NEAT champions locally.'); }} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1"><Save className="w-3.5 h-3.5" />Save</button>
+                <button disabled={!hasSavedModel} onClick={() => { onLoadLocalStorage?.(); setStatus('Loaded local champions.'); }} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1 disabled:opacity-40"><HardDrive className="w-3.5 h-3.5" />Load</button>
+                <button onClick={onExportModels} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1"><Download className="w-3.5 h-3.5" />Export JSON</button>
+                <label className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1 cursor-pointer"><Upload className="w-3.5 h-3.5" />Import JSON<input type="file" accept="application/json" className="hidden" onChange={upload} /></label>
+              </div>
+              {status && <div className="mt-3 text-xs text-violet-200">{status}</div>}
+              <p className="mt-4 text-xs text-gray-500 leading-relaxed">The worker maintains the Hall of Fame during the current training session. Loading a champion seeds a fresh archive baseline around that imported champion.</p>
             </div>
 
             <div className="rounded-xl border border-red-500/20 bg-red-950/10 p-4">
-              {!confirmReset ? <button onClick={() => setConfirmReset(true)} className="px-3 py-2 rounded border border-red-500/40 text-red-300 text-xs flex items-center gap-1"><RotateCcw className="w-3.5 h-3.5" />Reset both populations</button> : <div className="flex items-center gap-2"><span className="text-xs text-red-300">Delete all evolved genomes and restart at generation 1?</span><button onClick={() => { onResetWeights(); setConfirmReset(false); }} className="px-3 py-1.5 bg-red-500 text-black rounded text-xs font-bold">Reset</button><button onClick={() => setConfirmReset(false)} className="px-3 py-1.5 border border-gray-700 rounded text-xs">Cancel</button></div>}
+              {!confirmReset ? <button onClick={() => setConfirmReset(true)} className="px-3 py-2 rounded border border-red-500/40 text-red-300 text-xs flex items-center gap-1"><RotateCcw className="w-3.5 h-3.5" />Reset both populations</button> : <div className="flex items-center gap-2"><span className="text-xs text-red-300">Delete all evolved genomes, Hall of Fame entries, and restart at generation 1?</span><button onClick={() => { onResetWeights(); setConfirmReset(false); }} className="px-3 py-1.5 bg-red-500 text-black rounded text-xs font-bold">Reset</button><button onClick={() => setConfirmReset(false)} className="px-3 py-1.5 border border-gray-700 rounded text-xs">Cancel</button></div>}
             </div>
           </div>
         )}

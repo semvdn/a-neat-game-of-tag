@@ -83,6 +83,9 @@ export const TIME_TO_TAG_HISTORY_LENGTH = 10; // Average over the last N tag tim
 // NEAT (NeuroEvolution of Augmenting Topologies)
 export const NEAT_POPULATION_SIZE = 48;
 export const NEAT_OPPONENTS_PER_GENOME = 3;
+export const NEAT_HOF_OPPONENTS_PER_GENOME = 1; // extra historical opponent per genome once the archive is populated
+export const NEAT_HOF_MAX_SIZE = 12; // per role: recent champions + a reservoir sample of older champions
+export const NEAT_HOF_RECENT_SLOTS = 4;
 export const NEAT_EPISODE_MAX_MS = 12000;
 export const NEAT_COMPATIBILITY_THRESHOLD = 0.8;
 export const NEAT_TARGET_SPECIES = 8;

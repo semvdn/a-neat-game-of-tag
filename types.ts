@@ -113,25 +113,14 @@ export interface PerformanceDataPoint {
   evaderElo?: number;
 }
 
-export interface BenchmarkResult {
-  id: string;
-  timestamp: number;
-  modelLabel: string;
-  durationSeconds: number;
-  tagsCompleted: number;
-  fallsCount: number;
-  avgSurvivalTimeSec: number;
-  avgTimeToTagSec: number;
-  fallsPerMinute: number;
-  tagsPerMinute: number;
-  platformJumps: number;
-  actionDistribution: Record<string, number>;
-  scoreGrade: 'S' | 'A' | 'B' | 'C' | 'D';
-  baselineDelta?: {
-    survivalPct: number;
-    tagSpeedPct: number;
-    fallReductionPct: number;
-  };
+
+export interface HallOfFameTelemetry {
+  chaserSize: number;
+  evaderSize: number;
+  maxSize: number;
+  opponentsPerGenome: number;
+  chaserGenerations: number[];
+  evaderGenerations: number[];
 }
 
 export interface DiagnosticsState {
@@ -153,7 +142,5 @@ export interface DiagnosticsState {
   evaderElo: number;
   eloLeaderboard: EloLeaderboardEntry[];
   showLidar?: boolean;
-  benchmarkActive: boolean;
-  benchmarkTimeRemaining: number;
-  benchmarkResults: BenchmarkResult[];
+  hallOfFame?: HallOfFameTelemetry;
 }

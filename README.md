@@ -1,6 +1,6 @@
 # NEAT Tag Agents
 
-This branch ports the original PPO tag agents to a population-based **NEAT (NeuroEvolution of Augmenting Topologies)** trainer while keeping the existing physics, rendering, lidar/state-vector code, sound, controls and benchmark UI.
+This branch ports the original PPO tag agents to a population-based **NEAT (NeuroEvolution of Augmenting Topologies)** trainer while keeping the existing physics, rendering, lidar/state-vector code, sound and controls.
 
 ## What changed
 
@@ -176,3 +176,8 @@ The original AI Studio/Vite Gemini environment plumbing is left in place, althou
 - `constants.ts` — NEAT and game parameters
 
 The former PPO math/optimizer module (`learning/math.ts`) has been removed.
+
+
+## Hall of Fame coevolution
+
+Each evaluated genome plays the normal balanced current-population matchups and, once historical champions exist, an extra matchup against the opposite role's Hall of Fame. Each role keeps up to 12 champions: the four most recent champions plus a reservoir sample of older generations. This keeps old successful strategies in the selection pressure and reduces cyclic forgetting. The archive is worker-session state; importing a champion seeds a new archive baseline.

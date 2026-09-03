@@ -3,7 +3,7 @@
 import React from 'react';
 import type { AgentState, RewardBreakdown } from '../types';
 import { AgentStatus } from '../types';
-import { Activity, Play, Gauge, FastForward, Award, Radar, Shield, Swords, Zap } from 'lucide-react';
+import { Radar, Shield, Swords, Zap } from 'lucide-react';
 
 interface InfoPanelProps {
   agents: AgentState[];
@@ -15,19 +15,8 @@ interface InfoPanelProps {
   avgSurvivalTime: number;
   avgTimeToTag: number;
   onOpenDiagnostics: () => void;
-  simulationSpeed: number;
-  onSetSimulationSpeed?: (speed: number) => void;
-  onChangeSpeed?: (speed: number) => void;
-  totalGeneration?: number;
-  onRunBenchmark: () => void;
-  benchmarkActive: boolean;
-  benchmarkTimeRemaining?: number;
-  isPaused?: boolean;
-  onTogglePause?: () => void;
-  onStepFrame?: () => void;
   chaserElo?: number;
   evaderElo?: number;
-  eloLeaderboard?: any[];
 }
 
 const statusColors: Record<AgentStatus, string> = {
@@ -209,81 +198,11 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
   avgSurvivalTime,
   avgTimeToTag,
   onOpenDiagnostics,
-  simulationSpeed,
-  onSetSimulationSpeed,
-  onChangeSpeed,
-  totalGeneration,
-  onRunBenchmark,
-  benchmarkActive,
-  benchmarkTimeRemaining,
-  isPaused,
-  onTogglePause,
-  onStepFrame,
   chaserElo,
   evaderElo,
-  eloLeaderboard,
 }) => {
-  const generation = totalGeneration ?? 0;
-  const updateSpeed = onChangeSpeed || onSetSimulationSpeed || (() => {});
-
   return (
     <aside className="w-80 bg-gray-800 rounded-lg shadow-lg p-4 flex flex-col gap-4 overflow-y-auto">
-      {/* Diagnostics Tool Action Button */}
-      <div className="bg-gradient-to-r from-cyan-950/60 to-blue-950/60 border border-cyan-500/40 rounded-lg p-3">
-        <button
-          onClick={onOpenDiagnostics}
-          className="w-full py-2.5 px-3 bg-cyan-500 hover:bg-cyan-400 text-black font-bold rounded-md text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-500/20 transition-all transform active:scale-95"
-        >
-          <Activity className="w-4 h-4" />
-          <span>Performance Diagnostics</span>
-          <span className="ml-auto text-[10px] bg-black/30 text-black font-mono px-1.5 py-0.5 rounded font-extrabold">
-            G{generation}
-          </span>
-        </button>
-
-        {/* Speed Controls inside Sidebar */}
-        <div className="mt-2.5 pt-2 border-t border-cyan-500/20">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] text-gray-300 flex items-center gap-1 font-medium">
-              <FastForward className="w-3.5 h-3.5 text-cyan-400" />
-              Sim Speed:
-            </span>
-            {simulationSpeed >= 25 && (
-              <span className="text-[10px] font-bold text-amber-300 bg-amber-950/80 border border-amber-500/40 px-1.5 py-0.2 rounded animate-pulse">
-                ⚡ Web Worker Turbo
-              </span>
-            )}
-          </div>
-          <div className="grid grid-cols-6 gap-1">
-            {[1, 2, 5, 10, 25, 50].map(speed => (
-              <button
-                key={speed}
-                onClick={() => updateSpeed(speed)}
-                className={`py-1 rounded text-[10px] font-bold transition-all text-center ${
-                  simulationSpeed === speed
-                    ? speed >= 25
-                      ? 'bg-amber-400 text-black shadow-sm font-extrabold'
-                      : 'bg-cyan-400 text-black font-extrabold'
-                    : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
-                }`}
-              >
-                {speed}x
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Quick Benchmark Button */}
-        <button
-          disabled={benchmarkActive}
-          onClick={onRunBenchmark}
-          className="w-full mt-2 py-1.5 px-2 bg-gray-800/90 hover:bg-gray-700/90 border border-gray-700 text-gray-200 text-[11px] font-semibold rounded flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
-        >
-          <Award className="w-3.5 h-3.5 text-amber-400" />
-          <span>{benchmarkActive ? `Benchmarking (${Math.ceil((benchmarkTimeRemaining || 0) / 1000)}s)...` : 'Run 20s Benchmark'}</span>
-        </button>
-      </div>
-
       <h2 className="text-xl font-bold text-cyan-400 border-b-2 border-cyan-400/30 pb-2">Simulation Status</h2>
       
       {isSimulating && (
@@ -316,7 +235,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
             <div className="mt-2.5 pt-2 border-t border-gray-600">
                 <div className="text-[11px] text-gray-400 flex items-center justify-between">
                     <span>Active Action Space:</span>
-                    <span className="text-gray-300 font-medium">Left, Right, Jump, Idle</span>
+                    <span className="text-gray-300 font-medium">Drive, Jump Power, Sprint</span>
                 </div>
             </div>
         </div>

@@ -14,7 +14,6 @@ import type {
   PlatformState,
   RewardBreakdown,
   DiagnosticsState,
-  BenchmarkResult,
   PerformanceDataPoint,
   EloLeaderboardEntry,
 } from './types';
@@ -39,6 +38,8 @@ import {
   SURVIVAL_TIME_HISTORY_LENGTH,
   TIME_TO_TAG_HISTORY_LENGTH,
   INITIAL_ELO,
+  NEAT_HOF_MAX_SIZE,
+  NEAT_HOF_OPPONENTS_PER_GENOME,
 } from './constants';
 import { Activity, Play, Pause, FastForward, RotateCcw, Zap } from 'lucide-react';
 
@@ -74,20 +75,9 @@ export const App: React.FC = () => {
     chaserElo: INITIAL_ELO,
     evaderElo: INITIAL_ELO,
     eloLeaderboard: createLeaderboardEntries(INITIAL_ELO, INITIAL_ELO, 0, 0, 0, 0, 0),
-    benchmarkActive: false,
-    benchmarkTimeRemaining: 0,
-    benchmarkResults: [],
+    hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: NEAT_HOF_MAX_SIZE, opponentsPerGenome: NEAT_HOF_OPPONENTS_PER_GENOME, chaserGenerations: [], evaderGenerations: [] },
   }));
 
-  const benchmarkSessionRef = useRef<{
-    active: boolean;
-    startTime: number;
-    durationMs: number;
-    startTags: number;
-    startFalls: number;
-    startJumps: number;
-    modelLabel: string;
-  } | null>(null);
 
   const lastTelemetryTimeRef = useRef(0);
   const actionCountsRef = useRef<{
@@ -362,6 +352,7 @@ export const App: React.FC = () => {
               lastEvaderNeatMetrics: evaderMetric || prev.lastEvaderNeatMetrics,
               chaserChampionGenome: payload.chaserChampionGenome || prev.chaserChampionGenome,
               evaderChampionGenome: payload.evaderChampionGenome || prev.evaderChampionGenome,
+              hallOfFame: payload.hallOfFame || prev.hallOfFame,
             };
           });
 
@@ -956,37 +947,6 @@ export const App: React.FC = () => {
     setShowLidar(prev => !prev);
   };
 
-  const handleRunBenchmark = (durationSeconds = 20) => {
-    const durationMs = durationSeconds * 1000;
-    const now = Date.now();
-    const currentGeneration = diagnosticsState.generation || Math.max(
-      chaserAgent.current?.getGeneration() || 0,
-      evaderAgent.current?.getGeneration() || 0
-    );
-    benchmarkSessionRef.current = {
-      active: true,
-      startTime: now,
-      durationMs,
-      startTags: totalTagsRef.current,
-      startFalls: totalFallsRef.current,
-      startJumps: totalJumpsRef.current,
-      modelLabel: `Benchmark (Generation ${currentGeneration})`,
-    };
-    setDiagnosticsState(prev => ({
-      ...prev,
-      benchmarkActive: true,
-      benchmarkTimeRemaining: durationMs,
-    }));
-  };
-
-  const handleCancelBenchmark = () => {
-    benchmarkSessionRef.current = null;
-    setDiagnosticsState(prev => ({
-      ...prev,
-      benchmarkActive: false,
-      benchmarkTimeRemaining: 0,
-    }));
-  };
 
   const handleResetWeights = () => {
     if (chaserAgent.current) chaserAgent.current.resetWeights();
@@ -1022,6 +982,7 @@ export const App: React.FC = () => {
       chaserElo: INITIAL_ELO,
       evaderElo: INITIAL_ELO,
       eloLeaderboard: createLeaderboardEntries(INITIAL_ELO, INITIAL_ELO, 0, 0, 0, 0, 0),
+      hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: NEAT_HOF_MAX_SIZE, opponentsPerGenome: NEAT_HOF_OPPONENTS_PER_GENOME, chaserGenerations: [], evaderGenerations: [] },
     }));
   };
 
@@ -1087,7 +1048,6 @@ export const App: React.FC = () => {
       diagnostics: {
         totalTags: totalTagsRef.current,
         totalFalls: totalFallsRef.current,
-        benchmarkResults: diagnosticsState.benchmarkResults,
       },
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -1188,13 +1148,6 @@ export const App: React.FC = () => {
             {isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
           </button>
 
-          {/* Benchmark Active Indicator */}
-          {diagnosticsState.benchmarkActive && (
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-purple-950/60 border border-purple-500/40 rounded-lg text-purple-300 text-xs font-mono animate-pulse">
-              <span className="w-2 h-2 rounded-full bg-purple-400 animate-ping" />
-              Benchmarking: {(diagnosticsState.benchmarkTimeRemaining / 1000).toFixed(1)}s
-            </div>
-          )}
 
           {/* Diagnostics Button */}
           <button
@@ -1202,7 +1155,7 @@ export const App: React.FC = () => {
             className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-semibold rounded-lg shadow-lg shadow-cyan-600/30 transition-all transform hover:scale-[1.02] active:scale-[0.98]"
           >
             <Activity className="w-4 h-4 text-cyan-200" />
-            <span>Diagnostics & Benchmark</span>
+            <span>Diagnostics</span>
             <span className="ml-1 px-1.5 py-0.5 bg-black/40 text-cyan-300 rounded text-[10px] font-mono">
               Gen {diagnosticsState.generation}
             </span>
@@ -1246,7 +1199,7 @@ export const App: React.FC = () => {
         <InfoPanel
           agents={gameState.agents}
           isSimulating={isSimulating}
-          showTrails={showTrails}
+            showTrails={showTrails}
           onToggleTrails={handleToggleTrails}
           showLidar={showLidar}
           onToggleLidar={handleToggleLidar}
@@ -1254,17 +1207,7 @@ export const App: React.FC = () => {
           avgTimeToTag={gameState.avgTimeToTag}
           chaserElo={chaserElo.current}
           evaderElo={evaderElo.current}
-          eloLeaderboard={diagnosticsState.eloLeaderboard}
           onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
-          simulationSpeed={simulationSpeed}
-          onChangeSpeed={setSimulationSpeed}
-          isPaused={isPaused}
-          onTogglePause={() => setIsPaused(p => !p)}
-          onStepFrame={handleStepFrame}
-          onRunBenchmark={handleRunBenchmark}
-          benchmarkActive={diagnosticsState.benchmarkActive}
-          benchmarkTimeRemaining={diagnosticsState.benchmarkTimeRemaining}
-          totalGeneration={diagnosticsState.generation}
         />
       </div>
 
@@ -1279,11 +1222,8 @@ export const App: React.FC = () => {
         onTogglePause={() => setIsPaused(p => !p)}
         onStepFrame={handleStepFrame}
         onResetWeights={handleResetWeights}
-        onRunBenchmark={handleRunBenchmark}
-        onCancelBenchmark={handleCancelBenchmark}
         avgSurvivalTime={gameState.avgSurvivalTime}
         avgTimeToTag={gameState.avgTimeToTag}
-        isSimulating={isSimulating}
         onSaveLocalStorage={handleSaveModels}
         onLoadLocalStorage={handleLoadModels}
         onExportModels={handleExportModels}
