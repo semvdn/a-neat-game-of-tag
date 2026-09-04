@@ -797,7 +797,6 @@ export const App: React.FC = () => {
             newPosition.y = spawnPlatform.position.y - AGENT_HEIGHT - 30;
             newVelocity.x = 0;
             newVelocity.y = 0;
-            newEnergy = MAX_ENERGY;
             grounded = false;
             landedPlatformId = spawnPlatform.id;
           }

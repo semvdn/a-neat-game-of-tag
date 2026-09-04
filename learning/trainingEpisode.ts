@@ -289,7 +289,6 @@ export function runTrainingEpisode(
         nextPosition.y = spawn.position.y - AGENT_HEIGHT - 20;
         velocity.x = 0;
         velocity.y = 0;
-        agent.energy = MAX_ENERGY;
         grounded = false;
         landedPlatformId = spawn.id;
       }
