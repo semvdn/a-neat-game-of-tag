@@ -31,32 +31,51 @@ export const drawTagEffect = (ctx: CanvasRenderingContext2D, effect: TagEffect) 
     ctx.globalAlpha = 1;
 };
 
-export const drawAgentTrail = (ctx: CanvasRenderingContext2D, agent: AgentState) => {
+export const drawAgentTrail = (
+    ctx: CanvasRenderingContext2D,
+    agent: AgentState,
+    nowMs: number,
+    lifetimeMs = 3200
+) => {
     if (!agent.trajectory || agent.trajectory.length < 2) return;
 
     const trailLength = agent.trajectory.length;
     const agentCenterOffsetX = AGENT_WIDTH / 2;
     const agentCenterOffsetY = AGENT_HEIGHT / 2;
 
-    const r = parseInt(agent.color.slice(1, 3), 16);
-    const g = parseInt(agent.color.slice(3, 5), 16);
-    const b = parseInt(agent.color.slice(5, 7), 16);
+    const normalizedColor = agent.color.replace('#', '');
+    const r = parseInt(normalizedColor.slice(0, 2), 16) || 255;
+    const g = parseInt(normalizedColor.slice(2, 4), 16) || 255;
+    const b = parseInt(normalizedColor.slice(4, 6), 16) || 255;
+
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
 
     for (let i = 0; i < trailLength - 1; i++) {
         const startPoint = agent.trajectory[i];
         const endPoint = agent.trajectory[i + 1];
-        
-        const opacity = (1 - (i / trailLength)) * 0.7; // Max opacity 0.7
+
+        // Segment age, rather than buffer position, is the primary fade control. This makes
+        // a trail dissipate even when no additional movement samples are being appended.
+        const ageMs = Math.max(0, nowMs - endPoint.timestamp);
+        const life = Math.max(0, Math.min(1, 1 - ageMs / lifetimeMs));
+        if (life <= 0) continue;
+
+        // Keep a small spatial taper as a readability aid, but never let it override time fade.
+        const spatialRecency = (i + 1) / (trailLength - 1);
+        const opacity = life * (0.18 + spatialRecency * 0.62);
+        const lineWidth = 1.25 + spatialRecency * 3.25;
 
         ctx.beginPath();
         ctx.moveTo(startPoint.x + agentCenterOffsetX, startPoint.y + agentCenterOffsetY);
         ctx.lineTo(endPoint.x + agentCenterOffsetX, endPoint.y + agentCenterOffsetY);
-        
-        ctx.lineWidth = 2 + 3 * (1 - (i/trailLength)); // Tapered line width
-        ctx.lineCap = 'round';
+        ctx.lineWidth = lineWidth;
         ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${opacity})`;
         ctx.stroke();
     }
+
+    ctx.restore();
 };
 
 export const drawAgentLidarRays = (ctx: CanvasRenderingContext2D, agent: AgentState) => {

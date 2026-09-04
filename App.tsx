@@ -59,6 +59,32 @@ import {
 } from './constants';
 import { Activity, Play, Pause, RotateCcw, MonitorPlay, Cpu, Minus, Plus } from 'lucide-react';
 
+// Champion trails are visual telemetry only. They are sampled by distance but aged by
+// simulation time, so a stationary agent's old path still fades away.
+const MAX_TRAIL_POINTS = 128;
+const TRAIL_SAMPLE_DISTANCE = 4;
+export const TRAIL_LIFETIME_MS = 3200;
+
+const updateTrail = (
+  trajectory: AgentState['trajectory'] | undefined,
+  position: AgentState['position'],
+  nowMs: number
+): AgentState['trajectory'] => {
+  const cutoff = nowMs - TRAIL_LIFETIME_MS;
+  const liveTrail = (trajectory || []).filter(point => point.timestamp >= cutoff);
+  const last = liveTrail[liveTrail.length - 1];
+
+  // Do not require movement to age the trail: pruning above happens every physics tick.
+  if (last && Math.hypot(position.x - last.x, position.y - last.y) < TRAIL_SAMPLE_DISTANCE) {
+    return liveTrail;
+  }
+
+  return [
+    ...liveTrail.slice(-(MAX_TRAIL_POINTS - 1)),
+    { x: position.x, y: position.y, timestamp: nowMs },
+  ];
+};
+
 const formatTrainingRate = (value: number | undefined) => {
   const safe = Number.isFinite(value) ? Math.max(0, Number(value)) : 0;
   if (safe >= 1000000) return `${(safe / 1000000).toFixed(1)}M`;
@@ -216,7 +242,7 @@ export const App: React.FC = () => {
         lastAction: 'wait',
         energy: MAX_ENERGY,
         maxEnergy: MAX_ENERGY,
-        trajectory: [],
+        trajectory: [{ x: 100, y: 500, timestamp: 0 }],
         lastPlatformId: 0,
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
@@ -239,7 +265,7 @@ export const App: React.FC = () => {
         lastAction: 'wait',
         energy: MAX_ENERGY,
         maxEnergy: MAX_ENERGY,
-        trajectory: [],
+        trajectory: [{ x: 400, y: 500, timestamp: 0 }],
         lastPlatformId: 0,
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
@@ -262,7 +288,7 @@ export const App: React.FC = () => {
         lastAction: 'wait',
         energy: MAX_ENERGY,
         maxEnergy: MAX_ENERGY,
-        trajectory: [],
+        trajectory: [{ x: 700, y: 500, timestamp: 0 }],
         lastPlatformId: 0,
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
@@ -776,9 +802,16 @@ export const App: React.FC = () => {
             landedPlatformId = spawnPlatform.id;
           }
 
+          // Trail samples are world-space and time-limited. A respawn starts a fresh trail
+          // so teleporting back onto the level never draws a line across the arena.
+          const newTrajectory = fallEvents[agent.id]
+            ? [{ x: newPosition.x, y: newPosition.y, timestamp: newState.gameTime }]
+            : updateTrail(agent.trajectory, newPosition, newState.gameTime);
+
           return {
             ...agent,
             position: newPosition,
+            trajectory: newTrajectory,
             velocity: newVelocity,
             isOnGround: grounded,
             energy: newEnergy,
@@ -1107,7 +1140,7 @@ export const App: React.FC = () => {
           lastAction: 'wait',
           energy: MAX_ENERGY,
           maxEnergy: MAX_ENERGY,
-          trajectory: [],
+          trajectory: [{ x, y: 500, timestamp: 0 }],
           lastPlatformId: 0,
           scale: { x: 1, y: 1 },
           energyAtLastTakeoff: MAX_ENERGY,

@@ -154,7 +154,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     platforms.forEach(platform => drawPlatform(ctx, platform));
 
     if (showTrails) {
-      agents.forEach(agent => drawAgentTrail(ctx, agent));
+      agents.forEach(agent => drawAgentTrail(ctx, agent, gameState.gameTime));
     }
 
     if (showLidar) {

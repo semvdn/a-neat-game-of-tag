@@ -7,6 +7,12 @@ export interface Vector2D {
   y: number;
 }
 
+// Visual-only trail sample. `timestamp` is champion simulation time in milliseconds.
+// Keeping this separate from the policy state ensures trails never affect training/senses.
+export interface TrailPoint extends Vector2D {
+  timestamp: number;
+}
+
 export enum AgentStatus {
   Normal = 'Evading',
   It = 'It',
@@ -52,7 +58,7 @@ export interface AgentState {
   maxEnergy: number;
   stateVector?: number[];
   rewardBreakdown?: RewardBreakdown;
-  trajectory: Vector2D[];
+  trajectory: TrailPoint[];
   lastPlatformId: number | null;
   scale: { x: number; y: number };
   energyAtLastTakeoff: number;
