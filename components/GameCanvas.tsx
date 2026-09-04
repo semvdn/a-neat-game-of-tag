@@ -15,6 +15,14 @@ interface GameCanvasProps {
 // Keeping the platform at this screen-height ratio leaves enough headroom for a full jump
 // even at 200% visual zoom, while still showing the platform beneath the characters.
 const PLATFORM_SCREEN_Y_RATIO = 0.72;
+// Vertical presentation camera easing. This is real-time based (not simulation-time based),
+// so changing champion view speed does not make the camera snap or become sluggish.
+const CAMERA_VERTICAL_FOLLOW_RATE = 5.5;
+// While easing, keep the active platform inside this vertical screen band. The target sits at
+// 72%, leaving room above for jumps while guaranteeing that downward height changes cannot
+// disappear below the viewport at high zoom.
+const PLATFORM_SCREEN_Y_MIN_RATIO = 0.56;
+const PLATFORM_SCREEN_Y_MAX_RATIO = 0.86;
 
 const median = (values: number[]) => {
   if (values.length === 0) return 0;
@@ -76,6 +84,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   cameraZoom,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const presentationCameraYRef = useRef<number | null>(null);
+  const lastPresentationFrameTimeRef = useRef<number | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 });
   const { agents, platforms, cameraPosition, tagEffects } = gameState;
 
@@ -142,9 +152,34 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const desiredCenterY =
       activePlatformY + (0.5 - PLATFORM_SCREEN_Y_RATIO) * visibleWorldHeight;
 
-    // Vertical framing is exact rather than eased: the active platform must never lag
-    // below the visual camera during a height transition, especially at high zoom.
-    const cameraCenterY = desiredCenterY;
+    // Smooth vertical presentation tracking in wall-clock time. Using an exponential
+    // response rather than a fixed per-frame lerp keeps the feel consistent across refresh rates.
+    const now = performance.now();
+    const previousFrameTime = lastPresentationFrameTimeRef.current;
+    lastPresentationFrameTimeRef.current = now;
+
+    let cameraCenterY = presentationCameraYRef.current;
+    if (cameraCenterY === null || !Number.isFinite(cameraCenterY)) {
+      cameraCenterY = desiredCenterY;
+    } else {
+      // Cap a single update after tab switches/resizes so the camera still eases instead of
+      // teleporting to the target after a long browser pause.
+      const dtSeconds = previousFrameTime === null
+        ? 1 / 60
+        : Math.min(0.05, Math.max(0, (now - previousFrameTime) / 1000));
+      const followAlpha = 1 - Math.exp(-CAMERA_VERTICAL_FOLLOW_RATE * dtSeconds);
+      cameraCenterY += (desiredCenterY - cameraCenterY) * followAlpha;
+    }
+
+    // Safety band: preserve smooth motion, but never allow easing lag to push the active
+    // platform out of the useful vertical view. Solving the world->screen transform for the
+    // chosen screen ratios gives the legal center-Y interval below.
+    const minimumSafeCenterY =
+      activePlatformY + (0.5 - PLATFORM_SCREEN_Y_MAX_RATIO) * visibleWorldHeight;
+    const maximumSafeCenterY =
+      activePlatformY + (0.5 - PLATFORM_SCREEN_Y_MIN_RATIO) * visibleWorldHeight;
+    cameraCenterY = Math.min(maximumSafeCenterY, Math.max(minimumSafeCenterY, cameraCenterY));
+    presentationCameraYRef.current = cameraCenterY;
 
     ctx.save();
     ctx.translate(cssWidth / 2, cssHeight / 2);

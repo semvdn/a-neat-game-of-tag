@@ -43,7 +43,8 @@ The visible game is presentation only. It runs continuously with the latest comp
 - pause/step controls;
 - reset-view control;
 - visual camera zoom from 50% to 200%;
-- responsive full-bleed camera that does not change physics or neural inputs.
+- responsive full-bleed camera that does not change physics or neural inputs;
+- smooth real-time vertical camera tracking as platform heights change, with a safety band that keeps the active platform visible at every zoom level.
 
 ### Maximum-throughput training
 
