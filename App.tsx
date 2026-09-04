@@ -7,6 +7,7 @@ import { LearningAgent, type AgentControls } from './learning/agent';
 import { getPhysiology, stepLocomotion, syncEnergyCapacity } from './learning/movement';
 import { createLeaderboardEntries } from './learning/elo';
 import { getAgentStateVector } from './learning/state';
+import { resolveRespawnTarget, setSafeGroundAnchor } from './learning/respawn';
 import { initAudio, playDynamicJumpSound, playTagSound, playFallSound, playToggleSound } from './services/soundService';
 import type {
   GameState,
@@ -178,6 +179,8 @@ export const App: React.FC = () => {
         maxEnergy: MAX_ENERGY,
         trajectory: [{ x: visualStartXs[0], y: 500 }],
         lastPlatformId: 0,
+        respawnPlatformId: 0,
+        respawnPosition: { x: visualStartXs[0], y: WORLD_REF_HEIGHT - 100 - AGENT_HEIGHT },
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
         positionAtLastTakeoff: { x: visualStartXs[0], y: 500 },
@@ -201,6 +204,8 @@ export const App: React.FC = () => {
         maxEnergy: MAX_ENERGY,
         trajectory: [{ x: visualStartXs[1], y: 500 }],
         lastPlatformId: 0,
+        respawnPlatformId: 0,
+        respawnPosition: { x: visualStartXs[1], y: WORLD_REF_HEIGHT - 100 - AGENT_HEIGHT },
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
         positionAtLastTakeoff: { x: visualStartXs[1], y: 500 },
@@ -224,6 +229,8 @@ export const App: React.FC = () => {
         maxEnergy: MAX_ENERGY,
         trajectory: [{ x: visualStartXs[2], y: 500 }],
         lastPlatformId: 0,
+        respawnPlatformId: 0,
+        respawnPosition: { x: visualStartXs[2], y: WORLD_REF_HEIGHT - 100 - AGENT_HEIGHT },
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
         positionAtLastTakeoff: { x: visualStartXs[2], y: 500 },
@@ -634,6 +641,7 @@ export const App: React.FC = () => {
               newVelocity.y = 0;
               grounded = true;
               landedPlatformId = platform.id;
+              setSafeGroundAnchor(agent, platform, newPosition.x);
               break;
             }
           }
@@ -645,17 +653,19 @@ export const App: React.FC = () => {
             playFallSound();
             agent.survivalTime = 0;
 
-            const visiblePlats = newState.platforms.filter(
-              p => p.position.x + p.width >= minVisibleX && p.position.x <= maxVisibleX + AGENT_WIDTH
-            );
-            const spawnPlatform = visiblePlats.length > 0 ? visiblePlats[0] : newState.platforms[0];
-            newPosition.x = spawnPlatform.position.x + spawnPlatform.width / 2 - AGENT_WIDTH / 2;
-            newPosition.y = spawnPlatform.position.y - AGENT_HEIGHT - 30;
-            newVelocity.x = 0;
-            newVelocity.y = 0;
-            newEnergy = newMaxEnergy;
-            grounded = false;
-            landedPlatformId = spawnPlatform.id;
+            // Respawn at this body's own last confirmed ground contact. The previous implementation
+            // selected the first visible platform, which could teleport a fall hundreds of pixels.
+            const respawn = resolveRespawnTarget(agent, newState.platforms);
+            if (respawn) {
+              newPosition.x = respawn.position.x;
+              newPosition.y = respawn.position.y;
+              newVelocity.x = 0;
+              newVelocity.y = 0;
+              grounded = true;
+              landedPlatformId = respawn.platform.id;
+              setSafeGroundAnchor(agent, respawn.platform, newPosition.x);
+            }
+            // Preserve current stamina: falling is a penalty, never a free energy refill.
           }
 
           // Keep a short, distance-sampled world-space trail. A fall teleports the body,
@@ -812,10 +822,16 @@ export const App: React.FC = () => {
         const rightGenerationEdge = newState.cameraPosition.x + CHAMPION_WORLD_VIEWPORT.width + PLATFORM_SPAWN_BUFFER;
         const leftGenerationEdge = newState.cameraPosition.x - PLATFORM_SPAWN_BUFFER;
         const despawnMargin = PLATFORM_SPAWN_BUFFER * 2;
+        const protectedRespawnPlatformIds = new Set(
+          newState.agents
+            .map(agent => agent.respawnPlatformId)
+            .filter((id): id is number => id !== null)
+        );
         newState.platforms = newState.platforms.filter(
           p =>
-            p.position.x + p.width > newState.cameraPosition.x - despawnMargin &&
-            p.position.x < newState.cameraPosition.x + CHAMPION_WORLD_VIEWPORT.width + despawnMargin
+            protectedRespawnPlatformIds.has(p.id) ||
+            (p.position.x + p.width > newState.cameraPosition.x - despawnMargin &&
+              p.position.x < newState.cameraPosition.x + CHAMPION_WORLD_VIEWPORT.width + despawnMargin)
         );
 
         const sortedPlatforms = [...newState.platforms].sort((a, b) => a.position.x - b.position.x);
@@ -977,6 +993,8 @@ export const App: React.FC = () => {
           maxEnergy: MAX_ENERGY,
           trajectory: [{ x: xs[index] ?? xs[xs.length - 1], y: startY }],
           lastPlatformId: 0,
+          respawnPlatformId: 0,
+          respawnPosition: { x: xs[index] ?? xs[xs.length - 1], y: groundY - AGENT_HEIGHT },
           energyAtLastTakeoff: MAX_ENERGY,
           positionAtLastTakeoff: { x: xs[index] ?? xs[xs.length - 1], y: startY },
           survivalTime: 0,

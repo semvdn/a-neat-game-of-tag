@@ -73,6 +73,12 @@ Stamina is a physical constraint rather than a direct fitness reward:
 - below 30% reserve, acceleration, top speed and jump power degrade smoothly;
 - an exhausted agent can still move and can make a weaker affordable jump.
 
+### Fall / respawn fairness
+
+Respawning is anchored to confirmed ground contact rather than the body's position after it has fallen. Each agent remembers its own last safe platform and a fully-supported X coordinate on that platform. A fall returns to that exact anchor, zeroes velocity, preserves remaining stamina, and cannot select a different platform based on horizontal drift during the fall. The visual world keeps referenced respawn platforms from being despawned while an agent still depends on them. The fall boundary is also close to the playable world (`y = 1000`) so irrecoverable falls are resolved promptly rather than allowing the camera to travel a long distance first.
+
+Repeated falls receive an uncapped fitness cost in headless evaluation. Together with the lack of an energy refill or forward-platform selection, intentional falling is no longer a useful stamina/teleport shortcut.
+
 The roles have intentionally different physiology:
 
 - **Evader:** ~5% better burst speed/acceleration/jump, 90% base stamina capacity and 90% recovery.
@@ -144,7 +150,7 @@ The headless evaluator is deliberately optimized around the operations that domi
 - nearest-platform sensing uses a linear top-3 selection instead of allocating and sorting the full platform list every agent/frame;
 - training locomotion mutates agent state in place instead of allocating rich per-frame diagnostics objects;
 - tag checks use squared distances where only a threshold comparison is required;
-- respawn/platform scans avoid temporary `filter`/`reduce` arrays;
+- respawns use per-agent safe-ground anchors, so fall drift cannot change the selected platform;
 - independent episode evaluations run concurrently in a worker pool.
 
 The optimized paths were regression-checked against the previous implementation: state vectors and NEAT outputs match exactly, locomotion differs only at floating-point roundoff, and fixed-genome episode fitness/outcomes match exactly for the tested seeds. In local Node microbenchmarks, the optimized single-thread episode evaluator was roughly 12× faster than the previous evaluator for the same genomes/seeds. Browser performance will vary by CPU and worker scheduling.

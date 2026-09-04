@@ -1,6 +1,7 @@
 import { LearningAgent, type FastAgentControls } from './agent';
 import { getPhysiology, stepLocomotionFast } from './movement';
 import { fillAgentStateVectorFast } from './state';
+import { resolveRespawnTarget, setSafeGroundAnchor } from './respawn';
 import type { AgentState, GameState, PlatformState } from '../types';
 import { AgentStatus } from '../types';
 import {
@@ -68,6 +69,8 @@ function makeAgent(id: number, x: number, role: 'chaser' | 'evader', viewportHei
     maxEnergy: physiology.energyCapacity,
     trajectory: [],
     lastPlatformId: 0,
+    respawnPlatformId: 0,
+    respawnPosition: { x, y: viewportHeight - 100 - AGENT_HEIGHT },
     scale: { x: 1, y: 1 },
     energyAtLastTakeoff: physiology.energyCapacity,
     positionAtLastTakeoff: { x, y: viewportHeight - 100 - AGENT_HEIGHT },
@@ -250,6 +253,7 @@ export function runTrainingEpisode(
             vy = 0;
             grounded = true;
             landedPlatformId = platform.id;
+            setSafeGroundAnchor(agent, platform, nextX);
             break;
           }
         }
@@ -258,37 +262,20 @@ export function runTrainingEpisode(
       if (nextY > FALL_BOUNDARY) {
         if (i === 0) chaserFalls++;
         else evaderFalls++;
-        let spawn: PlatformState | null = null;
-        let bestDistance = Infinity;
-        const cameraLeft = gameState.cameraPosition.x;
-        const cameraRight = cameraLeft + viewportSize.width;
-        for (let pIndex = 0; pIndex < platforms.length; pIndex++) {
-          const platform = platforms[pIndex];
-          if (platform.position.x + platform.width < cameraLeft || platform.position.x > cameraRight) continue;
-          const d = Math.abs(platform.position.x + platform.width / 2 - agent.position.x);
-          if (d < bestDistance) {
-            bestDistance = d;
-            spawn = platform;
-          }
+
+        // A fall always returns to this agent's own last confirmed ground contact. Never use the
+        // body's post-fall X: horizontal drift during the fall must not buy forward progress.
+        const respawn = resolveRespawnTarget(agent, platforms);
+        if (respawn) {
+          nextX = respawn.position.x;
+          nextY = respawn.position.y;
+          vx = 0;
+          vy = 0;
+          grounded = true;
+          landedPlatformId = respawn.platform.id;
+          setSafeGroundAnchor(agent, respawn.platform, nextX);
         }
-        if (!spawn) {
-          for (let pIndex = 0; pIndex < platforms.length; pIndex++) {
-            const platform = platforms[pIndex];
-            const d = Math.abs(platform.position.x + platform.width / 2 - agent.position.x);
-            if (d < bestDistance) {
-              bestDistance = d;
-              spawn = platform;
-            }
-          }
-        }
-        const safeSpawn = spawn || platforms[0];
-        nextX = safeSpawn.position.x + safeSpawn.width / 2 - AGENT_WIDTH / 2;
-        nextY = safeSpawn.position.y - AGENT_HEIGHT - 20;
-        vx = 0;
-        vy = 0;
-        agent.energy = agent.maxEnergy;
-        grounded = false;
-        landedPlatformId = safeSpawn.id;
+        // Deliberately do not refill stamina here. Falling must never be an energy-reset strategy.
       }
 
       agent.position.x = nextX;
@@ -333,8 +320,10 @@ export function runTrainingEpisode(
   const chaserProgressNorm = Math.max(0, Math.min(1, chaserProgress / 600));
   const evaderProgressNorm = Math.max(0, Math.min(1, evaderProgress / 600));
   const evaderFallsPerAgent = evaderFalls / 2;
-  const chaserShaping = 10 * closingNorm + 5 * chaserProgressNorm - 5 * Math.min(2, chaserFalls);
-  const evaderShaping = -10 * closingNorm + 5 * evaderProgressNorm - 5 * Math.min(2, evaderFallsPerAgent);
+  // A fall must remain materially worse than ordinary movement. Unlike the old capped -5 shaping,
+  // repeated intentional falls keep accumulating a real cost and cannot be used as a cheap dodge/reset.
+  const chaserShaping = 10 * closingNorm + 5 * chaserProgressNorm - 20 * chaserFalls;
+  const evaderShaping = -10 * closingNorm + 5 * evaderProgressNorm - 20 * evaderFallsPerAgent;
 
   return {
     chaserFitness: Math.max(0.01, Math.min(220, chaserOutcome + chaserShaping)),

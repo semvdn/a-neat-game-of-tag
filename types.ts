@@ -69,6 +69,10 @@ export interface AgentState {
   rewardBreakdown?: RewardBreakdown;
   trajectory: Vector2D[];
   lastPlatformId: number | null;
+  /** Last platform on which the agent had confirmed ground contact. Used only for fair respawns. */
+  respawnPlatformId: number | null;
+  /** Last fully-supported world-space ground position. Falling movement never changes this anchor. */
+  respawnPosition: Vector2D;
   scale: { x: number; y: number };
   energyAtLastTakeoff: number;
   positionAtLastTakeoff: Vector2D;

@@ -1,7 +1,7 @@
 
 // Game world
 export const GRAVITY = 0.5;
-export const FALL_BOUNDARY = 2000; // Y-coord to trigger respawn
+export const FALL_BOUNDARY = 1000; // Prompt respawn once the agent is irrecoverably below the playable platform band
 
 // Agent properties
 export const AGENT_WIDTH = 40;
