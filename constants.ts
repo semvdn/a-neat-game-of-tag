@@ -3,6 +3,10 @@
 export const GRAVITY = 0.5;
 export const FALL_BOUNDARY = 2000; // Y-coord to trigger respawn
 
+// Respawning: deterministic rollback rather than a beneficial teleport.
+export const RESPAWN_RECOVERY_MS = 500; // brief action/regen lock after a fall
+export const RESPAWN_MIN_AGENT_SEPARATION = 90; // avoid unfair overlap/free tags on re-entry
+
 // Agent properties
 export const AGENT_WIDTH = 40;
 export const AGENT_HEIGHT = 60;

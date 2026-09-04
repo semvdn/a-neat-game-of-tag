@@ -6,6 +6,7 @@ import { useGameLoop } from './hooks/useGameLoop';
 import { LearningAgent } from './learning/agent';
 import { createLeaderboardEntries } from './learning/elo';
 import { getAgentStateVector } from './learning/state';
+import { chooseFairRespawn } from './learning/respawn';
 import { initAudio, playDynamicJumpSound, playTagSound, playFallSound, playToggleSound } from './services/soundService';
 import type {
   GameState,
@@ -29,6 +30,7 @@ import {
   JUMP_STRENGTH,
   TAG_COOLDOWN,
   FALL_BOUNDARY,
+  RESPAWN_RECOVERY_MS,
   PLATFORM_MIN_WIDTH,
   PLATFORM_MAX_WIDTH,
   PLATFORM_HEIGHT,
@@ -268,6 +270,7 @@ export const App: React.FC = () => {
         survivalTime: 0,
         timeSinceBecameIt: 0,
         modelId: 'current_evader',
+        respawnRecoveryTimer: 0,
       },
       {
         id: 2,
@@ -291,6 +294,7 @@ export const App: React.FC = () => {
         survivalTime: 0,
         timeSinceBecameIt: 0,
         modelId: 'current_evader',
+        respawnRecoveryTimer: 0,
       },
       {
         id: 3,
@@ -314,6 +318,7 @@ export const App: React.FC = () => {
         survivalTime: 0,
         timeSinceBecameIt: 0,
         modelId: 'current_evader',
+        respawnRecoveryTimer: 0,
       },
     ];
 
@@ -696,6 +701,13 @@ export const App: React.FC = () => {
           agent.elo = isChaser ? chaserElo.current : evaderElo.current;
           agent.modelId = isChaser ? 'current_chaser' : 'current_evader';
 
+          // A fall imposes a short symmetric recovery period. It is deliberately not
+          // counted as a policy "wait" action because the network has no control here.
+          if ((agent.respawnRecoveryTimer || 0) > 0) {
+            agentActions[agent.id] = { action: 'wait', strength: 0 };
+            return;
+          }
+
           const model = isChaser ? chaserAgent.current : evaderAgent.current;
           if (!model) return;
           const { action, actionStrength } = model.chooseAction(stateVector);
@@ -708,11 +720,17 @@ export const App: React.FC = () => {
 
         // 3. Update Physics & Boundaries
         let fallEvents: { [id: number]: boolean } = {};
+        const reservedRespawnPositions: AgentState[] = [];
         newState.agents = newState.agents.map(agent => {
           let newVelocity = { ...agent.velocity };
           let newPosition = { ...agent.position };
           let newCooldownTimer = Math.max(0, agent.cooldownTimer - deltaTime);
-          let newEnergy = Math.min(agent.maxEnergy, agent.energy + ENERGY_REGEN_RATE * (deltaTime / 1000));
+          const recoveryBeforeStep = Math.max(0, agent.respawnRecoveryTimer || 0);
+          const recovering = recoveryBeforeStep > 0;
+          const newRespawnRecoveryTimer = Math.max(0, recoveryBeforeStep - deltaTime);
+          let newEnergy = recovering
+            ? agent.energy
+            : Math.min(agent.maxEnergy, agent.energy + ENERGY_REGEN_RATE * (deltaTime / 1000));
           let newStatus = agent.status;
 
           if (newStatus === AgentStatus.Cooldown && newCooldownTimer === 0) {
@@ -720,8 +738,8 @@ export const App: React.FC = () => {
           }
 
           const actionDecision = agentActions[agent.id];
-          const action = actionDecision?.action || agent.lastAction;
-          const actionStrength = actionDecision?.strength ?? 0;
+          const action = recovering ? 'wait' : (actionDecision?.action || agent.lastAction);
+          const actionStrength = recovering ? 0 : (actionDecision?.strength ?? 0);
           agent.lastAction = action;
 
           agent.acceleration.x = 0;
@@ -806,23 +824,34 @@ export const App: React.FC = () => {
             }
           }
 
+          // Record the last real grounded point as soon as an airborne attempt begins.
+          // Respawning rolls back to this checkpoint rather than teleporting to a center point.
+          if (agent.isOnGround && !grounded) {
+            agent.positionAtLastTakeoff = { ...agent.position };
+            agent.energyAtLastTakeoff = newEnergy;
+          }
+
           // Fall Handling
           if (newPosition.y > FALL_BOUNDARY) {
             fallEvents[agent.id] = true;
             visualFallsRef.current++;
             playFallSound();
-            agent.survivalTime = 0;
 
-            const visiblePlats = newState.platforms.filter(
-              p => p.position.x + p.width >= minVisibleX && p.position.x <= maxVisibleX + AGENT_WIDTH
+            const placement = chooseFairRespawn(
+              agent,
+              newState.platforms,
+              [...newState.agents.filter(other => other.id !== agent.id), ...reservedRespawnPositions],
+              { minX: minVisibleX, maxX: maxVisibleX + AGENT_WIDTH }
             );
-            const spawnPlatform = visiblePlats.length > 0 ? visiblePlats[0] : newState.platforms[0];
-            newPosition.x = spawnPlatform.position.x + spawnPlatform.width / 2 - AGENT_WIDTH / 2;
-            newPosition.y = spawnPlatform.position.y - AGENT_HEIGHT - 30;
+            newPosition.x = placement.position.x;
+            newPosition.y = placement.position.y;
             newVelocity.x = 0;
             newVelocity.y = 0;
-            grounded = false;
-            landedPlatformId = spawnPlatform.id;
+            grounded = true;
+            landedPlatformId = placement.platform.id;
+            agent.positionAtLastTakeoff = { ...newPosition };
+            agent.energyAtLastTakeoff = newEnergy;
+            reservedRespawnPositions.push({ ...agent, position: { ...newPosition } });
           }
 
           // Trail samples are world-space and time-limited. A respawn starts a fresh trail
@@ -845,6 +874,7 @@ export const App: React.FC = () => {
             cameraFrameContact: contactSide,
             sprintIntensity,
             jumpPower,
+            respawnRecoveryTimer: fallEvents[agent.id] ? RESPAWN_RECOVERY_MS : newRespawnRecoveryTimer,
             survivalTime: agent.survivalTime || 0,
             timeSinceBecameIt: agent.timeSinceBecameIt || 0,
           };
@@ -978,10 +1008,14 @@ export const App: React.FC = () => {
         const rightGenerationEdge = newState.cameraPosition.x + viewportSize.width + PLATFORM_SPAWN_BUFFER;
         const leftGenerationEdge = newState.cameraPosition.x - PLATFORM_SPAWN_BUFFER;
         const despawnMargin = PLATFORM_SPAWN_BUFFER * 2;
+        const protectedRespawnPlatformIds = new Set(
+          newState.agents.map(agent => agent.lastPlatformId).filter((id): id is number => id !== null)
+        );
         newState.platforms = newState.platforms.filter(
           p =>
-            p.position.x + p.width > newState.cameraPosition.x - despawnMargin &&
-            p.position.x < newState.cameraPosition.x + viewportSize.width + despawnMargin
+            protectedRespawnPlatformIds.has(p.id) ||
+            (p.position.x + p.width > newState.cameraPosition.x - despawnMargin &&
+              p.position.x < newState.cameraPosition.x + viewportSize.width + despawnMargin)
         );
 
         const sortedPlatforms = [...newState.platforms].sort((a, b) => a.position.x - b.position.x);
@@ -1173,6 +1207,7 @@ export const App: React.FC = () => {
           modelId: isChaser
             ? `champion_chaser_g${installedChampionGenerationRef.current.chaser}`
             : `champion_evader_g${installedChampionGenerationRef.current.evader}`,
+          respawnRecoveryTimer: 0,
         };
       });
       return {

@@ -97,6 +97,7 @@ export interface AgentState {
   cameraFrameContact?: 'left' | 'right' | null;
   sprintIntensity?: number;
   jumpPower?: number;
+  respawnRecoveryTimer?: number; // ms remaining in post-fall action/regen lock
 }
 
 export interface PlatformState {

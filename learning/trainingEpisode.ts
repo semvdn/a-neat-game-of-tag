@@ -1,5 +1,6 @@
 import { LearningAgent } from './agent';
 import { getAgentStateVector } from './state';
+import { chooseFairRespawn } from './respawn';
 import type { ActiveUpgradeState, AgentState, GameState, PlatformState } from '../types';
 import { AgentStatus } from '../types';
 import {
@@ -20,6 +21,7 @@ import {
   ENERGY_REGEN_RATE,
   JUMP_ENERGY_COST,
   FALL_BOUNDARY,
+  RESPAWN_RECOVERY_MS,
   PLATFORM_MIN_WIDTH,
   PLATFORM_MAX_WIDTH,
   PLATFORM_HEIGHT,
@@ -84,6 +86,7 @@ function makeAgent(id: number, x: number, role: 'chaser' | 'evader', viewportHei
     survivalTime: 0,
     timeSinceBecameIt: 0,
     modelId: role === 'chaser' ? 'current_chaser' : 'current_evader',
+    respawnRecoveryTimer: 0,
   };
 }
 
@@ -183,6 +186,13 @@ export function runTrainingEpisode(
     const actionStrengths = new Array<number>(gameState.agents.length).fill(0);
     for (let i = 0; i < gameState.agents.length; i++) {
       const agent = gameState.agents[i];
+      const recovering = (agent.respawnRecoveryTimer || 0) > 0;
+      if (recovering) {
+        // Recovery is an externally imposed consequence of falling, not a policy action.
+        actionIndices[i] = ACTION_SPACE.indexOf('wait');
+        actionStrengths[i] = 0;
+        continue;
+      }
       const controller = agent.id === 1 ? chaser : evader;
       const state = getAgentStateVector(agent, gameState, viewportSize);
       const { actionIndex, actionStrength } = controller.chooseAction(state);
@@ -197,11 +207,16 @@ export function runTrainingEpisode(
 
     for (let i = 0; i < gameState.agents.length; i++) {
       const agent = gameState.agents[i];
+      const recoveryBeforeStep = Math.max(0, agent.respawnRecoveryTimer || 0);
+      const recovering = recoveryBeforeStep > 0;
+      agent.respawnRecoveryTimer = Math.max(0, recoveryBeforeStep - DT);
       const actionIndex = actionIndices[i] ?? ACTION_SPACE.indexOf('wait');
-      const action = ACTION_SPACE[actionIndex] || 'wait';
-      const actionStrength = actionStrengths[i] || 0;
+      const action = recovering ? 'wait' : (ACTION_SPACE[actionIndex] || 'wait');
+      const actionStrength = recovering ? 0 : (actionStrengths[i] || 0);
       agent.lastAction = action;
-      agent.energy = Math.min(agent.maxEnergy, agent.energy + ENERGY_REGEN_RATE * (DT / 1000));
+      if (!recovering) {
+        agent.energy = Math.min(agent.maxEnergy, agent.energy + ENERGY_REGEN_RATE * (DT / 1000));
+      }
       agent.acceleration.x = 0;
 
       const isChaserRole = agent.id === 1;
@@ -283,25 +298,34 @@ export function runTrainingEpisode(
         }
       }
 
+      // Capture the exact last safe point whenever the agent leaves solid ground.
+      // This is the rollback anchor used if the subsequent airborne attempt becomes a fall.
+      if (agent.isOnGround && !grounded) {
+        agent.positionAtLastTakeoff = { ...agent.position };
+        agent.energyAtLastTakeoff = agent.energy;
+      }
+
       if (nextPosition.y > FALL_BOUNDARY) {
         if (agent.id === 1) chaserFalls++;
         else evaderFalls++;
-        const candidates = gameState.platforms.filter(
-          p =>
-            p.position.x + p.width >= gameState.cameraPosition.x &&
-            p.position.x <= gameState.cameraPosition.x + viewportSize.width
+        const others = gameState.agents.filter(other => other.id !== agent.id);
+        const placement = chooseFairRespawn(
+          agent,
+          gameState.platforms,
+          others,
+          { minX: gameState.cameraPosition.x, maxX: gameState.cameraPosition.x + viewportSize.width }
         );
-        const spawn = (candidates.length ? candidates : gameState.platforms).reduce((best, p) => {
-          const d = Math.abs(p.position.x + p.width / 2 - agent.position.x);
-          const bestD = Math.abs(best.position.x + best.width / 2 - agent.position.x);
-          return d < bestD ? p : best;
-        });
-        nextPosition.x = spawn.position.x + spawn.width / 2 - AGENT_WIDTH / 2;
-        nextPosition.y = spawn.position.y - AGENT_HEIGHT - 20;
+        nextPosition.x = placement.position.x;
+        nextPosition.y = placement.position.y;
         velocity.x = 0;
         velocity.y = 0;
-        grounded = false;
-        landedPlatformId = spawn.id;
+        grounded = true;
+        landedPlatformId = placement.platform.id;
+        agent.respawnRecoveryTimer = RESPAWN_RECOVERY_MS;
+        // The respawn point itself becomes the new safe anchor, preventing repeated falls
+        // from ratcheting the agent forward across a platform.
+        agent.positionAtLastTakeoff = { ...nextPosition };
+        agent.energyAtLastTakeoff = agent.energy;
       }
 
       agent.position = nextPosition;

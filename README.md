@@ -123,3 +123,9 @@ npm run build
 
 ## Senses view
 The champion arena includes the newer full Agent Senses overlay (toggle in the sidebar or press `S`), adapted to the original 39-input controller. It visualizes target/threat, teammate, nearby platform slots, ledges, policy-camera boundaries, fall distance, self-state, and all eight original LiDAR rays. The overlay reads the already-computed policy state and does not alter the sensing or movement implementation.
+## Fair respawning / anti-gaming
+
+Falls now use one deterministic respawn implementation in both the champion viewer and headless training. The system records the agent's last grounded takeoff/checkpoint position and rolls a fallen agent back to that platform when possible instead of teleporting it to a platform center. Spawn X is clamped away from ledges, prefers not to move forward relative to the checkpoint, and minimally shifts only when needed to avoid overlapping another agent. If the checkpoint platform is outside the usable camera frame, the nearest usable non-forward platform is preferred.
+
+A fall preserves stamina, role/tag cooldowns, and survival/tag timers. It also imposes a 500 ms recovery period during which movement/jump/sprint input and stamina regeneration are disabled; the agent remains fully taggable, so the recovery period cannot be used as invulnerability. Respawned agents start grounded with zero velocity and the new respawn point becomes their next safe checkpoint. Champion platform cleanup protects current checkpoint platforms where possible so scrolling does not silently change the respawn rule.
+
