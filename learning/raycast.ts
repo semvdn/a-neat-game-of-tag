@@ -1,6 +1,5 @@
 import type { PlatformState, Vector2D } from '../types';
 import { NUM_LIDAR_RAYS, LIDAR_MAX_DISTANCE } from '../constants';
-import { isPlatformSolid } from '../level/dynamics';
 
 export interface LidarRay {
   angle: number; // in radians
@@ -91,7 +90,6 @@ export function computeLidarRays(
   // Filter platforms to only those within broad-phase bounding circle
   const maxSearchRadius = maxDistance + 400;
   const nearbyPlatforms = platforms.filter(p => {
-    if (!isPlatformSolid(p)) return false;
     const pCenterX = p.position.x + p.width / 2;
     const pCenterY = p.position.y + p.height / 2;
     const dx = pCenterX - origin.x;

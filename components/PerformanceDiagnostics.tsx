@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import type { DiagnosticsState } from '../types';
 import type { NeatGenerationMetrics, NeatGenomeData } from '../learning/neat';
-import { ACTION_SPACE } from '../constants';
+import { ACTION_SPACE, STATE_VECTOR_SIZE } from '../constants';
 import {
   Activity,
   X,
@@ -25,10 +25,6 @@ interface PerformanceDiagnosticsProps {
   diagnostics: DiagnosticsState;
   visualSpeed: number;
   onSetVisualSpeed: (speed: number) => void;
-  workerSpeed: number;
-  onSetWorkerSpeed: (speed: number) => void;
-  trainingArenaCount: number;
-  onSetTrainingArenaCount: (count: number) => void;
   isVisualPaused: boolean;
   onToggleVisualPause: () => void;
   isTrainingPaused: boolean;
@@ -48,6 +44,14 @@ interface PerformanceDiagnosticsProps {
 }
 
 const fmt = (v: number | undefined, digits = 2) => (Number.isFinite(v) ? Number(v).toFixed(digits) : '—');
+const formatTrainingRate = (value: number | undefined) => {
+  const safe = Number.isFinite(value) ? Math.max(0, Number(value)) : 0;
+  if (safe >= 1000000) return `${(safe / 1000000).toFixed(1)}M`;
+  if (safe >= 1000) return `${(safe / 1000).toFixed(1)}k`;
+  if (safe >= 100) return safe.toFixed(0);
+  if (safe >= 10) return safe.toFixed(1);
+  return safe.toFixed(2);
+};
 
 const MetricCard: React.FC<{ label: string; value: React.ReactNode; hint?: string }> = ({ label, value, hint }) => (
   <div className="rounded-xl border border-gray-800 bg-gray-950/70 p-4">
@@ -169,7 +173,7 @@ const NetworkGraph: React.FC<{ genome?: NeatGenomeData | null }> = ({ genome }) 
           const cls = n.type === 'input' ? 'text-gray-400' : n.type === 'output' ? 'text-amber-300' : 'text-violet-300';
           return <circle key={n.id} cx={p.x} cy={p.y} r={n.type === 'hidden' ? 5 : 3.5} fill="currentColor" className={cls} />;
         })}
-        <text x="8" y="12" className="fill-gray-500 text-[8px]">39 INPUTS</text>
+        <text x="8" y="12" className="fill-gray-500 text-[8px]">{STATE_VECTOR_SIZE} INPUTS</text>
         <text x="155" y="12" className="fill-gray-500 text-[8px]">HIDDEN</text>
         <text x="314" y="12" className="fill-gray-500 text-[8px]">4 OUTPUTS</text>
       </svg>
@@ -203,10 +207,6 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   diagnostics,
   visualSpeed,
   onSetVisualSpeed,
-  workerSpeed,
-  onSetWorkerSpeed,
-  trainingArenaCount,
-  onSetTrainingArenaCount,
   isVisualPaused,
   onToggleVisualPause,
   isTrainingPaused,
@@ -234,8 +234,6 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   const evaderHistory = diagnostics.evaderNeatHistory || [];
   const balanceHistory = diagnostics.balanceHistory || [];
   const balance = diagnostics.lastGenerationBalance;
-  const curriculum = diagnostics.curriculum;
-  const continuous = diagnostics.continuousTraining;
   const chaserMetrics = diagnostics.lastChaserNeatMetrics;
   const evaderMetrics = diagnostics.lastEvaderNeatMetrics;
   const selectedGenome = role === 'chaser' ? diagnostics.chaserChampionGenome : diagnostics.evaderChampionGenome;
@@ -274,17 +272,19 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             <button onClick={onStepFrame} className="p-1.5 rounded hover:bg-gray-900 text-cyan-200" title="Step champion view"><FastForward className="w-4 h-4" /></button>
             <button onClick={onResetChampionGame} className="p-1.5 rounded hover:bg-gray-900 text-cyan-200" title="Reset champion game only"><RotateCcw className="w-4 h-4" /></button>
           </div>
-          <div className="flex items-center gap-1 rounded-lg border border-gray-800 bg-black/30 p-1" title="Background worker throughput">
+          <div className="flex items-center gap-1.5 rounded-lg border border-gray-800 bg-black/30 px-2 py-1.5" title="Background training always runs as fast as this device can process it">
             <Cpu className="w-3.5 h-3.5 text-amber-300 ml-1" />
-            <span className="text-[10px] uppercase tracking-wider text-amber-300 mr-1">Train</span>
-            {[10, 25, 50, 100, 200].map(speed => (
-              <button key={speed} onClick={() => onSetWorkerSpeed(speed)} className={`px-2 py-1 rounded text-xs font-mono ${workerSpeed === speed ? 'bg-amber-400 text-black' : 'text-gray-500 hover:text-white'}`}>{speed}x</button>
-            ))}
-            <span className="mx-1 h-5 w-px bg-gray-800" />
-            <span className="text-[10px] uppercase tracking-wider text-violet-300">Arenas</span>
-            {[2, 4, 6, 8, 12, 16].map(count => (
-              <button key={count} onClick={() => onSetTrainingArenaCount(count)} className={`px-2 py-1 rounded text-xs font-mono ${trainingArenaCount === count ? 'bg-violet-400 text-black' : 'text-gray-500 hover:text-white'}`}>{count}</button>
-            ))}
+            <span className="text-[10px] uppercase tracking-wider text-amber-300">Train</span>
+            <span className="px-1.5 py-0.5 rounded bg-amber-400/15 border border-amber-400/30 text-[9px] font-bold uppercase tracking-wider text-amber-200">Max</span>
+            <span className="text-xs font-mono font-semibold text-amber-100 min-w-[58px] text-right">
+              {isTrainingPaused ? 'paused' : `${formatTrainingRate(diagnostics.trainingSpeedX)}×`}
+            </span>
+            <span className="text-[10px] font-mono text-gray-500 min-w-[62px]">
+              {formatTrainingRate(diagnostics.trainingEpisodesPerSecond)} ep/s
+            </span>
+            <span className="text-[10px] font-mono text-gray-600" title={diagnostics.trainingBackend || 'CPU training'}>
+              {diagnostics.trainingWorkerCount || 1} workers
+            </span>
             <button onClick={onToggleTrainingPause} className="p-1.5 rounded hover:bg-gray-900 text-amber-200" title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>{isTrainingPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}</button>
           </div>
           <button onClick={onClose} className="p-2 rounded border border-gray-800 hover:bg-gray-900"><X className="w-4 h-4" /></button>
@@ -311,11 +311,11 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <MetricCard label="Generation" value={generation} hint="one full population evaluation" />
               <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} hint="same 0–220 scale as runner" />
               <MetricCard label="Runner best" value={fmt(evaderMetrics?.bestFitness)} hint="same 0–220 scale as chaser" />
-              <MetricCard label="Tags / 30s" value={balance ? balance.tagsPer30s.toFixed(2) : '—'} hint={balance ? `${balance.avgTagsPerMatch.toFixed(2)} per evaluation match` : 'repeated tags'} />
-              <MetricCard label="Chaser match win" value={balance ? `${(balance.chaserWinRate * 100).toFixed(1)}%` : '—'} hint="whole-match point score" />
-              <MetricCard label="Runner match win" value={balance ? `${(balance.evaderWinRate * 100).toFixed(1)}%` : '—'} hint="whole-match point score" />
-              <MetricCard label="Assignments with falls" value={balance ? `${(balance.fallRate * 100).toFixed(1)}%` : '—'} hint={balance ? `${balance.chaserFalls} chaser / ${balance.evaderFalls} runner falls` : 'fraction of controller slots with terrain failure'} />
-              <MetricCard label="Avg survival streak" value={balance?.avgSurvivalStreakMs != null ? `${(balance.avgSurvivalStreakMs / 1000).toFixed(1)}s` : '—'} hint={balance?.avgTagTimeMs != null ? `avg tag interval ${(balance.avgTagTimeMs / 1000).toFixed(1)}s` : 'uninterrupted evasion'} />
+              <MetricCard label="Species C / R" value={`${chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.speciesCount ?? '—'}`} />
+              <MetricCard label="Tag rate" value={balance ? `${(balance.tagRate * 100).toFixed(1)}%` : '—'} hint="current-population matches" />
+              <MetricCard label="Survival rate" value={balance ? `${(balance.survivalRate * 100).toFixed(1)}%` : '—'} hint="current-population matches" />
+              <MetricCard label="Avg tag time" value={balance?.avgTagTimeMs != null ? `${(balance.avgTagTimeMs / 1000).toFixed(2)}s` : '—'} hint="when a tag occurs" />
+              <MetricCard label="Matches" value={balance?.matches ?? '—'} hint="last completed generation" />
             </div>
 
             <div className="grid lg:grid-cols-2 gap-4">
@@ -324,46 +324,8 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
             <div className="grid md:grid-cols-3 gap-3">
               <MetricCard label="Hall of Fame C / E" value={`${diagnostics.hallOfFame?.chaserSize ?? 0} / ${diagnostics.hallOfFame?.evaderSize ?? 0}`} hint={`max ${diagnostics.hallOfFame?.maxSize ?? 0} champions per role`} />
-              <MetricCard label="Historical sampling" value={continuous ? `${(continuous.hallOfFameChance * 100).toFixed(0)}%` : '—'} hint="assignments with one archived opponent" />
+              <MetricCard label="Historical opponents" value={diagnostics.hallOfFame?.opponentsPerGenome ?? 0} hint="extra archive matchups per genome" />
               <MetricCard label="Archived generations" value={(diagnostics.hallOfFame?.chaserGenerations?.length || diagnostics.hallOfFame?.evaderGenerations?.length) ? `${diagnostics.hallOfFame?.chaserGenerations?.[0] ?? '—'}–${diagnostics.hallOfFame?.chaserGenerations?.slice(-1)[0] ?? '—'}` : '—'} hint="recent + reservoir-sampled history" />
-            </div>
-
-            <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4">
-              <div className="flex items-center justify-between gap-4 mb-3">
-                <div>
-                  <h3 className="font-semibold text-violet-200">Continuous persistent training</h3>
-                  <p className="text-xs text-gray-500 mt-1">Worlds keep running while genomes are hot-swapped into controller slots. A generation breeds only after every genome has enough exposure across arenas and opponents.</p>
-                </div>
-                <div className="text-xl font-bold font-mono text-violet-300">{continuous ? `${(continuous.generationProgress * 100).toFixed(0)}%` : '—'}</div>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-8 gap-3">
-                <MetricCard label="Arenas" value={continuous?.arenaCount ?? trainingArenaCount} hint="persistent 1v2 worlds" />
-                <MetricCard label="Assignments" value={continuous ? `${(continuous.assignmentMinMs / 1000).toFixed(0)}–${(continuous.assignmentMaxMs / 1000).toFixed(0)}s` : '—'} hint={continuous ? `${(continuous.longAssignmentChance * 100).toFixed(0)}% long probes` : undefined} />
-                <MetricCard label="Exposure target" value={continuous ? `${(continuous.exposureTargetMs / 1000).toFixed(0)}s` : '—'} hint={continuous ? `≥${continuous.minAssignments} slots · ${continuous.minArenas} arenas` : undefined} />
-                <MetricCard label="Chasers ready" value={continuous ? `${continuous.chaserReady}/${continuous.populationSize}` : '—'} hint={continuous ? `${(continuous.avgChaserExposureMs / 1000).toFixed(1)}s avg exposure` : undefined} />
-                <MetricCard label="Runners ready" value={continuous ? `${continuous.evaderReady}/${continuous.populationSize}` : '—'} hint={continuous ? `${(continuous.avgEvaderExposureMs / 1000).toFixed(1)}s avg exposure` : undefined} />
-                <MetricCard label="Chaser slots" value={continuous ? continuous.avgChaserAssignments.toFixed(1) : '—'} hint="avg assignments / genome" />
-                <MetricCard label="Runner slots" value={continuous ? continuous.avgEvaderAssignments.toFixed(1) : '—'} hint="avg assignments / genome" />
-                <MetricCard label="HoF slots" value={continuous ? continuous.hallOfFameAssignments : '—'} hint={continuous ? `${continuous.currentCurrentAssignments} current-current` : undefined} />
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-950/10 p-4">
-              <div className="flex items-center justify-between gap-4 mb-3">
-                <div>
-                  <h3 className="font-semibold text-emerald-200">Adaptive terrain curriculum</h3>
-                  <p className="text-xs text-gray-500 mt-1">Difficulty rises only when the population is navigating reliably; it can step back if terrain failure becomes dominant.</p>
-                </div>
-                <div className="text-2xl font-bold font-mono text-emerald-300">{curriculum ? `${(curriculum.difficulty * 100).toFixed(0)}%` : '—'}</div>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-                <MetricCard label="Navigation" value={curriculum ? `${(curriculum.lastNavigationScore * 100).toFixed(0)}%` : '—'} hint="last generation" />
-                <MetricCard label="Fall endings" value={curriculum ? `${(curriculum.lastFallTerminationRate * 100).toFixed(1)}%` : '—'} hint="controller assignments containing a fall" />
-                <MetricCard label="Branches" value={curriculum?.branchesUnlocked ? 'ON' : 'locked'} hint={curriculum?.lastCourseBranchCount != null ? `${curriculum.lastCourseBranchCount} in sampled course` : undefined} />
-                <MetricCard label="Moving" value={curriculum?.movingUnlocked ? 'ON' : 'locked'} hint={curriculum?.lastCourseMovingPlatforms != null ? `${curriculum.lastCourseMovingPlatforms} platforms` : undefined} />
-                <MetricCard label="Crumbling" value={curriculum?.crumblingUnlocked ? 'ON' : 'locked'} hint={curriculum?.lastCourseCrumblingPlatforms != null ? `${curriculum.lastCourseCrumblingPlatforms} platforms` : undefined} />
-                <MetricCard label="Course seed" value={curriculum?.lastCourseSeed ?? '—'} hint="deterministic replay seed" />
-              </div>
             </div>
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
@@ -375,18 +337,16 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-cyan-300" /><h3 className="font-semibold text-white">Game balance by generation</h3></div>
               <LineChart
                 series={[
-                  { label: 'Chaser match win %', values: balanceHistory.map(m => m.chaserWinRate * 100) },
-                  { label: 'Runner match win %', values: balanceHistory.map(m => m.evaderWinRate * 100) },
-                  { label: 'No-tag match %', values: balanceHistory.map(m => m.survivalRate * 100) },
-                  { label: 'Fall event %', values: balanceHistory.map(m => m.fallRate * 100) },
+                  { label: 'Chaser tag %', values: balanceHistory.map(m => m.tagRate * 100) },
+                  { label: 'Runner survival %', values: balanceHistory.map(m => m.survivalRate * 100) },
                 ]}
                 emptyLabel="Complete generations to populate the balance chart."
               />
-              <p className="mt-2 text-xs text-gray-500">Controller assignments sampled from persistent arenas. Most slots are current-vs-current; Hall-of-Fame slots remain part of selection but are separated in the continuous-training telemetry.</p>
+              <p className="mt-2 text-xs text-gray-500">Measured only on current-population matchups; Hall-of-Fame tests are excluded so the balance signal stays comparable.</p>
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> both roles have identical physical abilities and evolve inside several persistent 1v2 worlds. Genomes are hot-swapped into chaser/runner controller slots for short randomized windows without resetting positions, stamina, roles or terrain. Most assignments use current opponents; a bounded share samples Hall-of-Fame champions. Falls reset only that arena's bout, tags swap roles continuously, and generations reproduce after every genome reaches its exposure quota.
+              <strong className="text-violet-200">Training architecture:</strong> the original discrete left/right/jump/wait controller and 39-input LiDAR state are preserved. Every genome is evaluated against rotating opponents plus historical Hall of Fame champions, while the worker pool runs independent episodes at maximum available CPU throughput. Selection proceeds through speciation, elitism, crossover and mutation.
             </div>
           </div>
         )}

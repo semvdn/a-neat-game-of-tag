@@ -161,54 +161,83 @@ export function cloneGenome(genome: NeatGenomeData, id = genome.id): NeatGenomeD
   };
 }
 
-function sigmoid(x: number): number {
-  const clamped = Math.max(-20, Math.min(20, x));
-  return 2 / (1 + Math.exp(-4.9 * clamped)) - 1;
-}
-
-/** Compiled acyclic phenotype. Compilation is paid once when the genome changes. */
+/** Compiled acyclic phenotype. Compilation is paid once when the genome changes.
+ *
+ * The hot activation path intentionally uses dense numeric arrays rather than Maps. During training
+ * this function runs millions of times; avoiding per-activation Maps/objects cuts GC pressure and
+ * lets modern JS engines optimize the loop much more aggressively.
+ */
 export class NeatNetwork {
-  private readonly nodeById: Map<number, NodeGene>;
-  private readonly incoming: Map<number, ConnectionGene[]>;
-  private readonly order: number[];
-  private readonly inputIds: number[];
-  private readonly outputIds: number[];
+  private readonly inputSlots: number[];
+  private readonly outputSlots: number[];
+  private readonly evalSlots: number[];
+  private readonly biases: Float64Array;
+  private readonly incomingSources: number[][];
+  private readonly incomingWeights: number[][];
+  private readonly values: Float64Array;
+  private readonly outputScratch: number[];
 
   constructor(public readonly genome: NeatGenomeData) {
-    this.nodeById = new Map(genome.nodes.map(n => [n.id, n]));
-    this.incoming = new Map();
-    this.inputIds = genome.nodes.filter(n => n.type === 'input').sort((a, b) => a.id - b.id).map(n => n.id);
-    this.outputIds = genome.nodes.filter(n => n.type === 'output').sort((a, b) => a.id - b.id).map(n => n.id);
+    const nodeById = new Map(genome.nodes.map((node, index) => [node.id, { node, index }]));
+    const enabled = genome.connections.filter(c => c.enabled && nodeById.has(c.inNode) && nodeById.has(c.outNode));
+    const orderedIds = topologicalOrder(genome.nodes, enabled);
 
-    const enabled = genome.connections.filter(c => c.enabled && this.nodeById.has(c.inNode) && this.nodeById.has(c.outNode));
+    this.inputSlots = genome.nodes
+      .filter(n => n.type === 'input')
+      .sort((a, b) => a.id - b.id)
+      .map(n => nodeById.get(n.id)!.index);
+    this.outputSlots = genome.nodes
+      .filter(n => n.type === 'output')
+      .sort((a, b) => a.id - b.id)
+      .map(n => nodeById.get(n.id)!.index);
+    this.evalSlots = orderedIds
+      .map(id => nodeById.get(id)!.index)
+      .filter(slot => genome.nodes[slot].type !== 'input');
+
+    this.biases = new Float64Array(genome.nodes.length);
+    this.incomingSources = Array.from({ length: genome.nodes.length }, () => [] as number[]);
+    this.incomingWeights = Array.from({ length: genome.nodes.length }, () => [] as number[]);
+    this.values = new Float64Array(genome.nodes.length);
+    this.outputScratch = new Array(this.outputSlots.length).fill(0);
+
+    for (let i = 0; i < genome.nodes.length; i++) this.biases[i] = genome.nodes[i].bias;
     for (const conn of enabled) {
-      const arr = this.incoming.get(conn.outNode) || [];
-      arr.push(conn);
-      this.incoming.set(conn.outNode, arr);
+      const source = nodeById.get(conn.inNode)!.index;
+      const target = nodeById.get(conn.outNode)!.index;
+      this.incomingSources[target].push(source);
+      this.incomingWeights[target].push(conn.weight);
     }
-
-    this.order = topologicalOrder(genome.nodes, enabled);
   }
 
+  /** Fast, allocation-free activation. The returned array is reused by this network. */
+  public activateFast(inputs: ArrayLike<number>): readonly number[] {
+    if (inputs.length !== this.inputSlots.length) {
+      throw new Error(`NEAT network expected ${this.inputSlots.length} inputs, received ${inputs.length}`);
+    }
+
+    const values = this.values;
+    for (let i = 0; i < this.inputSlots.length; i++) {
+      const value = inputs[i];
+      values[this.inputSlots[i]] = Number.isFinite(value) ? value : 0;
+    }
+
+    for (let orderIndex = 0; orderIndex < this.evalSlots.length; orderIndex++) {
+      const slot = this.evalSlots[orderIndex];
+      let sum = this.biases[slot];
+      const sources = this.incomingSources[slot];
+      const weights = this.incomingWeights[slot];
+      for (let i = 0; i < sources.length; i++) sum += values[sources[i]] * weights[i];
+      const clamped = sum < -20 ? -20 : sum > 20 ? 20 : sum;
+      values[slot] = 2 / (1 + Math.exp(-4.9 * clamped)) - 1;
+    }
+
+    for (let i = 0; i < this.outputSlots.length; i++) this.outputScratch[i] = values[this.outputSlots[i]] || 0;
+    return this.outputScratch;
+  }
+
+  /** Compatibility API for visual/debug code that may retain the returned values. */
   public activate(inputs: number[]): number[] {
-    if (inputs.length !== this.inputIds.length) {
-      throw new Error(`NEAT network expected ${this.inputIds.length} inputs, received ${inputs.length}`);
-    }
-
-    const values = new Map<number, number>();
-    for (let i = 0; i < this.inputIds.length; i++) values.set(this.inputIds[i], Number.isFinite(inputs[i]) ? inputs[i] : 0);
-
-    for (const nodeId of this.order) {
-      const node = this.nodeById.get(nodeId)!;
-      if (node.type === 'input') continue;
-      let sum = node.bias;
-      for (const conn of this.incoming.get(nodeId) || []) {
-        sum += (values.get(conn.inNode) || 0) * conn.weight;
-      }
-      values.set(nodeId, sigmoid(sum));
-    }
-
-    return this.outputIds.map(id => values.get(id) || 0);
+    return Array.from(this.activateFast(inputs));
   }
 }
 

@@ -1,105 +1,104 @@
-# Tag Agents — Continuous NEAT Trainer
+# NEAT Tag Agents — Original Controls + Current UI/Training Harness
 
-This build evolves two NEAT populations in a 1-chaser / 2-runner platform-tag game with stamina, procedural terrain, moving/crumbling platforms, Hall-of-Fame opponents, and a separate persistent champion view.
+This merged build deliberately keeps the **simple movement and senses from the first NEAT version** while applying the **current UI/camera, diagnostics, and maximum-throughput background-training setup**.
 
-## Training architecture
+## Preserved from the initial version
 
-The training worker no longer creates short standalone episodes or uses an adaptive match-horizon curriculum. Instead it owns a configurable pool of **persistent training arenas**. Each arena is a continuous 1v2 world:
+The agent policy interface is unchanged:
 
-- tags swap the `It` role and the arena keeps running;
-- falls score a terrain failure and reset only that arena's bout;
-- stamina is preserved across fall resets;
-- moving/crumbling platform state keeps advancing;
-- controller assignments end without resetting the arena;
-- an arena independently regenerates its procedural course only after a long world lifetime or repeated bout resets.
+- **Actions:** `move_left`, `move_right`, `jump`, `wait`
+- **Movement:** original acceleration, friction, max-speed, fixed jump impulse, passive energy regeneration and jump energy cost
+- **Inputs:** original **39-value state vector**
+- **LiDAR:** original **8 radial obstacle rays**
+- **Other senses:** self kinematics/status, camera boundaries, fall distance, platform ledges, 3 nearby platforms, target/threat dynamics, teammate dynamics and bias
+- **Episode physics/fitness:** the original discrete controller and original dense fitness terms are retained in headless evaluation
 
-The visible champion game is independent from all of these worker arenas.
+The later continuous left/right drive, variable jump power, sprint channel, fatigue physiology and 31-input compact sense model are **not** used in this build.
 
-## Controller scheduling
+## Applied from the current version
 
-A controller assignment normally lasts **6–12 simulated seconds**. About **15%** of assignments are longer **15–20 second probes**. The network is never told when an assignment starts or ends.
+### Independent champion arena
 
-Most assignments are current-population chaser vs current-population runner. Once Hall-of-Fame champions exist, roughly **20%** of assignments contain one historical opponent:
+The visible game is presentation only. It runs continuously with the latest completed chaser and evader champions and has its own:
 
-- ~10% current chaser vs historical runner;
-- ~10% historical chaser vs current runner;
-- ~80% current vs current.
+- view speed controls (`0.5x`, `1x`, `2x`, `5x`, `10x`);
+- pause/step controls;
+- reset-view control;
+- visual camera zoom from 50% to 200%;
+- responsive full-bleed camera that does not change physics or neural inputs.
 
-The scheduler prioritizes under-exposed genomes and explicitly discourages repeated opponent pairings.
+### Maximum-throughput training
 
-## Generation completion
+There is no user-set training multiplier. Once simulation starts, background evolution runs as fast as the browser/device can process it.
 
-NEAT remains generational. A genome is ready to reproduce after it has accumulated approximately:
+The training worker:
 
-- **24 seconds** of controller time;
-- **3 or more assignments**;
-- experience in **at least 2 arenas**;
-- **at least 3 distinct opponents**.
+- uses a nested CPU evaluator pool when supported;
+- reserves one logical CPU for the browser/UI and caps the pool at 12 workers;
+- falls back to an optimized single-worker burst loop if nested workers are unavailable;
+- reports measured simulated-time speed (`×`), episodes/second, backend and worker count;
+- keeps rendering independent from training throughput.
 
-Fitness samples are weighted by active controller time. Once every chaser and runner genome meets the quota, the current partial controller slots are finalized, NEAT breeds the next generation, and the new genomes are hot-swapped into the still-running worlds.
+The NEAT phenotype evaluator also uses the newer dense-array activation path from the current build to reduce allocation/GC overhead without changing the old action/state interface.
 
-No training arena is reset merely because a generation changed.
+### Current diagnostics
 
-## Fitness
+The current diagnostics suite is included, adapted to the original action/sense model. It shows:
 
-Fitness is calculated per controller assignment and normalized to a 30-second reference. The competitive objectives remain symmetric:
+- training throughput and backend;
+- fitness histories for both roles;
+- species/topology metrics;
+- action distributions for the original four actions;
+- champion network graph (39 inputs, 4 outputs);
+- role Elo signal;
+- current-population game-balance history;
+- Hall-of-Fame archive diagnostics;
+- champion save/load/import/export.
 
-- chaser: tags + runner terrain failures;
-- runner: continuous survival + chaser terrain failures;
-- a fall is weighted more heavily than a normal tag;
-- closest-distance and navigation shaping remain small secondary terms;
-- unused stamina and jumping are never directly rewarded.
+## Evolution setup
 
-## Persistent terrain curriculum
+Two independent populations are evolved:
 
-Only the terrain curriculum remains. Difficulty is driven by navigation quality and the fraction of controller assignments that contain a fall. Courses progressively unlock branches, moving platforms, and crumbling branch platforms while preserving a conservative reachable backbone.
+- Chaser population: 48 genomes
+- Evader population: 48 genomes
+- Rotating current-population opponents: 3 per genome
+- Historical Hall-of-Fame opponents: 1 per genome when available
+- Episode limit: 12 seconds simulated time
 
-## User controls
+The Hall of Fame retains recent champions plus reservoir-sampled older champions. This is part of the current diagnostics/training harness; it does not alter the preserved movement or sensing interface.
 
-The champion view and background trainer are fully independent.
+## Important files
 
-### Champion view
+- `learning/state.ts` — original 39-D state vector and LiDAR inputs
+- `learning/raycast.ts` — original 8-ray sensing
+- `learning/agent.ts` — original 4-action NEAT controller wrapper
+- `learning/trainingEpisode.ts` — headless implementation of the original movement/episode behavior
+- `learning/neat.ts` — NEAT core with newer allocation-efficient phenotype evaluation
+- `workers/trainingWorker.ts` — max-throughput population/Hall-of-Fame trainer and telemetry
+- `workers/episodeWorker.ts` — parallel episode evaluator
+- `components/GameCanvas.tsx` — current responsive presentation camera with original LiDAR overlay
+- `components/InfoPanel.tsx` — current compact status panel adapted to 39 inputs
+- `components/PerformanceDiagnostics.tsx` — current diagnostics suite
+- `App.tsx` — independent champion-view and background-training orchestration
 
-- 0.5x / 1x / 2x / 5x / 10x
-- pause/resume
-- reset visible champion game
-- individual agent respawn on falls; the other agents and visible world continue uninterrupted
+## Run locally
 
-### Background training
+```bash
+npm install
+npm run dev
+```
 
-- 10x / 25x / 50x / 100x / 200x throughput
-- pause/resume
-- persistent arena count: **2 / 4 / 6 / 8 / 12 / 16**
+Type-check:
 
-Changing arena count does not reset the populations. Increasing it adds new persistent worlds; decreasing it finalizes any partial controller samples in removed arenas and keeps evolution moving.
+```bash
+npm run lint
+```
 
-The worker is still one JavaScript worker, so its arenas are interleaved rather than mapped to separate CPU cores. Arena count primarily controls environment/state diversity; the speed setting controls the total simulated arena frames processed per worker tick.
+Production build:
 
-## Hall of Fame
+```bash
+npm run build
+```
 
-Each role retains up to 12 historical champions: four recent champions plus a reservoir sample of older generations. Hall-of-Fame opponents are sampled directly by the continuous controller scheduler rather than evaluated in a separate phase.
-
-## Key files
-
-- `workers/trainingWorker.ts` — persistent arenas, controller scheduler, exposure accounting, fitness and breeding
-- `learning/neat.ts` — genomes, speciation, crossover and structural mutation
-- `learning/movement.ts` — shared stamina/fatigue/continuous movement physics
-- `level/generator.ts` — deterministic graph-based procedural courses
-- `level/curriculum.ts` — adaptive terrain difficulty
-- `level/dynamics.ts` — moving and crumbling platforms
-- `components/PerformanceDiagnostics.tsx` — continuous-training diagnostics and controls
-- `App.tsx` — independent champion view + training controls
-
-## Defaults worth tuning
-
-Continuous training constants live in `constants.ts`:
-
-- `CONTINUOUS_TRAINING_DEFAULT_ARENAS = 8`
-- `CONTINUOUS_ASSIGNMENT_MIN_MS = 6000`
-- `CONTINUOUS_ASSIGNMENT_MAX_MS = 12000`
-- `CONTINUOUS_LONG_ASSIGNMENT_CHANCE = 0.15`
-- `CONTINUOUS_EXPOSURE_TARGET_MS = 24000`
-- `CONTINUOUS_MIN_ASSIGNMENTS = 3`
-- `CONTINUOUS_MIN_ARENAS_PER_GENOME = 2`
-- `CONTINUOUS_MIN_OPPONENTS_PER_GENOME = 3`
-- `CONTINUOUS_HOF_MATCHUP_CHANCE = 0.20`
+## Senses view
+The champion arena includes the newer full Agent Senses overlay (toggle in the sidebar or press `S`), adapted to the original 39-input controller. It visualizes target/threat, teammate, nearby platform slots, ledges, policy-camera boundaries, fall distance, self-state, and all eight original LiDAR rays. The overlay reads the already-computed policy state and does not alter the sensing or movement implementation.

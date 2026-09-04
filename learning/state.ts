@@ -13,7 +13,6 @@ import {
   LIDAR_MAX_DISTANCE,
 } from '../constants';
 import { computeLidarRays, getLidarDistances } from './raycast';
-import { isPlatformSolid } from '../level/dynamics';
 
 /**
  * Computes the enhanced 39-dimensional state vector for an agent:
@@ -24,7 +23,7 @@ import { isPlatformSolid } from '../level/dynamics';
  * - 4 Target / Threat Dynamics ([dx, dy, vx, vy])
  * - 4 Closest Teammate Dynamics ([dx, dy, vx, vy])
  * - 8 Multi-Ray Lidar Radial Obstacle Distances
- * - 1 Opponent Energy Reserve
+ * - 1 Constant Bias Term
  * Total: 39 Features
  */
 export function getAgentStateVector(
@@ -80,8 +79,7 @@ export function getAgentStateVector(
   );
 
   // --- 4. Explicit Platform Ledge Distances ---
-  const solidPlatforms = gameState.platforms.filter(isPlatformSolid);
-  const onPlatform = solidPlatforms.find(p => p.id === agent.lastPlatformId);
+  const onPlatform = gameState.platforms.find(p => p.id === agent.lastPlatformId);
   let distToLeftLedge = 0.5;
   let distToRightLedge = 0.5;
   let distToClosestLedge = 0.5;
@@ -98,9 +96,9 @@ export function getAgentStateVector(
     isNearLedge = Math.max(0, 1.0 - distToClosestLedge / 0.2);
   } else {
     // When airborne, locate the nearest platform below or nearby
-    let closestPlat = solidPlatforms[0];
+    let closestPlat = gameState.platforms[0];
     let minDist = Infinity;
-    for (const p of solidPlatforms) {
+    for (const p of gameState.platforms) {
       const pCenter = p.position.x + p.width / 2;
       const d = Math.hypot(pCenter - agentCenterX, p.position.y - agent.position.y);
       if (d < minDist) {
@@ -120,7 +118,7 @@ export function getAgentStateVector(
   }
 
   // --- 5. Nearby Platforms Info (3 closest) ---
-  const sortedPlatforms = solidPlatforms
+  const sortedPlatforms = gameState.platforms
     .filter(p => !onPlatform || p.id !== onPlatform.id)
     .map(p => {
       const platformCenter = { x: p.position.x + p.width / 2, y: p.position.y + p.height / 2 };
@@ -148,7 +146,7 @@ export function getAgentStateVector(
   // --- 6. Multi-Ray Spatial Perception (8 Lidar Rays) ---
   const lidarRays = computeLidarRays(
     { x: agentCenterX, y: agentCenterY },
-    solidPlatforms,
+    gameState.platforms,
     NUM_LIDAR_RAYS,
     LIDAR_MAX_DISTANCE,
     { minX: screenLeft, maxX: screenRight }
@@ -195,8 +193,8 @@ export function getAgentStateVector(
     // Multi-Ray Spatial Perception (8)
     ...lidarDistances,
 
-    // Opponent Energy Reserve (1)
-    targetOrThreat ? targetOrThreat.energy / Math.max(1, targetOrThreat.maxEnergy) : 0,
+    // Bias (1)
+    1.0,
   ];
 
   return state;

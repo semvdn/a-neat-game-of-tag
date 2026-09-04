@@ -3,7 +3,7 @@
 import React from 'react';
 import type { AgentState, RewardBreakdown } from '../types';
 import { AgentStatus } from '../types';
-import { Radar, Shield, Swords, Zap } from 'lucide-react';
+import { Radar, Shield, Swords } from 'lucide-react';
 
 interface InfoPanelProps {
   agents: AgentState[];
@@ -12,8 +12,6 @@ interface InfoPanelProps {
   onToggleTrails: () => void;
   showLidar: boolean;
   onToggleLidar: () => void;
-  avgSurvivalTime: number;
-  avgTimeToTag: number;
   onOpenDiagnostics: () => void;
   chaserElo?: number;
   evaderElo?: number;
@@ -37,7 +35,7 @@ const ToggleSwitch: React.FC<{ id: string; checked: boolean; onChange: () => voi
 
 const stateVectorLabels = [
     // Self Kinematics & Status (6)
-    { label: 'Vel X' }, { label: 'Vel Y' }, { label: 'Energy' }, 
+    { label: 'Vel X' }, { label: 'Vel Y' }, { label: 'Energy' },
     { label: 'Ground' }, { label: 'Is It' }, { label: 'Cooldown' },
     // Explicit Boundary Distances (3)
     { label: 'Screen Left' }, { label: 'Screen Right' }, { label: 'Fall Depth' },
@@ -48,18 +46,14 @@ const stateVectorLabels = [
     { label: 'P2 dX' }, { label: 'P2 dY' }, { label: 'P2 Width' },
     { label: 'P3 dX' }, { label: 'P3 dY' }, { label: 'P3 Width' },
     // Target / Threat (4)
-    { label: 'Tgt dX' }, { label: 'Tgt dY' }, 
-    { label: 'Tgt Vel X' }, { label: 'Tgt Vel Y' },
+    { label: 'Tgt dX' }, { label: 'Tgt dY' }, { label: 'Tgt Vel X' }, { label: 'Tgt Vel Y' },
     // Teammate (4)
-    { label: 'Mate dX' }, { label: 'Mate dY' }, 
-    { label: 'Mate Vel X' }, { label: 'Mate Vel Y' },
-    // Lidar Perception Rays (8)
-    { label: 'Ray 0° (R)' }, { label: 'Ray 45° (DR)' }, 
-    { label: 'Ray 90° (D)' }, { label: 'Ray 135° (DL)' },
-    { label: 'Ray 180° (L)' }, { label: 'Ray 225° (UL)' }, 
-    { label: 'Ray 270° (U)' }, { label: 'Ray 315° (UR)' },
-    // Opponent stamina (1)
-    { label: 'Opponent Energy' },
+    { label: 'Mate dX' }, { label: 'Mate dY' }, { label: 'Mate Vel X' }, { label: 'Mate Vel Y' },
+    // Original LiDAR rays (8)
+    { label: 'Ray 0° (R)' }, { label: 'Ray 45° (DR)' }, { label: 'Ray 90° (D)' }, { label: 'Ray 135° (DL)' },
+    { label: 'Ray 180° (L)' }, { label: 'Ray 225° (UL)' }, { label: 'Ray 270° (U)' }, { label: 'Ray 315° (UR)' },
+    // Bias (1)
+    { label: 'Bias' },
 ];
 
 const rewardTermOrder = [
@@ -82,7 +76,9 @@ const rewardTermOrder = [
     'successfulJump',
     'stayOnPlatform',
     'fallPenalty',
+    'highEnergyUse',
     'inactivity',
+    'highEnergy',
 ];
 
 const VectorBar: React.FC<{label: string, value: number}> = ({label, value}) => {
@@ -195,8 +191,6 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
   onToggleTrails,
   showLidar,
   onToggleLidar,
-  avgSurvivalTime,
-  avgTimeToTag,
   onOpenDiagnostics,
   chaserElo,
   evaderElo,
@@ -205,41 +199,6 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
     <aside className="w-80 bg-gray-800 rounded-lg shadow-lg p-4 flex flex-col gap-4 overflow-y-auto">
       <h2 className="text-xl font-bold text-cyan-400 border-b-2 border-cyan-400/30 pb-2">Simulation Status</h2>
       
-      {isSimulating && (
-        <div className="p-3 bg-gray-700 rounded-md text-sm">
-            <div className="flex items-center justify-between mb-2">
-                <h3 className="font-semibold text-gray-300 flex items-center gap-1.5">
-                    <Zap className="w-3.5 h-3.5 text-cyan-400" />
-                    Agent Abilities
-                </h3>
-                <span className="text-[10px] bg-cyan-950/80 text-cyan-300 border border-cyan-500/30 px-2 py-0.5 rounded-full font-medium">
-                    Base Movement
-                </span>
-            </div>
-            
-            <div className="text-xs space-y-1.5 text-gray-300">
-                <div className="flex justify-between items-center" title="Evader average survival time before tag">
-                    <span className="text-gray-400">Avg. Survival Time:</span>
-                    <span className="font-mono text-emerald-400 font-semibold">
-                        {(avgSurvivalTime / 1000).toFixed(2)}s
-                    </span>
-                </div>
-                <div className="flex justify-between items-center" title="Tagger average time to catch evaders">
-                    <span className="text-gray-400">Avg. Time to Tag:</span>
-                    <span className="font-mono text-amber-400 font-semibold">
-                        {(avgTimeToTag / 1000).toFixed(2)}s
-                    </span>
-                </div>
-            </div>
-
-            <div className="mt-2.5 pt-2 border-t border-gray-600">
-                <div className="text-[11px] text-gray-400 flex items-center justify-between">
-                    <span>Active Action Space:</span>
-                    <span className="text-gray-300 font-medium">Drive, Jump Power, Sprint</span>
-                </div>
-            </div>
-        </div>
-      )}
 
       <div className="flex justify-between items-center p-3 bg-gray-700 rounded-md">
         <h3 className="font-semibold text-gray-300">Show Trails</h3>
@@ -249,7 +208,10 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
       <div className="flex justify-between items-center p-3 bg-gray-700 rounded-md">
         <div className="flex items-center gap-2">
           <Radar className="w-4 h-4 text-cyan-400" />
-          <h3 className="font-semibold text-gray-300">Lidar Spatial Rays</h3>
+          <div>
+            <h3 className="font-semibold text-gray-300">Agent Senses</h3>
+            <p className="text-[10px] text-gray-400">39-D original brain inputs · full overlay + 8 LiDAR rays · press S</p>
+          </div>
         </div>
         <ToggleSwitch id="lidar-toggle" checked={showLidar} onChange={onToggleLidar} />
       </div>
@@ -333,7 +295,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
 
       <div className="mt-auto bg-gray-700 p-3 rounded-md text-xs text-gray-400">
         <h4 className="font-bold text-gray-300 mb-1">How it works:</h4>
-        <p>Agents evolve with separate chaser and evader NEAT populations. Speciation protects new topologies while crossover and mutation search both connection weights and network structure.</p>
+        <p>Agents use the original discrete left/right/jump/wait movement and 39-input state including 8 LiDAR rays. Separate chaser and evader NEAT populations evolve in the background.</p>
       </div>
     </aside>
   );

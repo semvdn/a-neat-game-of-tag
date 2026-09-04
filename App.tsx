@@ -3,57 +3,83 @@ import { GameCanvas } from './components/GameCanvas';
 import { InfoPanel } from './components/InfoPanel';
 import { PerformanceDiagnostics } from './components/PerformanceDiagnostics';
 import { useGameLoop } from './hooks/useGameLoop';
-import { LearningAgent, type AgentControls } from './learning/agent';
-import { getPhysiology, stepLocomotion, syncEnergyCapacity } from './learning/movement';
+import { LearningAgent } from './learning/agent';
 import { createLeaderboardEntries } from './learning/elo';
 import { getAgentStateVector } from './learning/state';
-import { generateCourse } from './level/generator';
-import { isPlatformSolid, triggerCrumblingPlatform, updateDynamicPlatforms } from './level/dynamics';
 import { initAudio, playDynamicJumpSound, playTagSound, playFallSound, playToggleSound } from './services/soundService';
 import type {
   GameState,
   AgentState,
+  PlatformState,
   RewardBreakdown,
   DiagnosticsState,
+  BenchmarkResult,
   PerformanceDataPoint,
-  PlatformState,
+  EloLeaderboardEntry,
 } from './types';
 import { AgentStatus } from './types';
 import {
   GRAVITY,
   AGENT_WIDTH,
   AGENT_HEIGHT,
+  MAX_SPEED,
+  JUMP_STRENGTH,
   TAG_COOLDOWN,
   FALL_BOUNDARY,
+  PLATFORM_MIN_WIDTH,
+  PLATFORM_MAX_WIDTH,
+  PLATFORM_HEIGHT,
+  PLATFORM_SPAWN_BUFFER,
+  MIN_PLATFORM_GAP_X,
+  MAX_PLATFORM_GAP_X,
+  MIN_PLATFORM_GAP_Y,
+  MAX_PLATFORM_GAP_Y,
   AGENT_COLORS,
+  AGENT_ACCELERATION,
+  FRICTION,
   MAX_ENERGY,
+  ENERGY_REGEN_RATE,
+  JUMP_ENERGY_COST,
   SURVIVAL_TIME_HISTORY_LENGTH,
   TIME_TO_TAG_HISTORY_LENGTH,
   INITIAL_ELO,
-  NEAT_HOF_MAX_SIZE,
-  CONTINUOUS_TRAINING_DEFAULT_ARENAS,
-  CONTINUOUS_HOF_MATCHUP_CHANCE,
+  LEFT_BOUNDARY_TOUCH_PENALTY,
+  LEFT_BOUNDARY_PUSH_PENALTY,
+  LEFT_BOUNDARY_BUFFER_RATIO,
+  LEFT_BOUNDARY_PROXIMITY_PENALTY,
+  RIGHTWARD_VELOCITY_REWARD,
+  RIGHTWARD_PROGRESSION_REWARD,
 } from './constants';
-import { Activity, Play, Pause, FastForward, RotateCcw, MonitorPlay, Cpu } from 'lucide-react';
+import { Activity, Play, Pause, RotateCcw, MonitorPlay, Cpu, Minus, Plus } from 'lucide-react';
+
+const formatTrainingRate = (value: number | undefined) => {
+  const safe = Number.isFinite(value) ? Math.max(0, Number(value)) : 0;
+  if (safe >= 1000000) return `${(safe / 1000000).toFixed(1)}M`;
+  if (safe >= 1000) return `${(safe / 1000).toFixed(1)}k`;
+  if (safe >= 100) return safe.toFixed(0);
+  if (safe >= 10) return safe.toFixed(1);
+  return safe.toFixed(2);
+};
+
+const CHAMPION_WORLD_VIEWPORT = { width: 1200, height: 800 } as const;
 
 export const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSimulating, setIsSimulating] = useState(false);
-  const [viewportSize, setViewportSize] = useState({ width: 1200, height: 800 });
+  // Physics and policy senses stay fixed to the original 1200x800 logical world.
+  const viewportSize = CHAMPION_WORLD_VIEWPORT;
   const [showTrails, setShowTrails] = useState(true);
   const [showLidar, setShowLidar] = useState(true);
 
-  // Diagnostics & Control State
+  // The visible champion arena and background evolution are controlled independently.
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [visualSpeed, setVisualSpeed] = useState(1);
-  const [workerSpeed, setWorkerSpeed] = useState(50);
-  const [trainingArenaCount, setTrainingArenaCount] = useState(CONTINUOUS_TRAINING_DEFAULT_ARENAS);
+  const [cameraZoom, setCameraZoom] = useState(1);
   const [isVisualPaused, setIsVisualPaused] = useState(false);
   const [isTrainingPaused, setIsTrainingPaused] = useState(false);
   const stepFrameRef = useRef(false);
   const visualStepAccumulatorRef = useRef(0);
-  const visualFlowDirectionRef = useRef<1 | -1>(1);
 
   const [diagnosticsState, setDiagnosticsState] = useState<DiagnosticsState>(() => ({
     chaserNeatHistory: [],
@@ -73,11 +99,27 @@ export const App: React.FC = () => {
     chaserElo: INITIAL_ELO,
     evaderElo: INITIAL_ELO,
     eloLeaderboard: createLeaderboardEntries(INITIAL_ELO, INITIAL_ELO, 0, 0, 0, 0, 0),
-    hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: NEAT_HOF_MAX_SIZE, opponentsPerGenome: CONTINUOUS_HOF_MATCHUP_CHANCE, chaserGenerations: [], evaderGenerations: [] },
+    benchmarkActive: false,
+    benchmarkTimeRemaining: 0,
+    benchmarkResults: [],
+    hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: 12, opponentsPerGenome: 1, chaserGenerations: [], evaderGenerations: [] },
     lastGenerationBalance: null,
     balanceHistory: [],
+    trainingSpeedX: 0,
+    trainingEpisodesPerSecond: 0,
+    trainingBackend: 'CPU optimized',
+    trainingWorkerCount: 1,
   }));
 
+  const benchmarkSessionRef = useRef<{
+    active: boolean;
+    startTime: number;
+    durationMs: number;
+    startTags: number;
+    startFalls: number;
+    startJumps: number;
+    modelLabel: string;
+  } | null>(null);
 
   const lastTelemetryTimeRef = useRef(0);
   const actionCountsRef = useRef<{
@@ -85,8 +127,6 @@ export const App: React.FC = () => {
     chaser: Record<string, number>;
     evader: Record<string, number>;
   }>({ all: {}, chaser: {}, evader: {} });
-  // Worker-owned training totals. Champion-view counters are kept separate so the
-  // visible arena can be reset or paused without changing evolutionary telemetry.
   const totalTagsRef = useRef(0);
   const totalFallsRef = useRef(0);
   const totalJumpsRef = useRef(0);
@@ -95,7 +135,7 @@ export const App: React.FC = () => {
   const visualJumpsRef = useRef(0);
 
   const mainContainerRef = useRef<HTMLDivElement>(null);
-  const curriculumDifficultyRef = useRef(0.08);
+  const platformIdCounter = useRef(10);
 
   // Dual Policy Learning State
   const chaserAgent = useRef<LearningAgent | null>(null);
@@ -108,13 +148,10 @@ export const App: React.FC = () => {
   const recentSurvivalTimes = useRef<number[]>([]);
   const recentTimesToTag = useRef<number[]>([]);
 
-  // The champion arena and evolutionary worker are intentionally independent.
+  // Web Worker for Headless Accelerated Simulation
   const workerRef = useRef<Worker | null>(null);
-  const viewportSizeRef = useRef(viewportSize);
   const initializedRef = useRef(false);
   const installedChampionGenerationRef = useRef({ chaser: 0, evader: 0 });
-
-  useEffect(() => { viewportSizeRef.current = viewportSize; }, [viewportSize]);
 
   const initializeGameState = useCallback(() => {
     chaserAgent.current = new LearningAgent('chaser');
@@ -123,29 +160,21 @@ export const App: React.FC = () => {
     chaserElo.current = INITIAL_ELO;
     evaderElo.current = INITIAL_ELO;
 
-    const visualCourse = generateCourse({
-      seed: (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0,
-      difficulty: curriculumDifficultyRef.current,
-      viewport: viewportSize,
-      length: 24000,
-    });
-    visualFlowDirectionRef.current = visualCourse.flowDirection;
-    const initialPlatforms = visualCourse.platforms;
-    const visualStartXs = visualCourse.startXs;
-    const startPlatform = initialPlatforms.find(p => p.id === 0) || initialPlatforms[0];
-    const startY = startPlatform.position.y - AGENT_HEIGHT;
+    const initialPlatforms: PlatformState[] = [
+      { id: 0, position: { x: 0, y: viewportSize.height - 100 }, width: viewportSize.width, height: PLATFORM_HEIGHT },
+    ];
 
     const initialAgents: AgentState[] = [
       {
         id: 1,
-        position: { x: visualStartXs[0], y: startY },
+        position: { x: 100, y: 500 },
         velocity: { x: 0, y: 0 },
         acceleration: { x: 0, y: 0 },
         status: AgentStatus.Normal,
         role: 'evader',
         elo: INITIAL_ELO,
         color: AGENT_COLORS[0],
-        isOnGround: true,
+        isOnGround: false,
         cooldownTimer: 0,
         lastAction: 'wait',
         energy: MAX_ENERGY,
@@ -154,21 +183,21 @@ export const App: React.FC = () => {
         lastPlatformId: 0,
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
-        positionAtLastTakeoff: { x: visualStartXs[0], y: startY },
+        positionAtLastTakeoff: { x: 100, y: 500 },
         survivalTime: 0,
         timeSinceBecameIt: 0,
-        modelId: 'champion_evader_g0',
+        modelId: 'current_evader',
       },
       {
         id: 2,
-        position: { x: visualStartXs[1], y: startY },
+        position: { x: 400, y: 500 },
         velocity: { x: 0, y: 0 },
         acceleration: { x: 0, y: 0 },
         status: AgentStatus.Normal,
         role: 'evader',
         elo: INITIAL_ELO,
         color: AGENT_COLORS[1],
-        isOnGround: true,
+        isOnGround: false,
         cooldownTimer: 0,
         lastAction: 'wait',
         energy: MAX_ENERGY,
@@ -177,21 +206,21 @@ export const App: React.FC = () => {
         lastPlatformId: 0,
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
-        positionAtLastTakeoff: { x: visualStartXs[1], y: startY },
+        positionAtLastTakeoff: { x: 400, y: 500 },
         survivalTime: 0,
         timeSinceBecameIt: 0,
-        modelId: 'champion_evader_g0',
+        modelId: 'current_evader',
       },
       {
         id: 3,
-        position: { x: visualStartXs[2], y: startY },
+        position: { x: 700, y: 500 },
         velocity: { x: 0, y: 0 },
         acceleration: { x: 0, y: 0 },
         status: AgentStatus.Normal,
         role: 'evader',
         elo: INITIAL_ELO,
         color: AGENT_COLORS[2],
-        isOnGround: true,
+        isOnGround: false,
         cooldownTimer: 0,
         lastAction: 'wait',
         energy: MAX_ENERGY,
@@ -200,23 +229,18 @@ export const App: React.FC = () => {
         lastPlatformId: 0,
         scale: { x: 1, y: 1 },
         energyAtLastTakeoff: MAX_ENERGY,
-        positionAtLastTakeoff: { x: visualStartXs[2], y: startY },
+        positionAtLastTakeoff: { x: 700, y: 500 },
         survivalTime: 0,
         timeSinceBecameIt: 0,
-        modelId: 'champion_evader_g0',
+        modelId: 'current_evader',
       },
     ];
 
     const itAgent = initialAgents[0];
     itAgent.status = AgentStatus.It;
     itAgent.role = 'chaser';
-    itAgent.modelId = 'champion_chaser_g0';
+    itAgent.modelId = 'current_chaser';
     itAgent.elo = INITIAL_ELO;
-
-    initialAgents.forEach(agent => {
-      syncEnergyCapacity(agent, agent.status === AgentStatus.It ? 'chaser' : 'evader');
-      agent.energyAtLastTakeoff = agent.energy;
-    });
 
     const newGameState: GameState = {
       agents: initialAgents,
@@ -226,7 +250,6 @@ export const App: React.FC = () => {
       tagEffects: [],
       avgSurvivalTime: 0,
       avgTimeToTag: 0,
-      courseGraph: visualCourse.graph,
     };
     recentSurvivalTimes.current = [];
     recentTimesToTag.current = [];
@@ -252,19 +275,6 @@ export const App: React.FC = () => {
   }, [viewportSize]);
 
   useEffect(() => {
-    const observer = new ResizeObserver(entries => {
-      const entry = entries[0];
-      if (entry) {
-        setViewportSize({ width: entry.contentRect.width, height: entry.contentRect.height });
-      }
-    });
-    if (mainContainerRef.current) {
-      observer.observe(mainContainerRef.current);
-    }
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
     initializeGameState();
@@ -285,29 +295,18 @@ export const App: React.FC = () => {
           if (typeof payload.totalTags === 'number') totalTagsRef.current = payload.totalTags;
           if (typeof payload.totalFalls === 'number') totalFallsRef.current = payload.totalFalls;
           if (typeof payload.totalJumps === 'number') totalJumpsRef.current = payload.totalJumps;
-          if (typeof payload.curriculum?.difficulty === 'number') {
-            curriculumDifficultyRef.current = payload.curriculum.difficulty;
-          }
 
-          // Hot-swap the latest completed-generation champions into the persistent visual arena.
-          // Positions, stamina, roles, platforms and game time are deliberately left untouched.
+          // Hot-swap completed-generation champions into the persistent visible arena.
+          // The bodies keep their positions, velocity, stamina, roles and game state.
           const generation = payload.generation || 0;
           const chaserChampionGeneration = payload.lastChaserNeatMetrics?.generation ?? generation;
           const evaderChampionGeneration = payload.lastEvaderNeatMetrics?.generation ?? generation;
-          if (
-            payload.chaserChampionGenome &&
-            chaserAgent.current &&
-            chaserChampionGeneration !== installedChampionGenerationRef.current.chaser
-          ) {
+          if (payload.chaserChampionGenome && chaserAgent.current && chaserChampionGeneration !== installedChampionGenerationRef.current.chaser) {
             chaserAgent.current.setWeights(payload.chaserChampionGenome);
             chaserAgent.current.setGeneration(chaserChampionGeneration);
             installedChampionGenerationRef.current.chaser = chaserChampionGeneration;
           }
-          if (
-            payload.evaderChampionGenome &&
-            evaderAgent.current &&
-            evaderChampionGeneration !== installedChampionGenerationRef.current.evader
-          ) {
+          if (payload.evaderChampionGenome && evaderAgent.current && evaderChampionGeneration !== installedChampionGenerationRef.current.evader) {
             evaderAgent.current.setWeights(payload.evaderChampionGenome);
             evaderAgent.current.setGeneration(evaderChampionGeneration);
             installedChampionGenerationRef.current.evader = evaderChampionGeneration;
@@ -379,8 +378,10 @@ export const App: React.FC = () => {
               hallOfFame: payload.hallOfFame || prev.hallOfFame,
               lastGenerationBalance: balanceMetric || prev.lastGenerationBalance,
               balanceHistory: appendUnique(prev.balanceHistory, balanceMetric),
-              curriculum: payload.curriculum || prev.curriculum,
-              continuousTraining: payload.continuousTraining || prev.continuousTraining,
+              trainingSpeedX: typeof payload.trainingSpeedX === 'number' ? payload.trainingSpeedX : prev.trainingSpeedX,
+              trainingEpisodesPerSecond: typeof payload.trainingEpisodesPerSecond === 'number' ? payload.trainingEpisodesPerSecond : prev.trainingEpisodesPerSecond,
+              trainingBackend: typeof payload.trainingBackend === 'string' ? payload.trainingBackend : prev.trainingBackend,
+              trainingWorkerCount: typeof payload.trainingWorkerCount === 'number' ? payload.trainingWorkerCount : prev.trainingWorkerCount,
             };
           });
 
@@ -405,7 +406,8 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Background evolution has its own speed and pause state. It never takes over the canvas.
+  // Background evolution is independent from the visible champion arena and always runs
+  // at maximum worker throughput unless explicitly paused.
   useEffect(() => {
     if (!workerRef.current || !isSimulating) return;
 
@@ -417,8 +419,6 @@ export const App: React.FC = () => {
     workerRef.current.postMessage({
       type: 'START',
       payload: {
-        speedMultiplier: workerSpeed,
-        arenaCount: trainingArenaCount,
         chaserWeights: chaserAgent.current?.getWeights(),
         evaderWeights: evaderAgent.current?.getWeights(),
         chaserElo: chaserElo.current,
@@ -426,13 +426,7 @@ export const App: React.FC = () => {
         viewportSize,
       },
     });
-  }, [workerSpeed, isTrainingPaused, isSimulating, viewportSize]);
-
-  // Arena count can be changed while training is running or paused without reseeding populations.
-  useEffect(() => {
-    if (!workerRef.current || !isSimulating) return;
-    workerRef.current.postMessage({ type: 'SET_ARENA_COUNT', payload: { arenaCount: trainingArenaCount } });
-  }, [trainingArenaCount, isSimulating]);
+  }, [isTrainingPaused, isSimulating]);
 
   const calculateReward = (
     agent: AgentState,
@@ -453,9 +447,15 @@ export const App: React.FC = () => {
       breakdown['inactivity'] = -0.02;
     }
 
+    const energyRatio = agent.energy / MAX_ENERGY;
+    if (energyRatio > 0.5) {
+      const highEnergyFactor = (energyRatio - 0.5) / 0.5;
+      breakdown['highEnergy'] = highEnergyFactor * 0.03;
+    }
+
     const agentCenterX = agent.position.x + AGENT_WIDTH / 2;
     const platformBelow = currentGameState.platforms.find(
-      p => isPlatformSolid(p) && agentCenterX >= p.position.x && agentCenterX <= p.position.x + p.width
+      p => agentCenterX >= p.position.x && agentCenterX <= p.position.x + p.width
     );
 
     if (platformBelow) {
@@ -474,8 +474,37 @@ export const App: React.FC = () => {
       breakdown['successfulJump'] = 2.0;
     }
 
-    // Energy is intentionally not rewarded directly. It matters only through locomotion capability.
-    const isTouchingLeftEdge = agent.touchingCameraFrame && agent.cameraFrameContact === 'left';
+    // Left-Side Boundary Constraints & Rightward Flow Reward Shaping
+    const leftBoundary = currentGameState.cameraPosition.x;
+    const distFromLeft = agent.position.x - leftBoundary;
+
+    const isTouchingLeftEdge = distFromLeft <= 2.5 || (agent.touchingCameraFrame && agent.cameraFrameContact === 'left');
+    const isPushingLeft = isTouchingLeftEdge && (agent.lastAction.includes('left') || agent.velocity.x < 0);
+
+    if (isTouchingLeftEdge) {
+      breakdown['leftBoundaryTouchPenalty'] = LEFT_BOUNDARY_TOUCH_PENALTY;
+    }
+    if (isPushingLeft) {
+      breakdown['leftBoundaryPushPenalty'] = LEFT_BOUNDARY_PUSH_PENALTY;
+    }
+
+    const leftDangerZone = size.width * LEFT_BOUNDARY_BUFFER_RATIO;
+    if (distFromLeft < leftDangerZone) {
+      const penaltyFactor = (leftDangerZone - Math.max(0, distFromLeft)) / leftDangerZone;
+      breakdown['leftBoundaryProximityPenalty'] = LEFT_BOUNDARY_PROXIMITY_PENALTY * penaltyFactor;
+    }
+
+    // Rightward flow momentum incentives
+    if (agent.velocity.x > 0.5) {
+      const forwardRatio = Math.min(1.0, agent.velocity.x / MAX_SPEED);
+      breakdown['rightwardVelocityReward'] = RIGHTWARD_VELOCITY_REWARD * forwardRatio;
+    }
+
+    // Rightward spatial progression reward (moving further right than previous frame)
+    if (agent.position.x > prevState.position.x + 0.1) {
+      const deltaX = agent.position.x - prevState.position.x;
+      breakdown['rightwardProgressionReward'] = Math.min(RIGHTWARD_PROGRESSION_REWARD, deltaX * 0.02);
+    }
 
     if (agent.status === AgentStatus.It) {
       if (tagEvent.taggerId === agent.id) {
@@ -528,32 +557,15 @@ export const App: React.FC = () => {
       setGameState(prevGameState => {
         if (!prevGameState || !isSimulating) return prevGameState;
 
-        const nextGameTime = prevGameState.gameTime + deltaTime;
-        const dynamicStep = updateDynamicPlatforms(prevGameState.platforms, nextGameTime);
         let newState = {
           ...prevGameState,
-          agents: [...prevGameState.agents.map(a => ({ ...a, position: { ...a.position }, velocity: { ...a.velocity }, trajectory: a.trajectory || [] }))],
-          platforms: dynamicStep.platforms,
-          gameTime: nextGameTime,
+          agents: [...prevGameState.agents.map(a => ({ ...a, trajectory: a.trajectory || [] }))],
+          platforms: [...prevGameState.platforms],
+          gameTime: prevGameState.gameTime + deltaTime,
           tagEffects: [...prevGameState.tagEffects],
           avgSurvivalTime: prevGameState.avgSurvivalTime,
           avgTimeToTag: prevGameState.avgTimeToTag,
         };
-
-        // Moving platforms carry grounded agents. A disappearing support immediately releases them.
-        newState.agents.forEach(agent => {
-          if (!agent.isOnGround || agent.lastPlatformId === null) return;
-          const support = newState.platforms.find(p => p.id === agent.lastPlatformId);
-          if (!support || !isPlatformSolid(support)) {
-            agent.isOnGround = false;
-            return;
-          }
-          const delta = dynamicStep.deltas.get(support.id);
-          if (delta) {
-            agent.position.x += delta.x;
-            agent.position.y += delta.y;
-          }
-        });
 
         // 1. Update Timers
         newState.agents.forEach(agent => {
@@ -566,53 +578,57 @@ export const App: React.FC = () => {
           }
         });
 
-        // 2. Champion control selection. The four NEAT outputs are continuous drive/jump/sprint signals.
-        const agentControls: { [key: number]: AgentControls } = {};
+        // 2. Champion action selection using the evolved 39-input / 4-output NEAT networks.
+        const agentActions: { [key: number]: string } = {};
         newState.agents.forEach(agent => {
           const stateVector = getAgentStateVector(agent, newState, viewportSize);
           const isChaser = agent.status === AgentStatus.It;
           const role: 'chaser' | 'evader' = isChaser ? 'chaser' : 'evader';
           agent.role = role;
           agent.elo = isChaser ? chaserElo.current : evaderElo.current;
-          agent.modelId = isChaser
-            ? `champion_chaser_g${installedChampionGenerationRef.current.chaser}`
-            : `champion_evader_g${installedChampionGenerationRef.current.evader}`;
+          agent.modelId = isChaser ? 'current_chaser' : 'current_evader';
 
           const model = isChaser ? chaserAgent.current : evaderAgent.current;
           if (!model) return;
-          const controls = model.chooseControls(stateVector);
-          agentControls[agent.id] = controls;
+          const { action } = model.chooseAction(stateVector);
+          agentActions[agent.id] = action;
 
-          actionCountsRef.current.all[controls.action] = (actionCountsRef.current.all[controls.action] || 0) + 1;
-          if (isChaser) actionCountsRef.current.chaser[controls.action] = (actionCountsRef.current.chaser[controls.action] || 0) + 1;
-          else actionCountsRef.current.evader[controls.action] = (actionCountsRef.current.evader[controls.action] || 0) + 1;
+          actionCountsRef.current.all[action] = (actionCountsRef.current.all[action] || 0) + 1;
+          if (isChaser) actionCountsRef.current.chaser[action] = (actionCountsRef.current.chaser[action] || 0) + 1;
+          else actionCountsRef.current.evader[action] = (actionCountsRef.current.evader[action] || 0) + 1;
         });
 
         // 3. Update Physics & Boundaries
         let fallEvents: { [id: number]: boolean } = {};
-        const crumbleContacts = new Set<number>();
         newState.agents = newState.agents.map(agent => {
+          let newVelocity = { ...agent.velocity };
           let newPosition = { ...agent.position };
           let newCooldownTimer = Math.max(0, agent.cooldownTimer - deltaTime);
+          let newEnergy = Math.min(agent.maxEnergy, agent.energy + ENERGY_REGEN_RATE * (deltaTime / 1000));
           let newStatus = agent.status;
 
           if (newStatus === AgentStatus.Cooldown && newCooldownTimer === 0) {
             newStatus = AgentStatus.Normal;
           }
 
-          const role: 'chaser' | 'evader' = newStatus === AgentStatus.It ? 'chaser' : 'evader';
-          const controls = agentControls[agent.id] || {
-            move: 0, jump: 0, sprint: 0, outputs: [0, 0, 0, 0], action: 'left_drive', actionIndex: 0, label: 'wait',
-          };
-          agent.lastAction = controls.label;
+          const action = agentActions[agent.id] || agent.lastAction;
+          agent.lastAction = action;
 
-          const locomotion = stepLocomotion(agent, controls, deltaTime, role);
-          let newVelocity = locomotion.velocity;
-          let newEnergy = locomotion.energy;
-          const newMaxEnergy = getPhysiology(role).energyCapacity;
-          agent.acceleration.x = locomotion.accelerationX;
+          agent.acceleration.x = 0;
+          if (action === 'move_left') agent.acceleration.x = -AGENT_ACCELERATION;
+          else if (action === 'move_right') agent.acceleration.x = AGENT_ACCELERATION;
 
-          if (locomotion.jumped) playDynamicJumpSound(locomotion.jumpImpulse);
+          if (Math.abs(agent.acceleration.x) < 0.1) newVelocity.x *= FRICTION;
+          newVelocity.x += agent.acceleration.x;
+          newVelocity.x = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, newVelocity.x));
+
+          if (action === 'jump' && agent.isOnGround) {
+            if (newEnergy >= JUMP_ENERGY_COST) {
+              newVelocity.y = JUMP_STRENGTH;
+              newEnergy -= JUMP_ENERGY_COST;
+              playDynamicJumpSound(newVelocity.y);
+            }
+          }
 
           newVelocity.y += GRAVITY;
           newPosition.x += newVelocity.x;
@@ -641,7 +657,6 @@ export const App: React.FC = () => {
           let landedPlatformId = agent.lastPlatformId;
 
           for (const platform of newState.platforms) {
-            if (!isPlatformSolid(platform)) continue;
             const prevBottom = agent.position.y + AGENT_HEIGHT;
             const newBottom = newPosition.y + AGENT_HEIGHT;
             const isHorizontallyAligned =
@@ -657,18 +672,28 @@ export const App: React.FC = () => {
               newVelocity.y = 0;
               grounded = true;
               landedPlatformId = platform.id;
-              if (platform.kind === 'crumbling') crumbleContacts.add(platform.id);
               break;
             }
           }
 
-          // Champion-view fall detection. Fallen bodies are respawned individually below;
-          // the continuous visible game itself never resets.
+          // Fall Handling
           if (newPosition.y > FALL_BOUNDARY) {
             fallEvents[agent.id] = true;
             visualFallsRef.current++;
             playFallSound();
+            agent.survivalTime = 0;
+
+            const visiblePlats = newState.platforms.filter(
+              p => p.position.x + p.width >= minVisibleX && p.position.x <= maxVisibleX + AGENT_WIDTH
+            );
+            const spawnPlatform = visiblePlats.length > 0 ? visiblePlats[0] : newState.platforms[0];
+            newPosition.x = spawnPlatform.position.x + spawnPlatform.width / 2 - AGENT_WIDTH / 2;
+            newPosition.y = spawnPlatform.position.y - AGENT_HEIGHT - 30;
+            newVelocity.x = 0;
+            newVelocity.y = 0;
+            newEnergy = MAX_ENERGY;
             grounded = false;
+            landedPlatformId = spawnPlatform.id;
           }
 
           return {
@@ -677,7 +702,6 @@ export const App: React.FC = () => {
             velocity: newVelocity,
             isOnGround: grounded,
             energy: newEnergy,
-            maxEnergy: newMaxEnergy,
             status: newStatus,
             cooldownTimer: newCooldownTimer,
             lastPlatformId: landedPlatformId,
@@ -687,70 +711,6 @@ export const App: React.FC = () => {
             timeSinceBecameIt: agent.timeSinceBecameIt || 0,
           };
         });
-
-        if (crumbleContacts.size > 0) {
-          newState.platforms = newState.platforms.map(platform =>
-            crumbleContacts.has(platform.id) ? triggerCrumblingPlatform(platform, newState.gameTime) : platform
-          );
-        }
-
-        const hadFall = Object.keys(fallEvents).length > 0;
-        if (hadFall) {
-          // Champion-view falls are local events: respawn only the fallen body and keep the
-          // rest of the continuous game untouched (other agents, terrain phase, camera, clock).
-          // Prefer the guaranteed backbone so a respawn can never land on a temporary branch.
-          const solidBackbone = newState.platforms.filter(platform =>
-            (platform.routeRole === 'start' || platform.routeRole === 'backbone') && isPlatformSolid(platform)
-          );
-          const solidFallback = newState.platforms.filter(isPlatformSolid);
-          const respawnPlatforms = solidBackbone.length > 0 ? solidBackbone : solidFallback;
-
-          if (respawnPlatforms.length > 0) {
-            newState.agents = newState.agents.map(agent => {
-              if (!fallEvents[agent.id]) return agent;
-
-              const fallX = agent.position.x + AGENT_WIDTH / 2;
-              const targetPlatform = respawnPlatforms.reduce((best, candidate) => {
-                const bestCenter = best.position.x + best.width / 2;
-                const candidateCenter = candidate.position.x + candidate.width / 2;
-                return Math.abs(candidateCenter - fallX) < Math.abs(bestCenter - fallX) ? candidate : best;
-              });
-
-              const usableWidth = Math.max(0, targetPlatform.width - AGENT_WIDTH - 8);
-              // Spread the three bodies across a platform if more than one falls together.
-              const baseRatios = [0.28, 0.50, 0.72];
-              const rawRatio = baseRatios[Math.abs(agent.id) % baseRatios.length];
-              const ratio = visualFlowDirectionRef.current === 1 ? rawRatio : 1 - rawRatio;
-              const x = targetPlatform.position.x + 4 + usableWidth * ratio;
-              const y = targetPlatform.position.y - AGENT_HEIGHT;
-              const isChaser = agent.status === AgentStatus.It;
-              const role: 'chaser' | 'evader' = isChaser ? 'chaser' : 'evader';
-
-              return {
-                ...agent,
-                position: { x, y },
-                velocity: { x: 0, y: 0 },
-                acceleration: { x: 0, y: 0 },
-                isOnGround: true,
-                lastPlatformId: targetPlatform.id,
-                // A fall must not become a stamina refill. Preserve the remaining reserve.
-                energy: Math.max(0, Math.min(agent.maxEnergy, agent.energy)),
-                energyAtLastTakeoff: Math.max(0, Math.min(agent.maxEnergy, agent.energy)),
-                positionAtLastTakeoff: { x, y },
-                // Preserve who is It, but give the respawned body a brief no-contact window.
-                status: isChaser ? AgentStatus.It : AgentStatus.Cooldown,
-                cooldownTimer: Math.max(agent.cooldownTimer || 0, isChaser ? 750 : 900),
-                role,
-                modelId: role === 'chaser'
-                  ? `champion_chaser_g${installedChampionGenerationRef.current.chaser}`
-                  : `champion_evader_g${installedChampionGenerationRef.current.evader}`,
-                // Falling breaks the current individual chase/survival streak, not the game.
-                survivalTime: 0,
-                timeSinceBecameIt: 0,
-              };
-            });
-          }
-        }
 
         // 4. Tag Detection & role swap between the current NEAT champions
         let tagEvent: { taggerId?: number; taggedId?: number } = {};
@@ -795,8 +755,7 @@ export const App: React.FC = () => {
                 newTagger.survivalTime = 0;
                 newTagger.timeSinceBecameIt = 0;
 
-                newTagger.modelId = `champion_chaser_g${installedChampionGenerationRef.current.chaser}`;
-                syncEnergyCapacity(newTagger, 'chaser');
+                newTagger.modelId = 'current_chaser';
 
                 // Old tagger becomes evader with full tag-immunity cooldown to escape safely
                 oldTagger.status = AgentStatus.Cooldown;
@@ -806,8 +765,7 @@ export const App: React.FC = () => {
                 oldTagger.survivalTime = 0;
                 oldTagger.timeSinceBecameIt = 0;
 
-                oldTagger.modelId = `champion_evader_g${installedChampionGenerationRef.current.evader}`;
-                syncEnergyCapacity(oldTagger, 'evader');
+                oldTagger.modelId = 'current_evader';
 
                 playTagSound();
                 const effectLife = 500;
@@ -860,8 +818,7 @@ export const App: React.FC = () => {
 
         // Evolution is intentionally absent from the main thread; the worker owns generations.
 
-        // Training diagnostics are worker-owned. The champion view keeps only its local
-        // survival/tag-time history so resetting it cannot corrupt evolutionary metrics.
+        // Evolutionary diagnostics remain worker-owned; the visible game is presentation only.
 
         // 7. Camera Tracking (Runners have dominant authority over camera progression)
         const evaders = newState.agents.filter(a => a.status !== AgentStatus.It);
@@ -879,7 +836,59 @@ export const App: React.FC = () => {
         const desiredCameraX = runnersCenterX - viewportSize.width * 0.45;
         newState.cameraPosition.x += (desiredCameraX - newState.cameraPosition.x) * 0.12;
 
-        // 10. Course geometry is generated deterministically at episode/reset boundaries; only dynamic platform state changes here.
+        // 10. Platform Generation
+        const rightGenerationEdge = newState.cameraPosition.x + viewportSize.width + PLATFORM_SPAWN_BUFFER;
+        const leftGenerationEdge = newState.cameraPosition.x - PLATFORM_SPAWN_BUFFER;
+        const despawnMargin = PLATFORM_SPAWN_BUFFER * 2;
+        newState.platforms = newState.platforms.filter(
+          p =>
+            p.position.x + p.width > newState.cameraPosition.x - despawnMargin &&
+            p.position.x < newState.cameraPosition.x + viewportSize.width + despawnMargin
+        );
+
+        const sortedPlatforms = [...newState.platforms].sort((a, b) => a.position.x - b.position.x);
+
+        function generatePlatform(baseX: number, baseY: number, toLeft: boolean = false): PlatformState {
+          let gapX = MIN_PLATFORM_GAP_X + Math.random() * (MAX_PLATFORM_GAP_X - MIN_PLATFORM_GAP_X);
+          const gapY = (Math.random() - 0.5) * MAX_PLATFORM_GAP_Y * 1.5;
+          const newY = baseY + gapY;
+          const clampedY = Math.min(viewportSize.height - 120, Math.max(250, newY));
+          const verticalDifference = clampedY - baseY;
+
+          if (verticalDifference < -100) gapX = Math.max(MIN_PLATFORM_GAP_X, Math.min(gapX, 90));
+          else if (verticalDifference > 80) gapX = Math.max(gapX, 140);
+
+          const newWidth = Math.random() * (PLATFORM_MAX_WIDTH - PLATFORM_MIN_WIDTH) + PLATFORM_MIN_WIDTH;
+          return {
+            id: platformIdCounter.current++,
+            width: newWidth,
+            height: PLATFORM_HEIGHT,
+            position: {
+              x: toLeft ? baseX - newWidth - gapX : baseX + gapX,
+              y: clampedY,
+            },
+          };
+        }
+
+        if (sortedPlatforms.length > 0) {
+          let rightmostPlatform = sortedPlatforms[sortedPlatforms.length - 1];
+          while (rightmostPlatform.position.x + rightmostPlatform.width < rightGenerationEdge) {
+            const newPlatform = generatePlatform(
+              rightmostPlatform.position.x + rightmostPlatform.width,
+              rightmostPlatform.position.y
+            );
+            newState.platforms.push(newPlatform);
+            rightmostPlatform = newPlatform;
+          }
+        }
+        if (sortedPlatforms.length > 0) {
+          let leftmostPlatform = sortedPlatforms[0];
+          while (leftmostPlatform.position.x > leftGenerationEdge) {
+            const newPlatform = generatePlatform(leftmostPlatform.position.x, leftmostPlatform.position.y, true);
+            newState.platforms.unshift(newPlatform);
+            leftmostPlatform = newPlatform;
+          }
+        }
 
         // 11. Tag Visual Effects
         newState.tagEffects = newState.tagEffects
@@ -907,18 +916,18 @@ export const App: React.FC = () => {
   const updateSimulation = useCallback(
     (_deltaTime: number) => {
       if (isVisualPaused && !stepFrameRef.current) return;
+
       if (stepFrameRef.current) {
         stepFrameRef.current = false;
         updateGame(16.67);
         return;
       }
 
-      // Champion-view speed is a rendering-time multiplier only. Fractional speeds are
-      // supported via an accumulator; training throughput is controlled separately.
+      // Keep visual playback smooth and independent from the max-speed background trainer.
       visualStepAccumulatorRef.current += Math.max(0.25, Math.min(10, visualSpeed));
-      const steps = Math.floor(visualStepAccumulatorRef.current);
-      visualStepAccumulatorRef.current -= steps;
-      for (let i = 0; i < steps; i++) updateGame(16.67);
+      const wholeSteps = Math.floor(visualStepAccumulatorRef.current);
+      visualStepAccumulatorRef.current -= wholeSteps;
+      for (let i = 0; i < wholeSteps; i++) updateGame(16.67);
     },
     [isVisualPaused, visualSpeed, updateGame]
   );
@@ -940,15 +949,53 @@ export const App: React.FC = () => {
     setShowLidar(prev => !prev);
   };
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 's' || event.repeat) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      setShowLidar(prev => {
+        playToggleSound(!prev);
+        return !prev;
+      });
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const handleRunBenchmark = (durationSeconds = 20) => {
+    const durationMs = durationSeconds * 1000;
+    const now = Date.now();
+    const currentGeneration = diagnosticsState.generation || Math.max(
+      chaserAgent.current?.getGeneration() || 0,
+      evaderAgent.current?.getGeneration() || 0
+    );
+    benchmarkSessionRef.current = {
+      active: true,
+      startTime: now,
+      durationMs,
+      startTags: totalTagsRef.current,
+      startFalls: totalFallsRef.current,
+      startJumps: totalJumpsRef.current,
+      modelLabel: `Benchmark (Generation ${currentGeneration})`,
+    };
+    setDiagnosticsState(prev => ({
+      ...prev,
+      benchmarkActive: true,
+      benchmarkTimeRemaining: durationMs,
+    }));
+  };
+
+  const handleCancelBenchmark = () => {
+    benchmarkSessionRef.current = null;
+    setDiagnosticsState(prev => ({
+      ...prev,
+      benchmarkActive: false,
+      benchmarkTimeRemaining: 0,
+    }));
+  };
 
   const handleResetChampionGame = useCallback(() => {
-    const freshCourse = generateCourse({
-      seed: (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0,
-      difficulty: curriculumDifficultyRef.current,
-      viewport: viewportSizeRef.current,
-      length: 24000,
-    });
-    visualFlowDirectionRef.current = freshCourse.flowDirection;
     recentSurvivalTimes.current = [];
     recentTimesToTag.current = [];
     visualTagsRef.current = 0;
@@ -956,28 +1003,35 @@ export const App: React.FC = () => {
     visualJumpsRef.current = 0;
     actionCountsRef.current = { all: {}, chaser: {}, evader: {} };
     visualStepAccumulatorRef.current = 0;
+    platformIdCounter.current = 10;
 
+    const groundY = viewportSize.height - 100;
+    const starts = [100, 400, 700];
     setGameState(prev => {
       if (!prev) return prev;
-      const startPlatform = freshCourse.platforms.find(p => p.id === 0) || freshCourse.platforms[0];
-      const startY = startPlatform.position.y - AGENT_HEIGHT;
       const agents = prev.agents.map((agent, index) => {
         const isChaser = index === 0;
+        const x = starts[index] ?? starts[starts.length - 1];
         return {
           ...agent,
-          position: { x: freshCourse.startXs[index] ?? freshCourse.startXs[0], y: startY },
+          position: { x, y: 500 },
           velocity: { x: 0, y: 0 },
           acceleration: { x: 0, y: 0 },
           status: isChaser ? AgentStatus.It : AgentStatus.Normal,
           role: isChaser ? 'chaser' as const : 'evader' as const,
+          elo: isChaser ? chaserElo.current : evaderElo.current,
+          isOnGround: false,
           cooldownTimer: 0,
-          isOnGround: true,
+          lastAction: 'wait',
           energy: MAX_ENERGY,
           maxEnergy: MAX_ENERGY,
+          trajectory: [],
           lastPlatformId: 0,
+          scale: { x: 1, y: 1 },
+          energyAtLastTakeoff: MAX_ENERGY,
+          positionAtLastTakeoff: { x, y: 500 },
           survivalTime: 0,
           timeSinceBecameIt: 0,
-          trajectory: [],
           modelId: isChaser
             ? `champion_chaser_g${installedChampionGenerationRef.current.chaser}`
             : `champion_evader_g${installedChampionGenerationRef.current.evader}`,
@@ -986,8 +1040,7 @@ export const App: React.FC = () => {
       return {
         ...prev,
         agents,
-        platforms: freshCourse.platforms,
-        courseGraph: freshCourse.graph,
+        platforms: [{ id: 0, position: { x: 0, y: groundY }, width: viewportSize.width, height: PLATFORM_HEIGHT }],
         cameraPosition: { x: 0, y: 0 },
         gameTime: 0,
         tagEffects: [],
@@ -995,25 +1048,25 @@ export const App: React.FC = () => {
         avgTimeToTag: 0,
       };
     });
-  }, []);
+  }, [viewportSize]);
 
   const handleResetWeights = () => {
-    // Evolution reset is independent from the champion arena. The running visible match
-    // continues in-place and will hot-swap to the fresh worker champions when they arrive.
-    if (chaserAgent.current) chaserAgent.current.resetWeights();
-    if (evaderAgent.current) evaderAgent.current.resetWeights();
     installedChampionGenerationRef.current = { chaser: -1, evader: -1 };
-    if (workerRef.current) workerRef.current.postMessage({ type: 'RESET' });
+    if (workerRef.current) {
+      workerRef.current.postMessage({ type: 'RESET' });
+    }
     chaserElo.current = INITIAL_ELO;
     evaderElo.current = INITIAL_ELO;
+    recentSurvivalTimes.current = [];
+    recentTimesToTag.current = [];
+    actionCountsRef.current = { all: {}, chaser: {}, evader: {} };
     totalTagsRef.current = 0;
     totalFallsRef.current = 0;
     totalJumpsRef.current = 0;
-    curriculumDifficultyRef.current = 0.08;
 
     setDiagnosticsState(prev => ({
       ...prev,
-      chaserNeatHistory: [],
+              chaserNeatHistory: [],
       evaderNeatHistory: [],
       lastChaserNeatMetrics: null,
       lastEvaderNeatMetrics: null,
@@ -1030,11 +1083,13 @@ export const App: React.FC = () => {
       chaserElo: INITIAL_ELO,
       evaderElo: INITIAL_ELO,
       eloLeaderboard: createLeaderboardEntries(INITIAL_ELO, INITIAL_ELO, 0, 0, 0, 0, 0),
-      hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: NEAT_HOF_MAX_SIZE, opponentsPerGenome: CONTINUOUS_HOF_MATCHUP_CHANCE, chaserGenerations: [], evaderGenerations: [] },
+      hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: 12, opponentsPerGenome: 1, chaserGenerations: [], evaderGenerations: [] },
       lastGenerationBalance: null,
       balanceHistory: [],
-      curriculum: undefined,
-      continuousTraining: undefined,
+      trainingSpeedX: 0,
+      trainingEpisodesPerSecond: 0,
+      trainingBackend: 'CPU optimized',
+      trainingWorkerCount: 1,
     }));
   };
 
@@ -1100,6 +1155,7 @@ export const App: React.FC = () => {
       diagnostics: {
         totalTags: totalTagsRef.current,
         totalFalls: totalFallsRef.current,
+        benchmarkResults: diagnosticsState.benchmarkResults,
       },
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -1144,12 +1200,37 @@ export const App: React.FC = () => {
     stepFrameRef.current = true;
   };
 
+  const changeCameraZoom = (delta: number) => {
+    setCameraZoom(current => {
+      const next = Math.round((current + delta) * 100) / 100;
+      return Math.max(0.5, Math.min(2, next));
+    });
+  };
+
+  const uiScale = 0.75;
+  const scaledViewportStyle = {
+    width: `${100 / uiScale}vw`,
+    height: `${100 / uiScale}vh`,
+    transform: `scale(${uiScale})`,
+    transformOrigin: 'top left',
+  };
+
   if (isLoading || !gameState) {
-    return <div className="flex items-center justify-center h-screen text-cyan-400 font-mono">Loading Artwork...</div>;
+    return (
+      <div
+        className="flex items-center justify-center bg-gray-950 text-cyan-400 font-mono"
+        style={scaledViewportStyle}
+      >
+        Loading Artwork...
+      </div>
+    );
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-950 font-sans p-4 gap-3 select-none">
+    <div
+      className="flex flex-col overflow-hidden bg-gray-950 font-sans p-4 gap-3 select-none"
+      style={scaledViewportStyle}
+    >
       <header className="flex items-center justify-between bg-gray-900/80 backdrop-blur border border-gray-800 px-5 py-3 rounded-xl shadow-lg">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-cyan-600 to-emerald-500 flex items-center justify-center text-white font-bold shadow-md shadow-cyan-500/20">
@@ -1169,18 +1250,41 @@ export const App: React.FC = () => {
         <div className="flex items-center gap-3">
           {/* Champion-view controls */}
           <div className="flex items-center gap-1.5">
-            <div className="flex items-center gap-1 bg-gray-950 border border-gray-800 rounded-lg p-1" title="Persistent champion game speed">
+            <div className="flex items-center gap-1 bg-gray-950 border border-gray-800 rounded-lg p-1" title="Champion game speed">
               <MonitorPlay className="w-3.5 h-3.5 text-cyan-300 ml-1" />
               <span className="text-[10px] uppercase tracking-wider text-cyan-300 mr-1">View</span>
               {[0.5, 1, 2, 5, 10].map(speed => (
-                <button
-                  key={speed}
-                  onClick={() => setVisualSpeed(speed)}
-                  className={`px-2 py-1 text-[11px] font-mono font-semibold rounded ${visualSpeed === speed ? 'bg-cyan-500 text-black' : 'text-gray-400 hover:text-cyan-300 hover:bg-gray-900'}`}
-                >{speed}x</button>
+                <button key={speed} onClick={() => setVisualSpeed(speed)} className={`px-2 py-1 text-[11px] font-mono font-semibold rounded ${visualSpeed === speed ? 'bg-cyan-500 text-black' : 'text-gray-400 hover:text-cyan-300 hover:bg-gray-900'}`}>{speed}x</button>
               ))}
             </div>
-            <button onClick={() => setIsVisualPaused(p => !p)} className="p-2 rounded-lg border border-gray-700 text-cyan-200 hover:bg-gray-800" title={isVisualPaused ? 'Resume champion view' : 'Pause champion view'}>
+            <div className="flex items-center bg-gray-950 border border-gray-800 rounded-lg p-1" title="Visual camera zoom only; does not change physics or agent senses">
+              <button
+                onClick={() => changeCameraZoom(-0.25)}
+                disabled={cameraZoom <= 0.5}
+                className="p-1.5 rounded text-cyan-200 hover:bg-gray-900 disabled:text-gray-700 disabled:hover:bg-transparent"
+                title="Zoom camera out"
+                aria-label="Zoom camera out"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => setCameraZoom(1)}
+                className="min-w-[52px] px-1 text-[10px] font-mono font-semibold text-gray-300 hover:text-cyan-200"
+                title="Reset camera zoom to 100%"
+              >
+                {Math.round(cameraZoom * 100)}%
+              </button>
+              <button
+                onClick={() => changeCameraZoom(0.25)}
+                disabled={cameraZoom >= 2}
+                className="p-1.5 rounded text-cyan-200 hover:bg-gray-900 disabled:text-gray-700 disabled:hover:bg-transparent"
+                title="Zoom camera in"
+                aria-label="Zoom camera in"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <button onClick={() => setIsVisualPaused(p => !p)} className="p-2 rounded-lg border border-gray-700 text-cyan-200 hover:bg-gray-800" title={isVisualPaused ? 'Resume champion game' : 'Pause champion game'}>
               {isVisualPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
             </button>
             <button onClick={handleResetChampionGame} className="px-2.5 py-2 rounded-lg border border-gray-700 text-cyan-200 hover:bg-gray-800 flex items-center gap-1.5 text-[11px] font-semibold" title="Reset champion game only">
@@ -1190,32 +1294,24 @@ export const App: React.FC = () => {
 
           {/* Independent background-training controls */}
           <div className="flex items-center gap-1.5">
-            <div className="flex items-center gap-1 bg-gray-950 border border-gray-800 rounded-lg p-1" title="Background worker throughput">
+            <div className="flex items-center gap-1.5 bg-gray-950 border border-gray-800 rounded-lg px-2 py-1.5" title="Background training always runs as fast as this device can process it">
               <Cpu className="w-3.5 h-3.5 text-amber-300 ml-1" />
-              <span className="text-[10px] uppercase tracking-wider text-amber-300 mr-1">Train</span>
-              {[10, 25, 50, 100, 200].map(speed => (
-                <button
-                  key={speed}
-                  onClick={() => setWorkerSpeed(speed)}
-                  className={`px-2 py-1 text-[11px] font-mono font-semibold rounded ${workerSpeed === speed ? 'bg-amber-400 text-black' : 'text-gray-400 hover:text-amber-300 hover:bg-gray-900'}`}
-                >{speed}x</button>
-              ))}
-            </div>
-            <div className="flex items-center gap-1 bg-gray-950 border border-gray-800 rounded-lg p-1" title="Number of persistent background training arenas">
-              <span className="text-[10px] uppercase tracking-wider text-violet-300 ml-1 mr-1">Arenas</span>
-              {[2, 4, 6, 8, 12, 16].map(count => (
-                <button
-                  key={count}
-                  onClick={() => setTrainingArenaCount(count)}
-                  className={`px-2 py-1 text-[11px] font-mono font-semibold rounded ${trainingArenaCount === count ? 'bg-violet-400 text-black' : 'text-gray-400 hover:text-violet-300 hover:bg-gray-900'}`}
-                >{count}</button>
-              ))}
+              <span className="text-[10px] uppercase tracking-wider text-amber-300">Train</span>
+              <span className="px-1.5 py-0.5 rounded bg-amber-400/15 border border-amber-400/30 text-[9px] font-bold uppercase tracking-wider text-amber-200">Max</span>
+              <span className="text-[11px] font-mono font-semibold text-amber-100 min-w-[54px] text-right">
+                {isTrainingPaused ? 'paused' : `${formatTrainingRate(diagnosticsState.trainingSpeedX)}×`}
+              </span>
+              <span className="text-[9px] font-mono text-gray-500 min-w-[58px]">
+                {formatTrainingRate(diagnosticsState.trainingEpisodesPerSecond)} ep/s
+              </span>
+              <span className="text-[9px] font-mono text-gray-600" title={diagnosticsState.trainingBackend || 'CPU training'}>
+                {diagnosticsState.trainingWorkerCount || 1}w
+              </span>
             </div>
             <button onClick={() => setIsTrainingPaused(p => !p)} className="p-2 rounded-lg border border-gray-700 text-amber-200 hover:bg-gray-800" title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>
               {isTrainingPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
             </button>
           </div>
-
 
           {/* Diagnostics Button */}
           <button
@@ -1233,8 +1329,7 @@ export const App: React.FC = () => {
 
       <div className="flex flex-1 gap-4 min-h-0">
         <main
-          ref={mainContainerRef}
-          className="flex-grow bg-black rounded-xl border border-gray-800 shadow-2xl overflow-hidden relative"
+          className="flex-grow bg-[#1a202c] rounded-xl border border-gray-800 shadow-2xl overflow-hidden relative"
         >
           {!isSimulating && (
             <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center gap-4">
@@ -1242,7 +1337,7 @@ export const App: React.FC = () => {
                 <h2 className="text-2xl font-bold text-cyan-400 mb-2">Autonomous Agent Arena</h2>
                 <p className="text-sm text-gray-400 mb-6 leading-relaxed">
                   Three autonomous agents evolve chasing, dodging, jumping, and spatial awareness using
-                  dual NEAT populations, speciation, structural mutation, 8-ray lidar, and headless generation evaluation.
+                  dual NEAT populations, speciation, structural mutation, the original 39-input state with 8-ray LiDAR, and headless generation evaluation.
                 </p>
                 <button
                   onClick={startSimulation}
@@ -1256,17 +1351,16 @@ export const App: React.FC = () => {
           {isSimulating && (
             <div className="absolute top-3 left-3 z-[5] pointer-events-none rounded-lg border border-cyan-500/25 bg-black/65 backdrop-blur px-3 py-2 text-[11px] text-gray-400 shadow-lg">
               <div className="font-semibold text-cyan-200">Champion arena · continuous game</div>
-              <div className="font-mono mt-0.5">Chaser G{diagnosticsState.lastChaserNeatMetrics?.generation ?? 0} · Runner G{diagnosticsState.lastEvaderNeatMetrics?.generation ?? 0}</div>
+              <div className="font-mono mt-0.5">Chaser G{installedChampionGenerationRef.current.chaser} · Runner G{installedChampionGenerationRef.current.evader}</div>
             </div>
           )}
-          {isSimulating && mainContainerRef.current && (
+          {isSimulating && (
             <GameCanvas
               gameState={gameState}
-              viewportWidth={viewportSize.width}
-              viewportHeight={viewportSize.height}
               onFrameReady={() => {}}
               showTrails={showTrails}
               showLidar={showLidar}
+              cameraZoom={cameraZoom}
             />
           )}
         </main>
@@ -1277,8 +1371,6 @@ export const App: React.FC = () => {
           onToggleTrails={handleToggleTrails}
           showLidar={showLidar}
           onToggleLidar={handleToggleLidar}
-          avgSurvivalTime={gameState.avgSurvivalTime}
-          avgTimeToTag={gameState.avgTimeToTag}
           chaserElo={chaserElo.current}
           evaderElo={evaderElo.current}
           onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
@@ -1292,10 +1384,6 @@ export const App: React.FC = () => {
         diagnostics={diagnosticsState}
         visualSpeed={visualSpeed}
         onSetVisualSpeed={setVisualSpeed}
-        workerSpeed={workerSpeed}
-        onSetWorkerSpeed={setWorkerSpeed}
-        trainingArenaCount={trainingArenaCount}
-        onSetTrainingArenaCount={setTrainingArenaCount}
         isVisualPaused={isVisualPaused}
         onToggleVisualPause={() => setIsVisualPaused(p => !p)}
         isTrainingPaused={isTrainingPaused}

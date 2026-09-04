@@ -17,8 +17,7 @@ export function updateEloRatings(
   evaderElo: number,
   survivalDurationMs: number,
   kFactor: number = ELO_K_FACTOR,
-  tagged: boolean = true,
-  forcedResult?: 'chaser' | 'evader' | 'draw'
+  tagged: boolean = true
 ): EloMatchResult {
   const survivalSec = survivalDurationMs / 1000;
   const exponent = (evaderElo - chaserElo) / 400;
@@ -29,19 +28,7 @@ export function updateEloRatings(
   let evaderScore: number;
   let outcome: EloMatchResult['outcome'];
 
-  if (forcedResult === 'chaser') {
-    chaserScore = 1.0;
-    evaderScore = 0.0;
-    outcome = 'chaser_decisive';
-  } else if (forcedResult === 'evader') {
-    chaserScore = 0.0;
-    evaderScore = 1.0;
-    outcome = 'evader_domination';
-  } else if (forcedResult === 'draw') {
-    chaserScore = 0.5;
-    evaderScore = 0.5;
-    outcome = 'balanced';
-  } else if (!tagged) {
+  if (!tagged) {
     chaserScore = 0.0;
     evaderScore = 1.0;
     outcome = 'evader_domination';
@@ -87,29 +74,19 @@ export function createLeaderboardEntries(
   totalFalls: number,
   generation: number,
   avgTimeToTagMs: number,
-  avgSurvivalTimeMs: number,
-  outcomeCounts?: { tags: number; chaserFalls: number; evaderFalls: number; timeouts: number; doubleFalls: number; matches?: number; chaserMatchWins?: number; evaderMatchWins?: number; draws?: number }
+  avgSurvivalTimeMs: number
 ) {
-  const matches = outcomeCounts
-    ? outcomeCounts.matches ?? (outcomeCounts.tags + outcomeCounts.chaserFalls + outcomeCounts.evaderFalls + outcomeCounts.timeouts + outcomeCounts.doubleFalls)
-    : totalTags + totalFalls;
-  const chaserWins = outcomeCounts
-    ? outcomeCounts.chaserMatchWins ?? (outcomeCounts.tags + outcomeCounts.evaderFalls)
-    : totalTags;
-  const evaderWins = outcomeCounts
-    ? outcomeCounts.evaderMatchWins ?? (outcomeCounts.timeouts + outcomeCounts.chaserFalls)
-    : totalFalls;
-  const draws = outcomeCounts ? outcomeCounts.draws ?? outcomeCounts.doubleFalls : 0;
+  const matches = totalTags + totalFalls;
   return [
     {
       id: 'current_chaser',
       role: 'chaser' as const,
       elo: chaserElo,
       matchesPlayed: matches,
-      wins: chaserWins,
-      losses: evaderWins,
-      draws,
-      winRate: matches > 0 ? ((chaserWins + 0.5 * draws) / matches) * 100 : 50,
+      wins: totalTags,
+      losses: totalFalls,
+      draws: 0,
+      winRate: matches > 0 ? (totalTags / matches) * 100 : 50,
       generation,
       avgMetric: (avgTimeToTagMs || 0) / 1000,
       isCurrent: true,
@@ -119,10 +96,10 @@ export function createLeaderboardEntries(
       role: 'evader' as const,
       elo: evaderElo,
       matchesPlayed: matches,
-      wins: evaderWins,
-      losses: chaserWins,
-      draws,
-      winRate: matches > 0 ? ((evaderWins + 0.5 * draws) / matches) * 100 : 50,
+      wins: totalFalls,
+      losses: totalTags,
+      draws: 0,
+      winRate: matches > 0 ? (totalFalls / matches) * 100 : 50,
       generation,
       avgMetric: (avgSurvivalTimeMs || 0) / 1000,
       isCurrent: true,

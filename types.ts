@@ -54,53 +54,11 @@ export interface AgentState {
   cameraFrameContact?: 'left' | 'right' | null;
 }
 
-export type PlatformKind = 'static' | 'moving' | 'crumbling';
-export type CrumblePhase = 'stable' | 'warning' | 'gone';
-
-export interface PlatformMotion {
-  axis: 'x' | 'y';
-  amplitude: number;
-  /** Oscillations per second. */
-  speed: number;
-  phase: number;
-}
-
-export interface PlatformCrumble {
-  /** Time from first contact until the platform disappears. */
-  disappearDelayMs: number;
-  /** Time spent absent before it respawns. */
-  respawnDelayMs: number;
-  triggeredAt?: number;
-}
-
 export interface PlatformState {
   id: number;
   position: Vector2D;
-  /** Stable reference position used by deterministic moving-platform motion. */
-  basePosition?: Vector2D;
   width: number;
   height: number;
-  kind?: PlatformKind;
-  motion?: PlatformMotion;
-  crumble?: PlatformCrumble;
-  crumblePhase?: CrumblePhase;
-  active?: boolean;
-  routeRole?: 'start' | 'backbone' | 'branch';
-  routeId?: string;
-}
-
-export interface CourseEdge {
-  from: number;
-  to: number;
-  routeId: string;
-  kind: 'backbone' | 'branch';
-}
-
-export interface CourseGraph {
-  seed: number;
-  difficulty: number;
-  edges: CourseEdge[];
-  branchCount: number;
 }
 
 export interface TagEffect {
@@ -117,7 +75,6 @@ export interface GameState {
   tagEffects: TagEffect[];
   avgSurvivalTime: number;
   avgTimeToTag: number;
-  courseGraph?: CourseGraph;
 }
 
 export interface ModelInfo {
@@ -156,74 +113,35 @@ export interface PerformanceDataPoint {
   evaderElo?: number;
 }
 
+export interface BenchmarkResult {
+  id: string;
+  timestamp: number;
+  modelLabel: string;
+  durationSeconds: number;
+  tagsCompleted: number;
+  fallsCount: number;
+  avgSurvivalTimeSec: number;
+  avgTimeToTagSec: number;
+  fallsPerMinute: number;
+  tagsPerMinute: number;
+  platformJumps: number;
+  actionDistribution: Record<string, number>;
+  scoreGrade: 'S' | 'A' | 'B' | 'C' | 'D';
+  baselineDelta?: {
+    survivalPct: number;
+    tagSpeedPct: number;
+    fallReductionPct: number;
+  };
+}
+
 
 export interface BalanceTelemetry {
   generation: number;
   matches: number;
   tags: number;
-  /** Matches containing at least one tag. */
-  matchesWithTag: number;
-  /** Matches that reached the randomized horizon without a single tag. */
-  timeouts: number;
-  chaserFalls: number;
-  evaderFalls: number;
-  doubleFalls: number;
-  /** Fraction of long matches containing at least one tag. */
   tagRate: number;
-  /** Fraction of long matches with no tags at all. */
   survivalRate: number;
-  /** Fraction of evaluated controller assignments containing at least one terrain fall. */
-  fallRate: number;
-  chaserWinRate: number;
-  evaderWinRate: number;
-  drawRate: number;
-  /** Tag events normalized to 30 seconds of simulated match time. */
-  tagsPer30s: number;
-  avgTagsPerMatch: number;
-  /** Mean uninterrupted evader survival streak sampled at tags and match end. */
-  avgSurvivalStreakMs: number | null;
-  /** Mean time that the current chaser had been It before a successful tag. */
   avgTagTimeMs: number | null;
-}
-
-export interface CurriculumTelemetry {
-  difficulty: number;
-  navigationEma: number;
-  lastNavigationScore: number;
-  lastFallTerminationRate: number;
-  generationsObserved: number;
-  branchesUnlocked: boolean;
-  movingUnlocked: boolean;
-  crumblingUnlocked: boolean;
-  lastCourseSeed?: number;
-  lastCourseBranchCount?: number;
-  lastCourseMovingPlatforms?: number;
-  lastCourseCrumblingPlatforms?: number;
-}
-
-
-export interface ContinuousTrainingTelemetry {
-  arenaCount: number;
-  assignmentMinMs: number;
-  assignmentMaxMs: number;
-  longAssignmentChance: number;
-  longAssignmentMinMs: number;
-  longAssignmentMaxMs: number;
-  exposureTargetMs: number;
-  minAssignments: number;
-  minArenas: number;
-  minOpponents: number;
-  generationProgress: number;
-  chaserReady: number;
-  evaderReady: number;
-  populationSize: number;
-  avgChaserExposureMs: number;
-  avgEvaderExposureMs: number;
-  avgChaserAssignments: number;
-  avgEvaderAssignments: number;
-  currentCurrentAssignments: number;
-  hallOfFameAssignments: number;
-  hallOfFameChance: number;
 }
 
 export interface HallOfFameTelemetry {
@@ -254,9 +172,14 @@ export interface DiagnosticsState {
   evaderElo: number;
   eloLeaderboard: EloLeaderboardEntry[];
   showLidar?: boolean;
+  benchmarkActive: boolean;
+  benchmarkTimeRemaining: number;
+  benchmarkResults: BenchmarkResult[];
   hallOfFame?: HallOfFameTelemetry;
   lastGenerationBalance?: BalanceTelemetry | null;
   balanceHistory?: BalanceTelemetry[];
-  curriculum?: CurriculumTelemetry;
-  continuousTraining?: ContinuousTrainingTelemetry;
+  trainingSpeedX?: number;
+  trainingEpisodesPerSecond?: number;
+  trainingBackend?: string;
+  trainingWorkerCount?: number;
 }
