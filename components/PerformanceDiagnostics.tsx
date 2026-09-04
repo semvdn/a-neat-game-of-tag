@@ -307,14 +307,16 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
       <main className="flex-1 overflow-auto p-5">
         {tab === 'overview' && (
           <div className="max-w-7xl mx-auto space-y-5">
-            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-10 gap-3">
               <MetricCard label="Generation" value={generation} hint="one full population evaluation" />
               <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} hint="same 0–220 scale as runner" />
               <MetricCard label="Runner best" value={fmt(evaderMetrics?.bestFitness)} hint="same 0–220 scale as chaser" />
               <MetricCard label="Species C / R" value={`${chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.speciesCount ?? '—'}`} />
-              <MetricCard label="Tag rate" value={balance ? `${(balance.tagRate * 100).toFixed(1)}%` : '—'} hint="current-population matches" />
-              <MetricCard label="Survival rate" value={balance ? `${(balance.survivalRate * 100).toFixed(1)}%` : '—'} hint="current-population matches" />
-              <MetricCard label="Avg tag time" value={balance?.avgTagTimeMs != null ? `${(balance.avgTagTimeMs / 1000).toFixed(2)}s` : '—'} hint="when a tag occurs" />
+              <MetricCard label="Tag rate" value={balance ? `${(balance.tagRate * 100).toFixed(1)}%` : '—'} hint="contact tags only" />
+              <MetricCard label="Survival rate" value={balance ? `${(balance.survivalRate * 100).toFixed(1)}%` : '—'} hint="no contact tag" />
+              <MetricCard label="Chaser fall rate" value={balance?.chaserFallRate != null ? `${(balance.chaserFallRate * 100).toFixed(1)}%` : '—'} hint={balance?.chaserFalls != null ? `${balance.chaserFalls} matches ended by chaser fall` : 'population matches'} />
+              <MetricCard label="Runner fall rate" value={balance?.runnerFallRate != null ? `${(balance.runnerFallRate * 100).toFixed(1)}%` : '—'} hint={balance?.runnerFalls != null ? `${balance.runnerFalls} matches ended by runner fall` : 'population matches'} />
+              <MetricCard label="Avg tag time" value={balance?.avgTagTimeMs != null ? `${(balance.avgTagTimeMs / 1000).toFixed(2)}s` : '—'} hint="when a contact tag occurs" />
               <MetricCard label="Matches" value={balance?.matches ?? '—'} hint="last completed generation" />
             </div>
 
@@ -343,6 +345,18 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                 emptyLabel="Complete generations to populate the balance chart."
               />
               <p className="mt-2 text-xs text-gray-500">Measured only on current-population matchups; Hall-of-Fame tests are excluded so the balance signal stays comparable.</p>
+            </div>
+
+            <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
+              <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-rose-300" /><h3 className="font-semibold text-white">Fall rate by generation</h3></div>
+              <LineChart
+                series={[
+                  { label: 'Chaser fall %', values: balanceHistory.map(m => (m.chaserFallRate ?? 0) * 100) },
+                  { label: 'Runner fall %', values: balanceHistory.map(m => (m.runnerFallRate ?? 0) * 100) },
+                ]}
+                emptyLabel="Complete generations to populate the fall-rate chart."
+              />
+              <p className="mt-2 text-xs text-gray-500">Rate = percentage of current-population evaluation matches that terminate because that role falls. A runner rate records a match when either runner falls. Contact tags are excluded, and Hall-of-Fame matches are excluded.</p>
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">

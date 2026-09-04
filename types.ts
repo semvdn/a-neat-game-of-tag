@@ -97,7 +97,6 @@ export interface AgentState {
   cameraFrameContact?: 'left' | 'right' | null;
   sprintIntensity?: number;
   jumpPower?: number;
-  respawnRecoveryTimer?: number; // ms remaining in post-fall action/regen lock
 }
 
 export interface PlatformState {
@@ -188,6 +187,14 @@ export interface BalanceTelemetry {
   tagRate: number;
   survivalRate: number;
   avgTagTimeMs: number | null;
+  /** Population matches that terminated because the chaser fell. */
+  chaserFalls?: number;
+  /** Population matches that terminated because any runner fell. */
+  runnerFalls?: number;
+  /** Fraction of population matches ending in a chaser fall. */
+  chaserFallRate?: number;
+  /** Fraction of population matches ending in a runner fall. */
+  runnerFallRate?: number;
 }
 
 export interface HallOfFameTelemetry {

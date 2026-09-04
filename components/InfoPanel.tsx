@@ -511,7 +511,6 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
                           {agent.lastAction}
                           {(agent.sprintIntensity || 0) > 0.05 ? ` · sprint ${Math.round((agent.sprintIntensity || 0) * 100)}%` : ''}
                           {(agent.jumpPower || 0) > 0 && agent.lastAction === 'jump' ? ` · jump ${Math.round((agent.jumpPower || 0) * 100)}%` : ''}
-                          {(agent.respawnRecoveryTimer || 0) > 0 ? ` · respawn ${((agent.respawnRecoveryTimer || 0) / 1000).toFixed(1)}s` : ''}
                         </span>
                     </div>
                     <div

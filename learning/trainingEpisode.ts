@@ -1,6 +1,6 @@
 import { LearningAgent } from './agent';
 import { getAgentStateVector } from './state';
-import { chooseFairRespawn } from './respawn';
+import { getFairRespawn } from './respawn';
 import type { ActiveUpgradeState, AgentState, GameState, PlatformState } from '../types';
 import { AgentStatus } from '../types';
 import {
@@ -21,7 +21,6 @@ import {
   ENERGY_REGEN_RATE,
   JUMP_ENERGY_COST,
   FALL_BOUNDARY,
-  RESPAWN_RECOVERY_MS,
   PLATFORM_MIN_WIDTH,
   PLATFORM_MAX_WIDTH,
   PLATFORM_HEIGHT,
@@ -40,6 +39,7 @@ export interface TrainingEpisodeResult {
   chaserFitness: number;
   evaderFitness: number;
   tagged: boolean;
+  terminalFallRole: 'chaser' | 'evader' | null;
   elapsedMs: number;
   falls: number;
   jumps: number;
@@ -86,7 +86,6 @@ function makeAgent(id: number, x: number, role: 'chaser' | 'evader', viewportHei
     survivalTime: 0,
     timeSinceBecameIt: 0,
     modelId: role === 'chaser' ? 'current_chaser' : 'current_evader',
-    respawnRecoveryTimer: 0,
   };
 }
 
@@ -172,12 +171,13 @@ export function runTrainingEpisode(
   let chaserJumps = 0;
   let evaderJumps = 0;
   let tagged = false;
+  let terminalFallRole: 'chaser' | 'evader' | null = null;
 
   const chaserActionCounts = new Array<number>(ACTION_SPACE.length).fill(0);
   const evaderActionCounts = new Array<number>(ACTION_SPACE.length).fill(0);
   const maxSteps = Math.ceil(NEAT_EPISODE_MAX_MS / DT);
 
-  for (let step = 0; step < maxSteps && !tagged; step++) {
+  for (let step = 0; step < maxSteps && !tagged && !terminalFallRole; step++) {
     gameState.gameTime += DT;
     chaserAgent.timeSinceBecameIt += DT;
     evaders.forEach(a => (a.survivalTime += DT));
@@ -186,13 +186,6 @@ export function runTrainingEpisode(
     const actionStrengths = new Array<number>(gameState.agents.length).fill(0);
     for (let i = 0; i < gameState.agents.length; i++) {
       const agent = gameState.agents[i];
-      const recovering = (agent.respawnRecoveryTimer || 0) > 0;
-      if (recovering) {
-        // Recovery is an externally imposed consequence of falling, not a policy action.
-        actionIndices[i] = ACTION_SPACE.indexOf('wait');
-        actionStrengths[i] = 0;
-        continue;
-      }
       const controller = agent.id === 1 ? chaser : evader;
       const state = getAgentStateVector(agent, gameState, viewportSize);
       const { actionIndex, actionStrength } = controller.chooseAction(state);
@@ -207,16 +200,11 @@ export function runTrainingEpisode(
 
     for (let i = 0; i < gameState.agents.length; i++) {
       const agent = gameState.agents[i];
-      const recoveryBeforeStep = Math.max(0, agent.respawnRecoveryTimer || 0);
-      const recovering = recoveryBeforeStep > 0;
-      agent.respawnRecoveryTimer = Math.max(0, recoveryBeforeStep - DT);
       const actionIndex = actionIndices[i] ?? ACTION_SPACE.indexOf('wait');
-      const action = recovering ? 'wait' : (ACTION_SPACE[actionIndex] || 'wait');
-      const actionStrength = recovering ? 0 : (actionStrengths[i] || 0);
+      const action = ACTION_SPACE[actionIndex] || 'wait';
+      const actionStrength = actionStrengths[i] || 0;
       agent.lastAction = action;
-      if (!recovering) {
-        agent.energy = Math.min(agent.maxEnergy, agent.energy + ENERGY_REGEN_RATE * (DT / 1000));
-      }
+      agent.energy = Math.min(agent.maxEnergy, agent.energy + ENERGY_REGEN_RATE * (DT / 1000));
       agent.acceleration.x = 0;
 
       const isChaserRole = agent.id === 1;
@@ -298,44 +286,49 @@ export function runTrainingEpisode(
         }
       }
 
-      // Capture the exact last safe point whenever the agent leaves solid ground.
-      // This is the rollback anchor used if the subsequent airborne attempt becomes a fall.
-      if (agent.isOnGround && !grounded) {
-        agent.positionAtLastTakeoff = { ...agent.position };
+      // Record the most recent real grounded location as the recovery checkpoint.
+      // This mirrors the champion game even though a training fall is terminal.
+      if (grounded) {
+        agent.positionAtLastTakeoff = { ...nextPosition };
         agent.energyAtLastTakeoff = agent.energy;
       }
 
       if (nextPosition.y > FALL_BOUNDARY) {
-        if (agent.id === 1) chaserFalls++;
-        else evaderFalls++;
-        const others = gameState.agents.filter(other => other.id !== agent.id);
-        const placement = chooseFairRespawn(
-          agent,
-          gameState.platforms,
-          others,
-          { minX: gameState.cameraPosition.x, maxX: gameState.cameraPosition.x + viewportSize.width }
-        );
-        nextPosition.x = placement.position.x;
-        nextPosition.y = placement.position.y;
+        if (agent.id === 1) {
+          chaserFalls++;
+          terminalFallRole = terminalFallRole || 'chaser';
+        } else {
+          evaderFalls++;
+          terminalFallRole = terminalFallRole || 'evader';
+        }
+
+        // Use the same fair deterministic recovery policy as the champion game. Training
+        // still terminates on this frame, so the spawn cannot be exploited for fitness.
+        const respawn = getFairRespawn(agent, gameState.platforms, gameState.agents, {
+          minX: gameState.cameraPosition.x,
+          maxX: gameState.cameraPosition.x + viewportSize.width - AGENT_WIDTH,
+        });
+        nextPosition.x = respawn.position.x;
+        nextPosition.y = respawn.position.y;
         velocity.x = 0;
         velocity.y = 0;
         grounded = true;
-        landedPlatformId = placement.platform.id;
-        agent.respawnRecoveryTimer = RESPAWN_RECOVERY_MS;
-        // The respawn point itself becomes the new safe anchor, preventing repeated falls
-        // from ratcheting the agent forward across a platform.
-        agent.positionAtLastTakeoff = { ...nextPosition };
-        agent.energyAtLastTakeoff = agent.energy;
+        landedPlatformId = respawn.platformId;
       }
 
       agent.position = nextPosition;
       agent.velocity = velocity;
       agent.isOnGround = grounded;
       agent.lastPlatformId = landedPlatformId;
+
+      // The first fall decides the evaluation outcome on this frame. Do not advance
+      // the remaining agents after that terminal mistake.
+      if (terminalFallRole) break;
     }
 
-    // Tag ends the episode. Roles never swap during evolutionary evaluation.
-    for (const evaderAgent of evaders) {
+    // Tag ends the episode. A fall also ends evaluation, so skip contact scoring once
+    // either role has already lost by falling. Roles never swap during evolutionary evaluation.
+    if (!terminalFallRole) for (const evaderAgent of evaders) {
       const dx = chaserAgent.position.x - evaderAgent.position.x;
       const dy = chaserAgent.position.y - evaderAgent.position.y;
       if (Math.hypot(dx, dy) < (AGENT_WIDTH + AGENT_HEIGHT) / 2) {
@@ -371,30 +364,44 @@ export function runTrainingEpisode(
   const evaderProgress =
     maxEvaderXs.reduce((sum, x, i) => sum + Math.max(0, x - initialEvaderXs[i]), 0) / evaders.length;
 
-  // Fitness is intentionally retained from the initial version.
+  // Fall outcomes are asymmetric by role:
+  // - Runner fall: scored exactly as a successful tag for the chaser / tagged loss for the runner.
+  // - Chaser fall: scored through the same no-catch branch as a chase that reaches the time limit.
+  //   The episode can still terminate immediately for throughput, but there is no extra fall-only
+  //   fitness punishment for the chaser. The runner receives the same full-survival outcome base
+  //   it would receive when the chaser simply fails to catch anyone before timeout.
+  // Actual tag telemetry remains separate via `tagged`, so falls do not inflate tag-rate diagnostics.
+  const runnerDefeated = tagged || terminalFallRole === 'evader';
+  const chaserFailedToCatch = !runnerDefeated;
+
   const chaserFitness = Math.max(
     0.01,
-    (tagged ? 120 + (maxSec - elapsedSec) * 8 : 10) +
+    (runnerDefeated ? 120 + (maxSec - elapsedSec) * 8 : 10) +
       closingGain * 0.12 +
       chaserProgress * 0.025 +
       chaserJumps * 0.2 -
-      chaserFalls * 12 -
       averageDistance * 0.01
   );
+
+  const evaderOutcomeBase = runnerDefeated
+    ? elapsedSec * 8
+    : chaserFailedToCatch
+      ? maxSec * 8 + 80
+      : elapsedSec * 8 + 80;
+
   const evaderFitness = Math.max(
     0.01,
-    elapsedSec * 8 +
-      (tagged ? 0 : 80) +
+    evaderOutcomeBase +
       averageDistance * 0.015 +
       evaderProgress * 0.02 +
-      evaderJumps * 0.15 -
-      evaderFalls * 15
+      evaderJumps * 0.15
   );
 
   return {
     chaserFitness,
     evaderFitness,
     tagged,
+    terminalFallRole,
     elapsedMs,
     falls: chaserFalls + evaderFalls,
     jumps: chaserJumps + evaderJumps,

@@ -123,9 +123,17 @@ npm run build
 
 ## Senses view
 The champion arena includes the newer full Agent Senses overlay (toggle in the sidebar or press `S`), adapted to the original 39-input controller. It visualizes target/threat, teammate, nearby platform slots, ledges, policy-camera boundaries, fall distance, self-state, and all eight original LiDAR rays. The overlay reads the already-computed policy state and does not alter the sensing or movement implementation.
-## Fair respawning / anti-gaming
 
-Falls now use one deterministic respawn implementation in both the champion viewer and headless training. The system records the agent's last grounded takeoff/checkpoint position and rolls a fallen agent back to that platform when possible instead of teleporting it to a platform center. Spawn X is clamped away from ledges, prefers not to move forward relative to the checkpoint, and minimally shifts only when needed to avoid overlapping another agent. If the checkpoint platform is outside the usable camera frame, the nearest usable non-forward platform is preferred.
+## Fall consequence
 
-A fall preserves stamina, role/tag cooldowns, and survival/tag timers. It also imposes a 500 ms recovery period during which movement/jump/sprint input and stamina regeneration are disabled; the agent remains fully taggable, so the recovery period cannot be used as invulnerability. Respawned agents start grounded with zero velocity and the new respawn point becomes their next safe checkpoint. Champion platform cleanup protects current checkpoint platforms where possible so scrolling does not silently change the respawn rule.
+Runner falls are terminal competitive losses during NEAT evaluation: a runner fall is scored the same way as a successful tag for the chaser and a tagged loss for the runner. A chaser fall also terminates that evaluation for efficiency, but its fitness outcome is now the same no-catch branch used when the chaser reaches the episode time limit without tagging a runner; there is no additional chaser-fall-only fitness penalty. The runner receives the normal full-survival no-catch outcome base. Fall telemetry remains separate from actual contact-tag telemetry.
 
+In the visible infinite champion game, falling never swaps roles. The fallen agent respawns in the same role; only an actual physical tag can change Chaser/Runner roles.
+
+### Role-specific fall diagnostics
+
+The diagnostics overview reports separate **Chaser fall rate** and **Runner fall rate** values for the last completed current-population generation, plus a per-generation trend chart. A fall rate is the fraction of current-population evaluation matches that terminate because that role falls. Runner fall rate counts a match when either runner falls. Contact tags and Hall-of-Fame matches are excluded from these rates.
+
+### Fair respawning
+
+The visible infinite game now uses a deterministic checkpoint-based respawn policy. Each agent continuously records its latest genuinely grounded position and platform. After a fall it returns to that checkpoint whenever the platform is still usable, with stamina, role and cooldown state preserved. The checkpoint platform is protected from normal platform despawning while an agent may still need it. If camera movement makes the exact checkpoint unusable, respawning chooses the closest playable fallback with a strong preference against forward progress. Spawn placement is shifted only as much as necessary to avoid placing an agent directly inside tag range of another agent. Velocity is cleared and trails restart at the recovered position. The same helper is used by headless evaluation for deterministic consistency, although training falls remain terminal outcomes.

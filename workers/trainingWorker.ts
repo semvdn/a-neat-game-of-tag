@@ -185,6 +185,8 @@ let evaderFitnessCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
 let generationPopulationMatches = 0;
 let generationPopulationTags = 0;
 let generationPopulationTagTimeMs = 0;
+let generationPopulationChaserFalls = 0;
+let generationPopulationRunnerFalls = 0;
 let lastGenerationBalance: BalanceTelemetry | null = null;
 
 let totalTags = 0;
@@ -212,6 +214,7 @@ interface EpisodeStats {
   chaserFitness: number;
   evaderFitness: number;
   tagged: boolean;
+  terminalFallRole: 'chaser' | 'evader' | null;
   elapsedMs: number;
   falls: number;
   jumps: number;
@@ -404,6 +407,8 @@ function applyParallelEpisodeResult(task: ParallelEvaluationTask, result: Traini
       generationPopulationTags++;
       generationPopulationTagTimeMs += result.elapsedMs;
     }
+    if (result.terminalFallRole === 'chaser') generationPopulationChaserFalls++;
+    else if (result.terminalFallRole === 'evader') generationPopulationRunnerFalls++;
   } else if (task.phase === 'chaser_hof') {
     const chaserIndex = task.chaserIndex!;
     chaserFitnessTotals[chaserIndex] += result.chaserFitness;
@@ -542,6 +547,8 @@ function resetEvaluationAccumulators() {
   generationPopulationMatches = 0;
   generationPopulationTags = 0;
   generationPopulationTagTimeMs = 0;
+  generationPopulationChaserFalls = 0;
+  generationPopulationRunnerFalls = 0;
 }
 
 function recordEpisodeTelemetry(result: EpisodeStats, currentPopulationMatch = true) {
@@ -554,7 +561,11 @@ function recordEpisodeTelemetry(result: EpisodeStats, currentPopulationMatch = t
     if (recentTimesToTag.length > TIME_TO_TAG_HISTORY_LENGTH) recentTimesToTag.shift();
   }
   if (currentPopulationMatch) {
-    const eloResult = updateEloRatings(chaserElo, evaderElo, result.elapsedMs, undefined, result.tagged);
+    // Runner falls are chaser wins. Chaser falls use the same non-catch outcome as
+    // a timeout. Actual tag-rate diagnostics still use result.tagged, so a fall is
+    // not mislabeled as contact.
+    const chaserWon = result.tagged || result.terminalFallRole === 'evader';
+    const eloResult = updateEloRatings(chaserElo, evaderElo, result.elapsedMs, undefined, chaserWon);
     chaserElo = eloResult.newChaserElo;
     evaderElo = eloResult.newEvaderElo;
   }
@@ -579,6 +590,8 @@ function evaluateNextMatch(): boolean {
       generationPopulationTags++;
       generationPopulationTagTimeMs += result.elapsedMs;
     }
+    if (result.terminalFallRole === 'chaser') generationPopulationChaserFalls++;
+    else if (result.terminalFallRole === 'evader') generationPopulationRunnerFalls++;
     recordEpisodeTelemetry(result);
 
     evaluationIndex++;
@@ -652,6 +665,10 @@ function finishGeneration() {
     tagRate: generationPopulationTags / Math.max(1, generationPopulationMatches),
     survivalRate: (generationPopulationMatches - generationPopulationTags) / Math.max(1, generationPopulationMatches),
     avgTagTimeMs: generationPopulationTags > 0 ? generationPopulationTagTimeMs / generationPopulationTags : null,
+    chaserFalls: generationPopulationChaserFalls,
+    runnerFalls: generationPopulationRunnerFalls,
+    chaserFallRate: generationPopulationChaserFalls / Math.max(1, generationPopulationMatches),
+    runnerFallRate: generationPopulationRunnerFalls / Math.max(1, generationPopulationMatches),
   };
 
   chaserPopulation.genomes.forEach((g, i) => {

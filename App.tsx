@@ -6,7 +6,7 @@ import { useGameLoop } from './hooks/useGameLoop';
 import { LearningAgent } from './learning/agent';
 import { createLeaderboardEntries } from './learning/elo';
 import { getAgentStateVector } from './learning/state';
-import { chooseFairRespawn } from './learning/respawn';
+import { getFairRespawn } from './learning/respawn';
 import { initAudio, playDynamicJumpSound, playTagSound, playFallSound, playToggleSound } from './services/soundService';
 import type {
   GameState,
@@ -30,7 +30,6 @@ import {
   JUMP_STRENGTH,
   TAG_COOLDOWN,
   FALL_BOUNDARY,
-  RESPAWN_RECOVERY_MS,
   PLATFORM_MIN_WIDTH,
   PLATFORM_MAX_WIDTH,
   PLATFORM_HEIGHT,
@@ -270,7 +269,6 @@ export const App: React.FC = () => {
         survivalTime: 0,
         timeSinceBecameIt: 0,
         modelId: 'current_evader',
-        respawnRecoveryTimer: 0,
       },
       {
         id: 2,
@@ -294,7 +292,6 @@ export const App: React.FC = () => {
         survivalTime: 0,
         timeSinceBecameIt: 0,
         modelId: 'current_evader',
-        respawnRecoveryTimer: 0,
       },
       {
         id: 3,
@@ -318,7 +315,6 @@ export const App: React.FC = () => {
         survivalTime: 0,
         timeSinceBecameIt: 0,
         modelId: 'current_evader',
-        respawnRecoveryTimer: 0,
       },
     ];
 
@@ -701,13 +697,6 @@ export const App: React.FC = () => {
           agent.elo = isChaser ? chaserElo.current : evaderElo.current;
           agent.modelId = isChaser ? 'current_chaser' : 'current_evader';
 
-          // A fall imposes a short symmetric recovery period. It is deliberately not
-          // counted as a policy "wait" action because the network has no control here.
-          if ((agent.respawnRecoveryTimer || 0) > 0) {
-            agentActions[agent.id] = { action: 'wait', strength: 0 };
-            return;
-          }
-
           const model = isChaser ? chaserAgent.current : evaderAgent.current;
           if (!model) return;
           const { action, actionStrength } = model.chooseAction(stateVector);
@@ -720,17 +709,11 @@ export const App: React.FC = () => {
 
         // 3. Update Physics & Boundaries
         let fallEvents: { [id: number]: boolean } = {};
-        const reservedRespawnPositions: AgentState[] = [];
         newState.agents = newState.agents.map(agent => {
           let newVelocity = { ...agent.velocity };
           let newPosition = { ...agent.position };
           let newCooldownTimer = Math.max(0, agent.cooldownTimer - deltaTime);
-          const recoveryBeforeStep = Math.max(0, agent.respawnRecoveryTimer || 0);
-          const recovering = recoveryBeforeStep > 0;
-          const newRespawnRecoveryTimer = Math.max(0, recoveryBeforeStep - deltaTime);
-          let newEnergy = recovering
-            ? agent.energy
-            : Math.min(agent.maxEnergy, agent.energy + ENERGY_REGEN_RATE * (deltaTime / 1000));
+          let newEnergy = Math.min(agent.maxEnergy, agent.energy + ENERGY_REGEN_RATE * (deltaTime / 1000));
           let newStatus = agent.status;
 
           if (newStatus === AgentStatus.Cooldown && newCooldownTimer === 0) {
@@ -738,8 +721,8 @@ export const App: React.FC = () => {
           }
 
           const actionDecision = agentActions[agent.id];
-          const action = recovering ? 'wait' : (actionDecision?.action || agent.lastAction);
-          const actionStrength = recovering ? 0 : (actionDecision?.strength ?? 0);
+          const action = actionDecision?.action || agent.lastAction;
+          const actionStrength = actionDecision?.strength ?? 0;
           agent.lastAction = action;
 
           agent.acceleration.x = 0;
@@ -824,34 +807,35 @@ export const App: React.FC = () => {
             }
           }
 
-          // Record the last real grounded point as soon as an airborne attempt begins.
-          // Respawning rolls back to this checkpoint rather than teleporting to a center point.
-          if (agent.isOnGround && !grounded) {
-            agent.positionAtLastTakeoff = { ...agent.position };
-            agent.energyAtLastTakeoff = newEnergy;
+          // Continuously remember the latest safe grounded location. This is the respawn
+          // checkpoint, so a fall returns the agent to where it last genuinely stood rather
+          // than advancing it to a camera-relative platform.
+          let respawnCheckpoint = agent.positionAtLastTakeoff;
+          let checkpointEnergy = agent.energyAtLastTakeoff;
+          if (grounded) {
+            respawnCheckpoint = { ...newPosition };
+            checkpointEnergy = newEnergy;
           }
 
-          // Fall Handling
+          // Fair fall recovery: return to the agent's last grounded checkpoint rather than
+          // teleporting to an arbitrary visible platform. The shared deterministic helper also
+          // avoids spawning directly in tag contact and never grants stamina or role changes.
           if (newPosition.y > FALL_BOUNDARY) {
             fallEvents[agent.id] = true;
             visualFallsRef.current++;
             playFallSound();
 
-            const placement = chooseFairRespawn(
-              agent,
-              newState.platforms,
-              [...newState.agents.filter(other => other.id !== agent.id), ...reservedRespawnPositions],
-              { minX: minVisibleX, maxX: maxVisibleX + AGENT_WIDTH }
-            );
-            newPosition.x = placement.position.x;
-            newPosition.y = placement.position.y;
+            const respawn = getFairRespawn(agent, newState.platforms, newState.agents, {
+              minX: minVisibleX,
+              maxX: maxVisibleX,
+            });
+            newPosition = { ...respawn.position };
             newVelocity.x = 0;
             newVelocity.y = 0;
             grounded = true;
-            landedPlatformId = placement.platform.id;
-            agent.positionAtLastTakeoff = { ...newPosition };
-            agent.energyAtLastTakeoff = newEnergy;
-            reservedRespawnPositions.push({ ...agent, position: { ...newPosition } });
+            landedPlatformId = respawn.platformId;
+            respawnCheckpoint = { ...respawn.position };
+            checkpointEnergy = newEnergy;
           }
 
           // Trail samples are world-space and time-limited. A respawn starts a fresh trail
@@ -870,81 +854,79 @@ export const App: React.FC = () => {
             status: newStatus,
             cooldownTimer: newCooldownTimer,
             lastPlatformId: landedPlatformId,
+            positionAtLastTakeoff: respawnCheckpoint,
+            energyAtLastTakeoff: checkpointEnergy,
             touchingCameraFrame: isTouchingFrame,
             cameraFrameContact: contactSide,
             sprintIntensity,
             jumpPower,
-            respawnRecoveryTimer: fallEvents[agent.id] ? RESPAWN_RECOVERY_MS : newRespawnRecoveryTimer,
             survivalTime: agent.survivalTime || 0,
             timeSinceBecameIt: agent.timeSinceBecameIt || 0,
           };
         });
 
-        // 4. Tag Detection & role swap between the current NEAT champions
+        // 4. Tag Detection & role swap between the current NEAT champions.
+        // Only a physical contact tag changes roles. Falling remains a severe loss signal
+        // for training/reward purposes, but a fall/respawn never changes who is It.
         let tagEvent: { taggerId?: number; taggedId?: number } = {};
         const itAgent = newState.agents.find(a => a.status === AgentStatus.It);
 
         if (itAgent && (itAgent.cooldownTimer || 0) <= 0) {
-          for (const otherAgent of newState.agents) {
+          const taggedAgent = newState.agents.find(otherAgent => {
             if (
-              otherAgent.id !== itAgent.id &&
-              otherAgent.status !== AgentStatus.It &&
-              (otherAgent.cooldownTimer || 0) <= 0
-            ) {
-              const dx = itAgent.position.x + AGENT_WIDTH / 2 - (otherAgent.position.x + AGENT_WIDTH / 2);
-              const dy = itAgent.position.y + AGENT_HEIGHT / 2 - (otherAgent.position.y + AGENT_HEIGHT / 2);
-              const distance = Math.hypot(dx, dy);
+              otherAgent.id === itAgent.id ||
+              otherAgent.status === AgentStatus.It ||
+              (otherAgent.cooldownTimer || 0) > 0
+            ) return false;
 
-              if (distance < (AGENT_WIDTH + AGENT_HEIGHT) / 2) {
-                tagEvent = { taggerId: itAgent.id, taggedId: otherAgent.id };
-                visualTagsRef.current++;
+            const dx = itAgent.position.x + AGENT_WIDTH / 2 - (otherAgent.position.x + AGENT_WIDTH / 2);
+            const dy = itAgent.position.y + AGENT_HEIGHT / 2 - (otherAgent.position.y + AGENT_HEIGHT / 2);
+            return Math.hypot(dx, dy) < (AGENT_WIDTH + AGENT_HEIGHT) / 2;
+          });
 
-                const recordedSurvival = Math.max(otherAgent.survivalTime || 0, 100);
-                const recordedTimeToTag = Math.max(itAgent.timeSinceBecameIt || 0, 100);
+          if (taggedAgent) {
+            tagEvent = { taggerId: itAgent.id, taggedId: taggedAgent.id };
+            visualTagsRef.current++;
 
-                recentSurvivalTimes.current.push(recordedSurvival);
-                if (recentSurvivalTimes.current.length > SURVIVAL_TIME_HISTORY_LENGTH) {
-                  recentSurvivalTimes.current.shift();
-                }
-                recentTimesToTag.current.push(recordedTimeToTag);
-                if (recentTimesToTag.current.length > TIME_TO_TAG_HISTORY_LENGTH) {
-                  recentTimesToTag.current.shift();
-                }
+            const recordedSurvival = Math.max(taggedAgent.survivalTime || 0, 100);
+            const recordedTimeToTag = Math.max(itAgent.timeSinceBecameIt || 0, 100);
 
-                // Role swap; each role always uses its latest evolved champion
-                const oldTagger = itAgent;
-                const newTagger = otherAgent;
-
-                // New tagger becomes It with a short transition cooldown
-                newTagger.status = AgentStatus.It;
-                newTagger.role = 'chaser';
-                newTagger.elo = chaserElo.current;
-                newTagger.cooldownTimer = 600;
-                newTagger.survivalTime = 0;
-                newTagger.timeSinceBecameIt = 0;
-
-                newTagger.modelId = 'current_chaser';
-
-                // Old tagger becomes evader with full tag-immunity cooldown to escape safely
-                oldTagger.status = AgentStatus.Cooldown;
-                oldTagger.role = 'evader';
-                oldTagger.elo = evaderElo.current;
-                oldTagger.cooldownTimer = TAG_COOLDOWN;
-                oldTagger.survivalTime = 0;
-                oldTagger.timeSinceBecameIt = 0;
-
-                oldTagger.modelId = 'current_evader';
-
-                playTagSound();
-                const effectLife = 500;
-                newState.tagEffects.push({
-                  position: { ...otherAgent.position },
-                  life: effectLife,
-                  initialLife: effectLife,
-                });
-                break;
-              }
+            recentSurvivalTimes.current.push(recordedSurvival);
+            if (recentSurvivalTimes.current.length > SURVIVAL_TIME_HISTORY_LENGTH) {
+              recentSurvivalTimes.current.shift();
             }
+            recentTimesToTag.current.push(recordedTimeToTag);
+            if (recentTimesToTag.current.length > TIME_TO_TAG_HISTORY_LENGTH) {
+              recentTimesToTag.current.shift();
+            }
+
+            // Role swap; each role always uses its latest evolved champion.
+            const oldTagger = itAgent;
+            const newTagger = taggedAgent;
+
+            newTagger.status = AgentStatus.It;
+            newTagger.role = 'chaser';
+            newTagger.elo = chaserElo.current;
+            newTagger.cooldownTimer = 600;
+            newTagger.survivalTime = 0;
+            newTagger.timeSinceBecameIt = 0;
+            newTagger.modelId = 'current_chaser';
+
+            oldTagger.status = AgentStatus.Cooldown;
+            oldTagger.role = 'evader';
+            oldTagger.elo = evaderElo.current;
+            oldTagger.cooldownTimer = TAG_COOLDOWN;
+            oldTagger.survivalTime = 0;
+            oldTagger.timeSinceBecameIt = 0;
+            oldTagger.modelId = 'current_evader';
+
+            playTagSound();
+            const effectLife = 500;
+            newState.tagEffects.push({
+              position: { ...taggedAgent.position },
+              life: effectLife,
+              initialLife: effectLife,
+            });
           }
         }
 
@@ -1009,7 +991,9 @@ export const App: React.FC = () => {
         const leftGenerationEdge = newState.cameraPosition.x - PLATFORM_SPAWN_BUFFER;
         const despawnMargin = PLATFORM_SPAWN_BUFFER * 2;
         const protectedRespawnPlatformIds = new Set(
-          newState.agents.map(agent => agent.lastPlatformId).filter((id): id is number => id !== null)
+          newState.agents
+            .map(agent => agent.lastPlatformId)
+            .filter((id): id is number => id !== null && id !== undefined)
         );
         newState.platforms = newState.platforms.filter(
           p =>
@@ -1207,7 +1191,6 @@ export const App: React.FC = () => {
           modelId: isChaser
             ? `champion_chaser_g${installedChampionGenerationRef.current.chaser}`
             : `champion_evader_g${installedChampionGenerationRef.current.evader}`,
-          respawnRecoveryTimer: 0,
         };
       });
       return {
