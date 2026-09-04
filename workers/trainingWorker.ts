@@ -1,23 +1,9 @@
-import { LearningAgent, type AgentWeights, type AgentControls } from '../learning/agent';
-import { getPhysiology, stepLocomotion } from '../learning/movement';
+import { LearningAgent, type AgentWeights } from '../learning/agent';
 import { NeatPopulation, DEFAULT_NEAT_CONFIG, cloneGenome, type NeatGenerationMetrics, type NeatGenomeData } from '../learning/neat';
-import { getAgentStateVector } from '../learning/state';
 import { updateEloRatings, createLeaderboardEntries } from '../learning/elo';
-import type { AgentState, BalanceTelemetry, GameState, PlatformState } from '../types';
-import { AgentStatus } from '../types';
+import { runTrainingEpisode, type TrainingEpisodeResult } from '../learning/trainingEpisode';
+import type { BalanceTelemetry } from '../types';
 import {
-  AGENT_WIDTH,
-  AGENT_HEIGHT,
-  AGENT_COLORS,
-  GRAVITY,
-  MAX_ENERGY,
-  FALL_BOUNDARY,
-  PLATFORM_MIN_WIDTH,
-  PLATFORM_MAX_WIDTH,
-  PLATFORM_HEIGHT,
-  MIN_PLATFORM_GAP_X,
-  MAX_PLATFORM_GAP_X,
-  MAX_PLATFORM_GAP_Y,
   INITIAL_ELO,
   SURVIVAL_TIME_HISTORY_LENGTH,
   TIME_TO_TAG_HISTORY_LENGTH,
@@ -26,7 +12,6 @@ import {
   NEAT_HOF_OPPONENTS_PER_GENOME,
   NEAT_HOF_MAX_SIZE,
   NEAT_HOF_RECENT_SLOTS,
-  NEAT_EPISODE_MAX_MS,
   NEAT_COMPATIBILITY_THRESHOLD,
   NEAT_TARGET_SPECIES,
   NEAT_CROSSOVER_RATE,
@@ -35,9 +20,9 @@ import {
   NEAT_ADD_CONNECTION_RATE,
   WORLD_REF_WIDTH,
   WORLD_REF_HEIGHT,
+  ACTION_SPACE,
 } from '../constants';
 
-const DT = 16.67;
 const neatConfig = {
   ...DEFAULT_NEAT_CONFIG,
   populationSize: NEAT_POPULATION_SIZE,
@@ -64,9 +49,9 @@ let timerId: ReturnType<typeof setTimeout> | null = null;
 const viewportSize = { width: WORLD_REF_WIDTH, height: WORLD_REF_HEIGHT };
 let seededFromStart = false;
 
-// Training always runs at the maximum throughput this worker can sustain. We process
-// work in short CPU bursts and yield with a zero-delay timeout so control messages
-// (pause/reset/import) are still handled promptly without an artificial 16 ms throttle.
+// Training always runs at maximum available throughput. The preferred backend dispatches
+// independent episodes to a CPU worker pool; the short-burst loop below remains as a
+// compatibility fallback when nested workers are unavailable.
 const MAX_TRAINING_BURST_MS = 40;
 const TELEMETRY_INTERVAL_MS = 250;
 let lastTelemetryEmitAt = 0;
@@ -92,6 +77,37 @@ interface HallOfFameArchive {
 let evaluationPhase: EvaluationPhase = 'population';
 let evaluationIndex = 0;
 let evaluationRound = 0;
+
+interface ParallelEvaluationTask {
+  id: number;
+  epoch: number;
+  phase: EvaluationPhase;
+  chaserIndex: number | null;
+  evaderIndex: number | null;
+  chaserGenome: NeatGenomeData;
+  evaderGenome: NeatGenomeData;
+  seed: number;
+  trackChaserActions: boolean;
+  trackEvaderActions: boolean;
+  currentPopulationMatch: boolean;
+}
+
+interface EvaluatorSlot {
+  worker: Worker;
+  busy: boolean;
+  taskId: number | null;
+}
+
+let evaluatorPool: EvaluatorSlot[] = [];
+let poolInitializationAttempted = false;
+let parallelTasks: ParallelEvaluationTask[] = [];
+let parallelTaskCursor = 0;
+let parallelTasksCompleted = 0;
+let nextParallelTaskId = 1;
+let evaluationEpoch = 1;
+let parallelGenerationPrepared = false;
+let parallelBackendActive = false;
+const activeParallelTasks = new Map<number, ParallelEvaluationTask>();
 const chaserHallOfFame: HallOfFameArchive = { recent: [], reservoir: [], historicalSeen: 0 };
 const evaderHallOfFame: HallOfFameArchive = { recent: [], reservoir: [], historicalSeen: 0 };
 let chaserFitnessTotals = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
@@ -123,91 +139,6 @@ function mulberry32(seed: number) {
   };
 }
 
-function makeAgent(id: number, x: number, role: 'chaser' | 'evader'): AgentState {
-  const physiology = getPhysiology(role);
-  return {
-    id,
-    position: { x, y: viewportSize.height - 100 - AGENT_HEIGHT },
-    velocity: { x: 0, y: 0 },
-    acceleration: { x: 0, y: 0 },
-    status: role === 'chaser' ? AgentStatus.It : AgentStatus.Normal,
-    role,
-    elo: role === 'chaser' ? chaserElo : evaderElo,
-    color: AGENT_COLORS[id - 1] || AGENT_COLORS[0],
-    isOnGround: true,
-    cooldownTimer: 0,
-    lastAction: 'wait',
-    energy: physiology.energyCapacity,
-    maxEnergy: physiology.energyCapacity,
-    trajectory: [],
-    lastPlatformId: 0,
-    scale: { x: 1, y: 1 },
-    energyAtLastTakeoff: physiology.energyCapacity,
-    positionAtLastTakeoff: { x, y: viewportSize.height - 100 - AGENT_HEIGHT },
-    survivalTime: 0,
-    timeSinceBecameIt: 0,
-    modelId: role === 'chaser' ? 'current_chaser' : 'current_evader',
-  };
-}
-
-function createEpisodeState(seed: number): { gameState: GameState; flowDirection: 1 | -1 } {
-  const rng = mulberry32(seed);
-  // Seed parity guarantees both orientations are seen across the three evaluation rounds.
-  const mirrored = (seed & 1) === 1;
-  const flowDirection: 1 | -1 = mirrored ? -1 : 1;
-  const baseY = viewportSize.height - 100;
-  let platforms: PlatformState[] = [
-    { id: 0, position: { x: -200, y: baseY }, width: viewportSize.width + 400, height: PLATFORM_HEIGHT },
-  ];
-
-  let last = platforms[0];
-  let id = 1;
-  const targetX = viewportSize.width + 6500;
-  while (last.position.x + last.width < targetX) {
-    let gapX = MIN_PLATFORM_GAP_X + rng() * (MAX_PLATFORM_GAP_X - MIN_PLATFORM_GAP_X);
-    const gapY = (rng() - 0.5) * MAX_PLATFORM_GAP_Y * 1.5;
-    const newY = Math.min(viewportSize.height - 120, Math.max(250, last.position.y + gapY));
-    const verticalDifference = newY - last.position.y;
-    if (verticalDifference < -100) gapX = Math.max(MIN_PLATFORM_GAP_X, Math.min(gapX, 90));
-    else if (verticalDifference > 80) gapX = Math.max(gapX, 140);
-    const width = PLATFORM_MIN_WIDTH + rng() * (PLATFORM_MAX_WIDTH - PLATFORM_MIN_WIDTH);
-    const next: PlatformState = {
-      id: id++,
-      position: { x: last.position.x + last.width + gapX, y: newY },
-      width,
-      height: PLATFORM_HEIGHT,
-    };
-    platforms.push(next);
-    last = next;
-  }
-
-  // Randomize spacing and translation enough to prevent memorizing exact start coordinates.
-  const spread = 0.88 + rng() * 0.24;
-  const shift = (rng() - 0.5) * 90;
-  let startXs = [120 + shift, 120 + 400 * spread + shift, 120 + 670 * spread + shift];
-
-  if (mirrored) {
-    const mirrorRectX = (x: number, width: number) => viewportSize.width - (x + width);
-    platforms = platforms.map(platform => ({
-      ...platform,
-      position: { ...platform.position, x: mirrorRectX(platform.position.x, platform.width) },
-    }));
-    startXs = startXs.map(x => mirrorRectX(x, AGENT_WIDTH));
-  }
-
-  return {
-    flowDirection,
-    gameState: {
-      agents: [makeAgent(1, startXs[0], 'chaser'), makeAgent(2, startXs[1], 'evader'), makeAgent(3, startXs[2], 'evader')],
-      platforms,
-      cameraPosition: { x: 0, y: 0 },
-      gameTime: 0,
-      tagEffects: [],
-      avgSurvivalTime: 0,
-      avgTimeToTag: 0,
-    },
-  };
-}
 
 interface EpisodeStats {
   chaserFitness: number;
@@ -216,7 +147,6 @@ interface EpisodeStats {
   elapsedMs: number;
   falls: number;
   jumps: number;
-  gameState: GameState;
 }
 
 function runEpisode(
@@ -225,196 +155,24 @@ function runEpisode(
   seed: number,
   trackActions: { chaser: boolean; evader: boolean } = { chaser: true, evader: true }
 ): EpisodeStats {
-  const { gameState, flowDirection } = createEpisodeState(seed);
-  const chaserAgent = gameState.agents[0];
-  const evaders = gameState.agents.slice(1);
-  const initialClosestDistance = Math.min(...evaders.map(e => Math.hypot(e.position.x - chaserAgent.position.x, e.position.y - chaserAgent.position.y)));
-  const initialChaserX = chaserAgent.position.x;
-  const initialEvaderXs = evaders.map(e => e.position.x);
-  let maxChaserProgress = 0;
-  const maxEvaderProgress = initialEvaderXs.map(() => 0);
-  let cumulativeClosestDistance = 0;
-  let distanceSamples = 0;
-  let chaserFalls = 0;
-  let evaderFalls = 0;
-  let chaserJumps = 0;
-  let evaderJumps = 0;
-  let tagged = false;
-
-  const maxSteps = Math.ceil(NEAT_EPISODE_MAX_MS / DT);
-
-  for (let step = 0; step < maxSteps && !tagged; step++) {
-    gameState.gameTime += DT;
-    chaserAgent.timeSinceBecameIt += DT;
-    evaders.forEach(a => (a.survivalTime += DT));
-
-    const controlsByAgent = new Map<number, AgentControls>();
-    for (const agent of gameState.agents) {
-      const controller = agent.id === 1 ? chaser : evader;
-      const state = getAgentStateVector(agent, gameState, viewportSize);
-      const controls = controller.chooseControls(state);
-      controlsByAgent.set(agent.id, controls);
-      const roleForTelemetry = agent.id === 1 ? 'chaser' : 'evader';
-      if (trackActions[roleForTelemetry]) {
-        const counter = roleForTelemetry === 'chaser' ? actionCountsChaser : actionCountsEvader;
-        counter[controls.action] = (counter[controls.action] || 0) + 1;
-      }
-    }
-
-    for (const agent of gameState.agents) {
-      const role: 'chaser' | 'evader' = agent.id === 1 ? 'chaser' : 'evader';
-      const controls = controlsByAgent.get(agent.id) || {
-        move: 0, jump: 0, sprint: 0, outputs: [0, 0, 0, 0], action: 'left_drive', actionIndex: 0, label: 'wait',
-      };
-      agent.lastAction = controls.label;
-
-      const locomotion = stepLocomotion(agent, controls, DT, role);
-      agent.acceleration.x = locomotion.accelerationX;
-      agent.maxEnergy = getPhysiology(role).energyCapacity;
-      agent.energy = locomotion.energy;
-      const velocity = locomotion.velocity;
-
-      if (locomotion.jumped) {
-        totalJumps++;
-        if (agent.id === 1) chaserJumps++;
-        else evaderJumps++;
-      }
-
-      velocity.y += GRAVITY;
-      const nextPosition = { x: agent.position.x + velocity.x, y: agent.position.y + velocity.y };
-      const minVisibleX = gameState.cameraPosition.x;
-      const maxVisibleX = gameState.cameraPosition.x + viewportSize.width - AGENT_WIDTH;
-      agent.touchingCameraFrame = false;
-      agent.cameraFrameContact = null;
-      if (nextPosition.x < minVisibleX) {
-        nextPosition.x = minVisibleX;
-        velocity.x = 0;
-        agent.touchingCameraFrame = true;
-        agent.cameraFrameContact = 'left';
-      } else if (nextPosition.x > maxVisibleX) {
-        nextPosition.x = maxVisibleX;
-        velocity.x = 0;
-        agent.touchingCameraFrame = true;
-        agent.cameraFrameContact = 'right';
-      }
-
-      let grounded = false;
-      let landedPlatformId = agent.lastPlatformId;
-      for (const platform of gameState.platforms) {
-        const prevBottom = agent.position.y + AGENT_HEIGHT;
-        const nextBottom = nextPosition.y + AGENT_HEIGHT;
-        const aligned = nextPosition.x + AGENT_WIDTH > platform.position.x && nextPosition.x < platform.position.x + platform.width;
-        if (aligned && prevBottom <= platform.position.y + 8 && nextBottom >= platform.position.y && velocity.y >= 0) {
-          nextPosition.y = platform.position.y - AGENT_HEIGHT;
-          velocity.y = 0;
-          grounded = true;
-          landedPlatformId = platform.id;
-          break;
-        }
-      }
-
-      if (nextPosition.y > FALL_BOUNDARY) {
-        totalFalls++;
-        if (agent.id === 1) chaserFalls++;
-        else evaderFalls++;
-        const candidates = gameState.platforms.filter(
-          p => p.position.x + p.width >= gameState.cameraPosition.x && p.position.x <= gameState.cameraPosition.x + viewportSize.width
-        );
-        const spawn = (candidates.length ? candidates : gameState.platforms).reduce((best, p) => {
-          const d = Math.abs((p.position.x + p.width / 2) - agent.position.x);
-          const bestD = Math.abs((best.position.x + best.width / 2) - agent.position.x);
-          return d < bestD ? p : best;
-        });
-        nextPosition.x = spawn.position.x + spawn.width / 2 - AGENT_WIDTH / 2;
-        nextPosition.y = spawn.position.y - AGENT_HEIGHT - 20;
-        velocity.x = 0;
-        velocity.y = 0;
-        agent.energy = agent.maxEnergy;
-        grounded = false;
-        landedPlatformId = spawn.id;
-      }
-
-      agent.position = nextPosition;
-      agent.velocity = velocity;
-      agent.isOnGround = grounded;
-      agent.lastPlatformId = landedPlatformId;
-    }
-
-    // Tag ends the episode. Roles never swap during evolutionary evaluation.
-    for (const evaderAgent of evaders) {
-      const dx = (chaserAgent.position.x + AGENT_WIDTH / 2) - (evaderAgent.position.x + AGENT_WIDTH / 2);
-      const dy = (chaserAgent.position.y + AGENT_HEIGHT / 2) - (evaderAgent.position.y + AGENT_HEIGHT / 2);
-      if (Math.hypot(dx, dy) < (AGENT_WIDTH + AGENT_HEIGHT) / 2) {
-        tagged = true;
-        totalTags++;
-        break;
-      }
-    }
-
-    const minX = Math.min(...evaders.map(a => a.position.x));
-    const maxX = Math.max(...evaders.map(a => a.position.x + AGENT_WIDTH));
-    const desiredCameraX = (minX + maxX) / 2 - viewportSize.width * 0.45;
-    gameState.cameraPosition.x += (desiredCameraX - gameState.cameraPosition.x) * 0.12;
-
-    const closestDistance = Math.min(...evaders.map(e => Math.hypot(e.position.x - chaserAgent.position.x, e.position.y - chaserAgent.position.y)));
-    cumulativeClosestDistance += closestDistance;
-    distanceSamples++;
-    maxChaserProgress = Math.max(maxChaserProgress, flowDirection * (chaserAgent.position.x - initialChaserX));
-    evaders.forEach((e, i) => {
-      maxEvaderProgress[i] = Math.max(maxEvaderProgress[i], flowDirection * (e.position.x - initialEvaderXs[i]));
-    });
-  }
-
-  const elapsedMs = gameState.gameTime;
-  const elapsedSec = elapsedMs / 1000;
-  const maxSec = NEAT_EPISODE_MAX_MS / 1000;
-  const finalClosestDistance = Math.min(...evaders.map(e => Math.hypot(e.position.x - chaserAgent.position.x, e.position.y - chaserAgent.position.y)));
-  const averageDistance = cumulativeClosestDistance / Math.max(1, distanceSamples);
-  const closingGain = initialClosestDistance - finalClosestDistance;
-  const chaserProgress = Math.max(0, maxChaserProgress);
-  const evaderProgress = maxEvaderProgress.reduce((sum, progress) => sum + Math.max(0, progress), 0) / evaders.length;
-
-  // Symmetric 0–200 terminal outcome scale. An early tag approaches 200/0, a late tag approaches
-  // 100/100, and surviving the whole episode is 0/200. Small bounded shaping only bootstraps
-  // useful locomotion; it cannot overwhelm the win/loss objective. Energy and jumping are not
-  // rewarded directly — they matter only through whether they help the agent win.
-  const timeFraction = Math.max(0, Math.min(1, elapsedSec / Math.max(1e-6, maxSec)));
-  const chaserOutcome = tagged ? 100 + 100 * (1 - timeFraction) : 0;
-  const evaderOutcome = tagged ? 100 * timeFraction : 200;
-
-  const closingNorm = Math.max(-1, Math.min(1, closingGain / Math.max(150, initialClosestDistance)));
-  const chaserProgressNorm = Math.max(0, Math.min(1, chaserProgress / 600));
-  const evaderProgressNorm = Math.max(0, Math.min(1, evaderProgress / 600));
-  const evaderFallsPerAgent = evaderFalls / Math.max(1, evaders.length);
-
-  const chaserShaping =
-    10 * closingNorm +
-    5 * chaserProgressNorm -
-    5 * Math.min(2, chaserFalls);
-  const evaderShaping =
-    -10 * closingNorm +
-    5 * evaderProgressNorm -
-    5 * Math.min(2, evaderFallsPerAgent);
-
-  const chaserFitness = Math.max(0.01, Math.min(220, chaserOutcome + chaserShaping));
-  const evaderFitness = Math.max(0.01, Math.min(220, evaderOutcome + evaderShaping));
-
-  gameState.avgSurvivalTime = elapsedMs;
-  gameState.avgTimeToTag = tagged ? elapsedMs : NEAT_EPISODE_MAX_MS;
-  gameState.agents.forEach(a => {
-    a.stateVector = getAgentStateVector(a, gameState, viewportSize);
-    a.elo = a.id === 1 ? chaserElo : evaderElo;
+  const result = runTrainingEpisode(chaser, evader, seed, {
+    trackChaserActions: trackActions.chaser,
+    trackEvaderActions: trackActions.evader,
+    viewportSize,
   });
 
-  return {
-    chaserFitness,
-    evaderFitness,
-    tagged,
-    elapsedMs,
-    falls: chaserFalls + evaderFalls,
-    jumps: chaserJumps + evaderJumps,
-    gameState,
-  };
+  if (result.tagged) totalTags++;
+  totalFalls += result.falls;
+  totalJumps += result.jumps;
+  for (let i = 0; i < ACTION_SPACE.length; i++) {
+    const action = ACTION_SPACE[i];
+    const chaserCount = result.chaserActionCounts[i] || 0;
+    const evaderCount = result.evaderActionCounts[i] || 0;
+    if (chaserCount) actionCountsChaser[action] = (actionCountsChaser[action] || 0) + chaserCount;
+    if (evaderCount) actionCountsEvader[action] = (actionCountsEvader[action] || 0) + evaderCount;
+  }
+
+  return result;
 }
 
 function hallOfFamePool(archive: HallOfFameArchive): HallOfFameEntry[] {
@@ -463,6 +221,236 @@ function selectHallOpponent(archive: HallOfFameArchive, genomeIndex: number, rou
   if (pool.length === 0) return null;
   const index = (genomeIndex * 7 + round * 5 + generation * 3) % pool.length;
   return pool[index];
+}
+
+
+function invalidateParallelGeneration() {
+  evaluationEpoch++;
+  parallelTasks = [];
+  parallelTaskCursor = 0;
+  parallelTasksCompleted = 0;
+  parallelGenerationPrepared = false;
+  activeParallelTasks.clear();
+}
+
+function prepareParallelGeneration() {
+  const n = chaserPopulation.genomes.length;
+  const generation = chaserPopulation.generation;
+  const tasks: ParallelEvaluationTask[] = [];
+  const evaderHofPool = hallOfFamePool(evaderHallOfFame);
+  const chaserHofPool = hallOfFamePool(chaserHallOfFame);
+
+  for (let round = 0; round < NEAT_OPPONENTS_PER_GENOME; round++) {
+    for (let chaserIndex = 0; chaserIndex < n; chaserIndex++) {
+      const evaderIndex = (chaserIndex + round * 17 + generation * 7) % n;
+      tasks.push({
+        id: nextParallelTaskId++,
+        epoch: evaluationEpoch,
+        phase: 'population',
+        chaserIndex,
+        evaderIndex,
+        chaserGenome: chaserPopulation.genomes[chaserIndex],
+        evaderGenome: evaderPopulation.genomes[evaderIndex],
+        seed: generation * 100003 + round * 7919,
+        trackChaserActions: true,
+        trackEvaderActions: true,
+        currentPopulationMatch: true,
+      });
+    }
+  }
+
+  if (NEAT_HOF_OPPONENTS_PER_GENOME > 0 && evaderHofPool.length > 0) {
+    for (let round = 0; round < NEAT_HOF_OPPONENTS_PER_GENOME; round++) {
+      for (let chaserIndex = 0; chaserIndex < n; chaserIndex++) {
+        const opponent = evaderHofPool[(chaserIndex * 7 + round * 5 + generation * 3) % evaderHofPool.length];
+        tasks.push({
+          id: nextParallelTaskId++,
+          epoch: evaluationEpoch,
+          phase: 'chaser_hof',
+          chaserIndex,
+          evaderIndex: null,
+          chaserGenome: chaserPopulation.genomes[chaserIndex],
+          evaderGenome: opponent.genome,
+          seed: generation * 200003 + round * 12011 + 101,
+          trackChaserActions: true,
+          trackEvaderActions: false,
+          currentPopulationMatch: false,
+        });
+      }
+    }
+  }
+
+  if (NEAT_HOF_OPPONENTS_PER_GENOME > 0 && chaserHofPool.length > 0) {
+    for (let round = 0; round < NEAT_HOF_OPPONENTS_PER_GENOME; round++) {
+      for (let evaderIndex = 0; evaderIndex < n; evaderIndex++) {
+        const opponent = chaserHofPool[(evaderIndex * 7 + round * 5 + generation * 3) % chaserHofPool.length];
+        tasks.push({
+          id: nextParallelTaskId++,
+          epoch: evaluationEpoch,
+          phase: 'evader_hof',
+          chaserIndex: null,
+          evaderIndex,
+          chaserGenome: opponent.genome,
+          evaderGenome: evaderPopulation.genomes[evaderIndex],
+          seed: generation * 300007 + round * 16001 + 211,
+          trackChaserActions: false,
+          trackEvaderActions: true,
+          currentPopulationMatch: false,
+        });
+      }
+    }
+  }
+
+  parallelTasks = tasks;
+  parallelTaskCursor = 0;
+  parallelTasksCompleted = 0;
+  activeParallelTasks.clear();
+  parallelGenerationPrepared = true;
+}
+
+function applyParallelEpisodeResult(task: ParallelEvaluationTask, result: TrainingEpisodeResult) {
+  if (result.tagged) totalTags++;
+  totalFalls += result.falls;
+  totalJumps += result.jumps;
+  for (let i = 0; i < ACTION_SPACE.length; i++) {
+    const action = ACTION_SPACE[i];
+    const chaserCount = result.chaserActionCounts[i] || 0;
+    const evaderCount = result.evaderActionCounts[i] || 0;
+    if (chaserCount) actionCountsChaser[action] = (actionCountsChaser[action] || 0) + chaserCount;
+    if (evaderCount) actionCountsEvader[action] = (actionCountsEvader[action] || 0) + evaderCount;
+  }
+
+  if (task.phase === 'population') {
+    const chaserIndex = task.chaserIndex!;
+    const evaderIndex = task.evaderIndex!;
+    chaserFitnessTotals[chaserIndex] += result.chaserFitness;
+    chaserFitnessCounts[chaserIndex]++;
+    evaderFitnessTotals[evaderIndex] += result.evaderFitness;
+    evaderFitnessCounts[evaderIndex]++;
+    generationPopulationMatches++;
+    if (result.tagged) {
+      generationPopulationTags++;
+      generationPopulationTagTimeMs += result.elapsedMs;
+    }
+  } else if (task.phase === 'chaser_hof') {
+    const chaserIndex = task.chaserIndex!;
+    chaserFitnessTotals[chaserIndex] += result.chaserFitness;
+    chaserFitnessCounts[chaserIndex]++;
+  } else {
+    const evaderIndex = task.evaderIndex!;
+    evaderFitnessTotals[evaderIndex] += result.evaderFitness;
+    evaderFitnessCounts[evaderIndex]++;
+  }
+
+  recordEpisodeTelemetry(result, task.currentPopulationMatch);
+}
+
+function fallBackToSerialTraining(reason: unknown) {
+  console.warn('Parallel evaluator pool unavailable; falling back to optimized single-worker training.', reason);
+  for (const slot of evaluatorPool) slot.worker.terminate();
+  evaluatorPool = [];
+  parallelBackendActive = false;
+  parallelGenerationPrepared = false;
+  activeParallelTasks.clear();
+  resetEvaluationAccumulators();
+  if (isRunning) {
+    if (timerId) clearTimeout(timerId);
+    timerId = setTimeout(runHeadlessBatch, 0);
+  }
+}
+
+function maybeFinishParallelGeneration() {
+  if (!parallelGenerationPrepared) return;
+  if (parallelTasksCompleted < parallelTasks.length) return;
+  if (activeParallelTasks.size > 0 || parallelTaskCursor < parallelTasks.length) return;
+
+  finishGeneration();
+  parallelGenerationPrepared = false;
+  if (isRunning) {
+    prepareParallelGeneration();
+    dispatchParallelWork();
+  }
+}
+
+function handleEvaluatorMessage(slot: EvaluatorSlot, event: MessageEvent) {
+  const { type, payload } = event.data || {};
+  const taskId = payload?.taskId as number | undefined;
+  const task = taskId !== undefined ? activeParallelTasks.get(taskId) : undefined;
+  if (taskId !== undefined) activeParallelTasks.delete(taskId);
+  slot.busy = false;
+  slot.taskId = null;
+
+  if (type === 'ERROR') {
+    fallBackToSerialTraining(payload?.message || 'Evaluator worker failed');
+    return;
+  }
+
+  if (type === 'RESULT' && task && payload?.epoch === evaluationEpoch && task.epoch === evaluationEpoch) {
+    applyParallelEpisodeResult(task, payload.result as TrainingEpisodeResult);
+    parallelTasksCompleted++;
+    emitTelemetry();
+  }
+
+  maybeFinishParallelGeneration();
+  if (isRunning && parallelBackendActive) dispatchParallelWork();
+}
+
+function initializeEvaluatorPool() {
+  if (poolInitializationAttempted) return;
+  poolInitializationAttempted = true;
+
+  try {
+    const logicalCores = Math.max(1, self.navigator?.hardwareConcurrency || 4);
+    // Reserve one logical core for the UI/browser and cap worker count to avoid runaway memory/thermal pressure.
+    const targetWorkers = Math.max(1, Math.min(12, logicalCores - 1));
+    for (let i = 0; i < targetWorkers; i++) {
+      const worker = new Worker(new URL('./episodeWorker.ts', import.meta.url), { type: 'module' });
+      const slot: EvaluatorSlot = { worker, busy: false, taskId: null };
+      worker.onmessage = event => handleEvaluatorMessage(slot, event);
+      worker.onerror = event => fallBackToSerialTraining(event.message || event);
+      evaluatorPool.push(slot);
+    }
+    parallelBackendActive = evaluatorPool.length > 0;
+  } catch (error) {
+    fallBackToSerialTraining(error);
+  }
+}
+
+function dispatchParallelWork() {
+  if (!isRunning || !parallelBackendActive) return;
+  if (!parallelGenerationPrepared) prepareParallelGeneration();
+
+  for (const slot of evaluatorPool) {
+    if (slot.busy || parallelTaskCursor >= parallelTasks.length) continue;
+    const task = parallelTasks[parallelTaskCursor++];
+    slot.busy = true;
+    slot.taskId = task.id;
+    activeParallelTasks.set(task.id, task);
+    slot.worker.postMessage({
+      type: 'EVALUATE',
+      payload: {
+        taskId: task.id,
+        epoch: task.epoch,
+        chaserGenome: task.chaserGenome,
+        evaderGenome: task.evaderGenome,
+        seed: task.seed,
+        trackChaserActions: task.trackChaserActions,
+        trackEvaderActions: task.trackEvaderActions,
+      },
+    });
+  }
+
+  maybeFinishParallelGeneration();
+}
+
+function startTrainingEngine() {
+  initializeEvaluatorPool();
+  if (parallelBackendActive) {
+    if (timerId) clearTimeout(timerId);
+    dispatchParallelWork();
+  } else {
+    runHeadlessBatch();
+  }
 }
 
 function refreshControllers() {
@@ -620,6 +608,10 @@ function average(values: number[]): number {
 }
 
 function evaluationProgress(): number {
+  if (parallelBackendActive && parallelGenerationPrepared) {
+    return Math.max(0, Math.min(1, parallelTasksCompleted / Math.max(1, parallelTasks.length)));
+  }
+
   const n = NEAT_POPULATION_SIZE;
   const hasEvaderHof = NEAT_HOF_OPPONENTS_PER_GENOME > 0 && hallOfFamePool(evaderHallOfFame).length > 0;
   const hasChaserHof = NEAT_HOF_OPPONENTS_PER_GENOME > 0 && hallOfFamePool(chaserHallOfFame).length > 0;
@@ -689,6 +681,8 @@ function emitTelemetry(force = false) {
       evaluationProgress: evaluationProgress(),
       trainingSpeedX: currentTrainingSpeedX,
       trainingEpisodesPerSecond: currentTrainingEpisodesPerSecond,
+      trainingBackend: parallelBackendActive ? 'CPU parallel' : 'CPU optimized',
+      trainingWorkerCount: parallelBackendActive ? evaluatorPool.length : 1,
       gameTime: totalSimulatedTime,
       chaserElo,
       evaderElo,
@@ -718,7 +712,7 @@ function emitTelemetry(force = false) {
 }
 
 function runHeadlessBatch() {
-  if (!isRunning) return;
+  if (!isRunning || parallelBackendActive) return;
 
   const burstStartedAt = performance.now();
   do {
@@ -745,6 +739,7 @@ function seedPopulations(chaserWeights?: AgentWeights, evaderWeights?: AgentWeig
   }
   refreshControllers();
   resetEvaluationAccumulators();
+  invalidateParallelGeneration();
 }
 
 self.onmessage = (event: MessageEvent) => {
@@ -761,7 +756,7 @@ self.onmessage = (event: MessageEvent) => {
       isRunning = true;
       if (timerId) clearTimeout(timerId);
       resetTrainingThroughput();
-      runHeadlessBatch();
+      startTrainingEngine();
       break;
     }
 
@@ -792,6 +787,7 @@ self.onmessage = (event: MessageEvent) => {
       seededFromStart = true;
       if (typeof payload?.chaserElo === 'number') chaserElo = payload.chaserElo;
       if (typeof payload?.evaderElo === 'number') evaderElo = payload.evaderElo;
+      if (isRunning) startTrainingEngine();
       break;
 
     case 'RESET':
@@ -817,8 +813,10 @@ self.onmessage = (event: MessageEvent) => {
       clearHallOfFame();
       lastGenerationBalance = null;
       resetEvaluationAccumulators();
+      invalidateParallelGeneration();
       resetTrainingThroughput();
       emitTelemetry(true);
+      if (isRunning) startTrainingEngine();
       break;
   }
 };

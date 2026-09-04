@@ -106,6 +106,8 @@ export const App: React.FC = () => {
     balanceHistory: [],
     trainingSpeedX: 0,
     trainingEpisodesPerSecond: 0,
+    trainingBackend: 'CPU optimized',
+    trainingWorkerCount: 1,
   }));
 
 
@@ -380,6 +382,8 @@ export const App: React.FC = () => {
               balanceHistory: appendUnique(prev.balanceHistory, balanceMetric),
               trainingSpeedX: typeof payload.trainingSpeedX === 'number' ? payload.trainingSpeedX : prev.trainingSpeedX,
               trainingEpisodesPerSecond: typeof payload.trainingEpisodesPerSecond === 'number' ? payload.trainingEpisodesPerSecond : prev.trainingEpisodesPerSecond,
+              trainingBackend: typeof payload.trainingBackend === 'string' ? payload.trainingBackend : prev.trainingBackend,
+              trainingWorkerCount: typeof payload.trainingWorkerCount === 'number' ? payload.trainingWorkerCount : prev.trainingWorkerCount,
             };
           });
 
@@ -1254,6 +1258,9 @@ export const App: React.FC = () => {
               </span>
               <span className="text-[9px] font-mono text-gray-500 min-w-[58px]">
                 {formatTrainingRate(diagnosticsState.trainingEpisodesPerSecond)} ep/s
+              </span>
+              <span className="text-[9px] font-mono text-gray-600" title={diagnosticsState.trainingBackend || 'CPU training'}>
+                {diagnosticsState.trainingWorkerCount || 1}w
               </span>
             </div>
             <button onClick={() => setIsTrainingPaused(p => !p)} className="p-2 rounded-lg border border-gray-700 text-amber-200 hover:bg-gray-800" title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>

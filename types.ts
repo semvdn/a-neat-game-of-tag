@@ -185,4 +185,6 @@ export interface DiagnosticsState {
   balanceHistory?: BalanceTelemetry[];
   trainingSpeedX?: number;
   trainingEpisodesPerSecond?: number;
+  trainingBackend?: string;
+  trainingWorkerCount?: number;
 }

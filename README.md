@@ -4,7 +4,7 @@ This branch ports the original PPO tag agents to a population-based **NEAT (Neur
 
 ## What changed
 
-The old actor/critic + Adam + trajectory/GAE training path has been removed. Training is now owned by a single Web Worker and evolves two independent populations:
+The old actor/critic + Adam + trajectory/GAE training path has been removed. Training is owned by a coordinator Web Worker plus a dynamically sized pool of episode-evaluation workers and evolves two independent populations:
 
 - **Chaser population:** 48 genomes
 - **Evader population:** 48 genomes
@@ -18,7 +18,7 @@ The main React thread no longer learns. It only renders the current champion gen
 
 ## Training cycle
 
-The persistent training worker performs headless evolutionary evaluation continuously at the maximum throughput the browser/device can sustain. There is no user-set training-speed cap.
+The persistent training coordinator performs headless evolutionary evaluation continuously at the maximum throughput the browser/device can sustain. Independent matches are distributed across CPU workers (one logical core is reserved for the browser/UI, with a 12-worker cap). If nested workers are unavailable, training automatically falls back to the optimized single-worker evaluator. There is no user-set training-speed cap.
 
 For each generation:
 
@@ -129,11 +129,29 @@ Role-level Elo is retained only as a human-readable evaluation signal. It is **n
 The visible canvas and the evolutionary worker now run on independent clocks.
 
 - **View:** `0.5x`, `1x`, `2x`, `5x`, `10x`, with its own pause, single-frame step, and **Reset view** control.
-- **Train:** always runs at maximum available worker throughput, with its own pause. The UI reports the measured simulated-time multiplier (`× realtime`) and completed episodes per second instead of exposing a requested speed setting.
+- **Train:** always runs at maximum available throughput, with its own pause. The UI reports the measured simulated-time multiplier (`× realtime`), completed episodes per second, and the number of active CPU evaluation workers instead of exposing a requested speed setting.
 - The worker no longer sends sampled training game states to replace the canvas. The visible game is always one continuous champion arena.
 - After each completed generation, newly reported chaser and evader champions are hot-swapped into the running arena without resetting positions, velocity, stamina, roles, cooldowns, platforms, or game time.
 - **Reset view** resets only the visible arena and its local match history; populations, Hall of Fame, generation, and worker state continue untouched.
 - Worker counters/Elo remain worker-owned, so playing or resetting the champion view cannot distort training diagnostics.
+
+## Training performance optimizations
+
+The headless evaluator is deliberately optimized around the operations that dominate NEAT training:
+
+- compiled NEAT phenotypes use dense numeric arrays and reusable activation scratch buffers instead of allocating `Map` objects on every activation;
+- the 31-input observation path writes into reusable `Float64Array` buffers;
+- nearest-platform sensing uses a linear top-3 selection instead of allocating and sorting the full platform list every agent/frame;
+- training locomotion mutates agent state in place instead of allocating rich per-frame diagnostics objects;
+- tag checks use squared distances where only a threshold comparison is required;
+- respawn/platform scans avoid temporary `filter`/`reduce` arrays;
+- independent episode evaluations run concurrently in a worker pool.
+
+The optimized paths were regression-checked against the previous implementation: state vectors and NEAT outputs match exactly, locomotion differs only at floating-point roundoff, and fixed-genome episode fitness/outcomes match exactly for the tested seeds. In local Node microbenchmarks, the optimized single-thread episode evaluator was roughly 12× faster than the previous evaluator for the same genomes/seeds. Browser performance will vary by CPU and worker scheduling.
+
+### Why the RTX GPU is not used yet
+
+WebGPU can run compute work from Web Workers, but accelerating only the tiny NEAT network forward pass would require CPU→GPU dispatch and GPU→CPU readback every simulated frame, which is a poor trade for these small, variable-topology networks. The much larger cost is the branch-heavy game simulation and sensing. A GPU backend would therefore only make sense as a larger rewrite that keeps many complete episodes resident on the GPU in packed buffers and evaluates them in batches. For the current population size and architecture, CPU hot-path optimization plus parallel episode workers is the lower-overhead path and preserves the existing simulation exactly.
 
 ## Persistence
 
@@ -182,7 +200,9 @@ The original AI Studio/Vite Gemini environment plumbing is left in place, althou
 
 - `learning/neat.ts` — genome, phenotype, mutation, crossover, speciation and population evolution
 - `learning/agent.ts` — lightweight runtime wrapper around one NEAT genome
-- `workers/trainingWorker.ts` — population ownership, headless matches, fitness and generation loop
+- `workers/trainingWorker.ts` — population ownership, generation scheduling, telemetry and CPU worker pool
+- `workers/episodeWorker.ts` — parallel episode-evaluation worker
+- `learning/trainingEpisode.ts` — optimized deterministic headless episode evaluator
 - `components/PerformanceDiagnostics.tsx` — NEAT diagnostics and topology visualizer
 - `App.tsx` — champion rendering, worker lifecycle, persistence and UI integration
 - `constants.ts` — NEAT and game parameters

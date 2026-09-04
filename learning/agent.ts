@@ -11,6 +11,14 @@ import {
 // Kept as an alias so the existing App persistence/worker plumbing needs only a small migration.
 export type AgentWeights = NeatGenomeData;
 
+
+export interface FastAgentControls {
+  move: number;
+  jump: number;
+  sprint: number;
+  actionIndex: number;
+}
+
 export interface AgentControls {
   /** Signed horizontal drive: -1 full left, +1 full right. */
   move: number;
@@ -113,6 +121,20 @@ export class LearningAgent {
 
   public getGeneration(): number {
     return this.genome.generation || 0;
+  }
+
+  chooseControlsFast(state: ArrayLike<number>, target: FastAgentControls): FastAgentControls {
+    const outputs = this.network.activateFast(state);
+    const leftDrive = clamp01(outputs[0] || 0);
+    const rightDrive = clamp01(outputs[1] || 0);
+    target.move = clampSigned(rightDrive - leftDrive);
+    target.jump = clamp01(outputs[2] || 0);
+    target.sprint = clamp01(outputs[3] || 0);
+
+    let actionIndex = 0;
+    for (let i = 1; i < outputs.length; i++) if (outputs[i] > outputs[actionIndex]) actionIndex = i;
+    target.actionIndex = actionIndex;
+    return target;
   }
 
   chooseControls(state: number[]): AgentControls {

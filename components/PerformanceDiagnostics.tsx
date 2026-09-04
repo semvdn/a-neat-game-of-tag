@@ -282,6 +282,9 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             <span className="text-[10px] font-mono text-gray-500 min-w-[62px]">
               {formatTrainingRate(diagnostics.trainingEpisodesPerSecond)} ep/s
             </span>
+            <span className="text-[10px] font-mono text-gray-600" title={diagnostics.trainingBackend || 'CPU training'}>
+              {diagnostics.trainingWorkerCount || 1} workers
+            </span>
             <button onClick={onToggleTrainingPause} className="p-1.5 rounded hover:bg-gray-900 text-amber-200" title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>{isTrainingPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}</button>
           </div>
           <button onClick={onClose} className="p-2 rounded border border-gray-800 hover:bg-gray-900"><X className="w-4 h-4" /></button>
