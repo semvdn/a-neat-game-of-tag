@@ -14,6 +14,15 @@ export const FRICTION = 0.9; // closer to 1 is less friction
 export const MAX_SPEED = 5;
 export const JUMP_STRENGTH = -13;
 
+// Progression upgrades. These do not change the original 4-action controller or 39-input senses.
+// Sprint uses the strength of an already-selected left/right NEAT output as a continuous intensity.
+export const SPRINT_MAX_SPEED = 7.25;
+export const SPRINT_ACCELERATION_MULTIPLIER = 1.35;
+export const SPRINT_ENERGY_COST_PER_SEC = 28;
+// Controlled jump uses the strength of the already-selected jump output to scale the original jump.
+export const CONTROLLED_JUMP_MIN_POWER_RATIO = 0.45;
+export const CONTROLLED_JUMP_MIN_ENERGY_COST = 4;
+
 // Energy System
 export const MAX_ENERGY = 100;
 export const ENERGY_REGEN_RATE = 15; // points per second

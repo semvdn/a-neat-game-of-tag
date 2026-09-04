@@ -1,6 +1,7 @@
 import { LearningAgent } from '../learning/agent';
 import { runTrainingEpisode } from '../learning/trainingEpisode';
 import type { NeatGenomeData } from '../learning/neat';
+import type { ActiveUpgradeState } from '../types';
 
 interface EvaluateMessage {
   type: 'EVALUATE';
@@ -12,6 +13,7 @@ interface EvaluateMessage {
     seed: number;
     trackChaserActions: boolean;
     trackEvaderActions: boolean;
+    upgrades?: ActiveUpgradeState;
   };
 }
 
@@ -50,6 +52,7 @@ self.onmessage = (event: MessageEvent<EvaluateMessage>) => {
     const result = runTrainingEpisode(chaser, evader, payload.seed, {
       trackChaserActions: payload.trackChaserActions,
       trackEvaderActions: payload.trackEvaderActions,
+      upgrades: payload.upgrades,
     });
     self.postMessage({
       type: 'RESULT',

@@ -15,6 +15,20 @@ export enum AgentStatus {
 
 export type RewardBreakdown = { [key: string]: number };
 
+export type UpgradeMode = 'off' | 'auto' | 'on';
+export interface UpgradeRule {
+  mode: UpgradeMode;
+  threshold: number;
+}
+export interface UpgradeConfig {
+  sprint: UpgradeRule;
+  controlledJump: UpgradeRule;
+}
+export interface ActiveUpgradeState {
+  sprint: boolean;
+  controlledJump: boolean;
+}
+
 export interface LidarRayData {
   angle: number;
   direction: Vector2D;
@@ -52,6 +66,8 @@ export interface AgentState {
   lidarRays?: LidarRayData[];
   touchingCameraFrame?: boolean;
   cameraFrameContact?: 'left' | 'right' | null;
+  sprintIntensity?: number;
+  jumpPower?: number;
 }
 
 export interface PlatformState {
@@ -182,4 +198,10 @@ export interface DiagnosticsState {
   trainingEpisodesPerSecond?: number;
   trainingBackend?: string;
   trainingWorkerCount?: number;
+  upgradePerformanceScore?: number;
+  upgradePeakPerformanceScore?: number;
+  sprintUpgradeActive?: boolean;
+  controlledJumpUpgradeActive?: boolean;
+  sprintAutoUnlocked?: boolean;
+  controlledJumpAutoUnlocked?: boolean;
 }

@@ -2,7 +2,7 @@ import { LearningAgent, type AgentWeights } from '../learning/agent';
 import { NeatPopulation, DEFAULT_NEAT_CONFIG, cloneGenome, type NeatGenerationMetrics, type NeatGenomeData } from '../learning/neat';
 import { updateEloRatings, createLeaderboardEntries } from '../learning/elo';
 import { runTrainingEpisode, type TrainingEpisodeResult } from '../learning/trainingEpisode';
-import type { BalanceTelemetry } from '../types';
+import type { ActiveUpgradeState, BalanceTelemetry, UpgradeConfig } from '../types';
 import {
   INITIAL_ELO,
   SURVIVAL_TIME_HISTORY_LENGTH,
@@ -49,6 +49,39 @@ let timerId: ReturnType<typeof setTimeout> | null = null;
 const viewportSize = { width: WORLD_REF_WIDTH, height: WORLD_REF_HEIGHT };
 let seededFromStart = false;
 
+const DEFAULT_UPGRADE_CONFIG: UpgradeConfig = {
+  sprint: { mode: 'auto', threshold: 140 },
+  controlledJump: { mode: 'auto', threshold: 180 },
+};
+let upgradeConfig: UpgradeConfig = DEFAULT_UPGRADE_CONFIG;
+let upgradePerformanceScore = 0;
+let upgradePeakPerformanceScore = 0;
+let sprintAutoUnlocked = false;
+let controlledJumpAutoUnlocked = false;
+
+function sanitizeUpgradeConfig(value?: Partial<UpgradeConfig>): UpgradeConfig {
+  const normalize = (rule: any, fallback: { mode: 'off' | 'auto' | 'on'; threshold: number }) => ({
+    mode: rule?.mode === 'off' || rule?.mode === 'on' || rule?.mode === 'auto' ? rule.mode : fallback.mode,
+    threshold: Number.isFinite(Number(rule?.threshold)) ? Math.max(0, Number(rule.threshold)) : fallback.threshold,
+  });
+  return {
+    sprint: normalize(value?.sprint, DEFAULT_UPGRADE_CONFIG.sprint),
+    controlledJump: normalize(value?.controlledJump, DEFAULT_UPGRADE_CONFIG.controlledJump),
+  };
+}
+
+function updateAutoUnlocks() {
+  if (upgradeConfig.sprint.mode === 'auto' && upgradePeakPerformanceScore >= upgradeConfig.sprint.threshold) sprintAutoUnlocked = true;
+  if (upgradeConfig.controlledJump.mode === 'auto' && upgradePeakPerformanceScore >= upgradeConfig.controlledJump.threshold) controlledJumpAutoUnlocked = true;
+}
+
+function activeUpgradeState(): ActiveUpgradeState {
+  return {
+    sprint: upgradeConfig.sprint.mode === 'on' || (upgradeConfig.sprint.mode === 'auto' && sprintAutoUnlocked),
+    controlledJump: upgradeConfig.controlledJump.mode === 'on' || (upgradeConfig.controlledJump.mode === 'auto' && controlledJumpAutoUnlocked),
+  };
+}
+
 // Training always runs at maximum available throughput. The preferred backend dispatches
 // independent episodes to a CPU worker pool; the short-burst loop below remains as a
 // compatibility fallback when nested workers are unavailable.
@@ -90,6 +123,7 @@ interface ParallelEvaluationTask {
   trackChaserActions: boolean;
   trackEvaderActions: boolean;
   currentPopulationMatch: boolean;
+  upgrades: ActiveUpgradeState;
 }
 
 interface EvaluatorSlot {
@@ -159,6 +193,7 @@ function runEpisode(
     trackChaserActions: trackActions.chaser,
     trackEvaderActions: trackActions.evader,
     viewportSize,
+    upgrades: activeUpgradeState(),
   });
 
   if (result.tagged) totalTags++;
@@ -255,6 +290,7 @@ function prepareParallelGeneration() {
         trackChaserActions: true,
         trackEvaderActions: true,
         currentPopulationMatch: true,
+        upgrades: { ...activeUpgradeState() },
       });
     }
   }
@@ -275,6 +311,7 @@ function prepareParallelGeneration() {
           trackChaserActions: true,
           trackEvaderActions: false,
           currentPopulationMatch: false,
+          upgrades: { ...activeUpgradeState() },
         });
       }
     }
@@ -296,6 +333,7 @@ function prepareParallelGeneration() {
           trackChaserActions: false,
           trackEvaderActions: true,
           currentPopulationMatch: false,
+          upgrades: { ...activeUpgradeState() },
         });
       }
     }
@@ -436,6 +474,7 @@ function dispatchParallelWork() {
         seed: task.seed,
         trackChaserActions: task.trackChaserActions,
         trackEvaderActions: task.trackEvaderActions,
+        upgrades: task.upgrades,
       },
     });
   }
@@ -592,6 +631,9 @@ function finishGeneration() {
   const evaderResult = evaderPopulation.evolve();
   lastChaserMetrics = chaserResult.metrics;
   lastEvaderMetrics = evaderResult.metrics;
+  upgradePerformanceScore = (chaserResult.metrics.bestFitness + evaderResult.metrics.bestFitness) / 2;
+  upgradePeakPerformanceScore = Math.max(upgradePeakPerformanceScore, upgradePerformanceScore);
+  updateAutoUnlocks();
   archiveChampion(chaserHallOfFame, chaserResult.champion, 'chaser');
   archiveChampion(evaderHallOfFame, evaderResult.champion, 'evader');
   championChaser = new LearningAgent('chaser', chaserResult.champion);
@@ -683,6 +725,13 @@ function emitTelemetry(force = false) {
       trainingEpisodesPerSecond: currentTrainingEpisodesPerSecond,
       trainingBackend: parallelBackendActive ? 'CPU parallel' : 'CPU optimized',
       trainingWorkerCount: parallelBackendActive ? evaluatorPool.length : 1,
+      upgradePerformanceScore,
+      upgradePeakPerformanceScore,
+      upgradeConfig,
+      sprintUpgradeActive: activeUpgradeState().sprint,
+      controlledJumpUpgradeActive: activeUpgradeState().controlledJump,
+      sprintAutoUnlocked,
+      controlledJumpAutoUnlocked,
       gameTime: totalSimulatedTime,
       chaserElo,
       evaderElo,
@@ -753,10 +802,30 @@ self.onmessage = (event: MessageEvent) => {
       }
       if (typeof payload?.chaserElo === 'number') chaserElo = payload.chaserElo;
       if (typeof payload?.evaderElo === 'number') evaderElo = payload.evaderElo;
+      if (payload?.upgradeConfig) {
+        upgradeConfig = sanitizeUpgradeConfig(payload.upgradeConfig);
+        updateAutoUnlocks();
+      }
       isRunning = true;
       if (timerId) clearTimeout(timerId);
       resetTrainingThroughput();
       startTrainingEngine();
+      break;
+    }
+
+    case 'SET_UPGRADE_CONFIG': {
+      const before = activeUpgradeState();
+      upgradeConfig = sanitizeUpgradeConfig(payload?.upgradeConfig);
+      updateAutoUnlocks();
+      const after = activeUpgradeState();
+      const physicsChanged = before.sprint !== after.sprint || before.controlledJump !== after.controlledJump;
+      // Only discard a partial generation when the effective physics capability changed.
+      if (physicsChanged) {
+        resetEvaluationAccumulators();
+        invalidateParallelGeneration();
+      }
+      emitTelemetry(true);
+      if (isRunning && physicsChanged) startTrainingEngine();
       break;
     }
 
@@ -798,6 +867,10 @@ self.onmessage = (event: MessageEvent) => {
       championEvader = new LearningAgent('evader', evaderPopulation.genomes[0]);
       lastChaserMetrics = null;
       lastEvaderMetrics = null;
+      upgradePerformanceScore = 0;
+      upgradePeakPerformanceScore = 0;
+      sprintAutoUnlocked = false;
+      controlledJumpAutoUnlocked = false;
       seededFromStart = false;
       totalTags = 0;
       totalFalls = 0;

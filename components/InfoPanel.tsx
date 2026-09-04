@@ -1,9 +1,9 @@
 
 
 import React from 'react';
-import type { AgentState, RewardBreakdown } from '../types';
+import type { AgentState, RewardBreakdown, UpgradeConfig, UpgradeMode, UpgradeRule } from '../types';
 import { AgentStatus } from '../types';
-import { Radar, Shield, Swords } from 'lucide-react';
+import { Radar, Shield, Swords, Zap, ArrowUp } from 'lucide-react';
 
 interface InfoPanelProps {
   agents: AgentState[];
@@ -15,6 +15,14 @@ interface InfoPanelProps {
   onOpenDiagnostics: () => void;
   chaserElo?: number;
   evaderElo?: number;
+  upgradeConfig: UpgradeConfig;
+  upgradePerformanceScore: number;
+  upgradePeakPerformanceScore: number;
+  sprintUpgradeActive: boolean;
+  controlledJumpUpgradeActive: boolean;
+  sprintAutoUnlocked: boolean;
+  controlledJumpAutoUnlocked: boolean;
+  onUpdateUpgrade: (upgrade: keyof UpgradeConfig, patch: Partial<UpgradeRule>) => void;
 }
 
 const statusColors: Record<AgentStatus, string> = {
@@ -107,6 +115,63 @@ const VectorBar: React.FC<{label: string, value: number}> = ({label, value}) => 
     );
 };
 
+const UpgradeControl: React.FC<{
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+  rule: UpgradeRule;
+  active: boolean;
+  autoUnlocked: boolean;
+  performanceScore: number;
+  peakPerformanceScore: number;
+  onChange: (patch: Partial<UpgradeRule>) => void;
+}> = ({ title, description, icon, rule, active, autoUnlocked, performanceScore, peakPerformanceScore, onChange }) => {
+  const modes: UpgradeMode[] = ['off', 'auto', 'on'];
+  return (
+    <div className={`rounded-lg border p-3 ${active ? 'border-emerald-500/40 bg-emerald-950/15' : 'border-gray-700 bg-gray-800/70'}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex gap-2">
+          <div className={active ? 'text-emerald-300' : 'text-gray-500'}>{icon}</div>
+          <div>
+            <div className="text-xs font-bold text-gray-200">{title}</div>
+            <div className="text-[10px] leading-relaxed text-gray-500">{description}</div>
+          </div>
+        </div>
+        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${active ? 'bg-emerald-500/20 text-emerald-300' : 'bg-gray-900 text-gray-500'}`}>
+          {active ? 'active' : 'locked'}
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-3 gap-1 rounded-md bg-gray-950 p-1">
+        {modes.map(mode => (
+          <button
+            key={mode}
+            onClick={() => onChange({ mode })}
+            className={`rounded px-2 py-1 text-[10px] font-semibold uppercase ${rule.mode === mode ? 'bg-cyan-500 text-black' : 'text-gray-500 hover:bg-gray-800 hover:text-gray-300'}`}
+          >
+            {mode}
+          </button>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center justify-between gap-2 text-[10px]">
+        <label className="text-gray-500">Auto threshold</label>
+        <input
+          type="number"
+          min={0}
+          step={5}
+          value={rule.threshold}
+          onChange={e => onChange({ threshold: Math.max(0, Number(e.target.value) || 0) })}
+          className="w-20 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-right font-mono text-gray-200 outline-none focus:border-cyan-500"
+        />
+      </div>
+      {rule.mode === 'auto' && (
+        <div className="mt-1 text-[9px] text-gray-500">
+          Current {performanceScore.toFixed(1)} · peak {peakPerformanceScore.toFixed(1)} / {rule.threshold.toFixed(1)}{autoUnlocked ? ' · unlocked for this training run' : ''}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const StateVectorDisplay: React.FC<{ vector: number[] }> = ({ vector }) => {
     if (!vector || vector.length === 0) return null;
     return (
@@ -194,6 +259,14 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
   onOpenDiagnostics,
   chaserElo,
   evaderElo,
+  upgradeConfig,
+  upgradePerformanceScore,
+  upgradePeakPerformanceScore,
+  sprintUpgradeActive,
+  controlledJumpUpgradeActive,
+  sprintAutoUnlocked,
+  controlledJumpAutoUnlocked,
+  onUpdateUpgrade,
 }) => {
   return (
     <aside className="w-80 bg-gray-800 rounded-lg shadow-lg p-4 flex flex-col gap-4 overflow-y-auto">
@@ -214,6 +287,38 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
           </div>
         </div>
         <ToggleSwitch id="lidar-toggle" checked={showLidar} onChange={onToggleLidar} />
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold text-gray-300">Progression Upgrades</h3>
+            <p className="text-[10px] text-gray-500">Performance = mean latest chaser + runner champion fitness.</p>
+          </div>
+          <span className="rounded bg-violet-500/15 px-2 py-1 font-mono text-[10px] text-violet-300" title={`Current ${upgradePerformanceScore.toFixed(1)} · Peak ${upgradePeakPerformanceScore.toFixed(1)}`}>{upgradePerformanceScore.toFixed(1)}</span>
+        </div>
+        <UpgradeControl
+          title="Sprint"
+          description="Raises top speed to 7.25 and acceleration up to 35%; intensity follows movement-output strength and costs stamina."
+          icon={<Zap className="w-4 h-4" />}
+          rule={upgradeConfig.sprint}
+          active={sprintUpgradeActive}
+          autoUnlocked={sprintAutoUnlocked}
+          performanceScore={upgradePerformanceScore}
+          peakPerformanceScore={upgradePeakPerformanceScore}
+          onChange={patch => onUpdateUpgrade('sprint', patch)}
+        />
+        <UpgradeControl
+          title="Controlled Jump"
+          description="Jump-output strength controls 45–100% of the original jump impulse and scales its stamina cost."
+          icon={<ArrowUp className="w-4 h-4" />}
+          rule={upgradeConfig.controlledJump}
+          active={controlledJumpUpgradeActive}
+          autoUnlocked={controlledJumpAutoUnlocked}
+          performanceScore={upgradePerformanceScore}
+          peakPerformanceScore={upgradePeakPerformanceScore}
+          onChange={patch => onUpdateUpgrade('controlledJump', patch)}
+        />
       </div>
 
       {chaserElo !== undefined && evaderElo !== undefined && (
@@ -260,7 +365,11 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
                     {/* Stamina Bar */}
                     <div className="flex items-center justify-between text-[10px] text-gray-400 font-mono mb-1">
                         <span>Stamina {agent.energy.toFixed(0)}/{agent.maxEnergy.toFixed(0)}</span>
-                        <span className="truncate max-w-[120px]" title={agent.lastAction}>{agent.lastAction}</span>
+                        <span className="truncate max-w-[150px]" title={agent.lastAction}>
+                          {agent.lastAction}
+                          {(agent.sprintIntensity || 0) > 0.05 ? ` · sprint ${Math.round((agent.sprintIntensity || 0) * 100)}%` : ''}
+                          {(agent.jumpPower || 0) > 0 && agent.lastAction === 'jump' ? ` · jump ${Math.round((agent.jumpPower || 0) * 100)}%` : ''}
+                        </span>
                     </div>
                     <div className="w-full bg-gray-600 rounded-full h-2.5 mb-2">
                         <div
@@ -295,7 +404,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
 
       <div className="mt-auto bg-gray-700 p-3 rounded-md text-xs text-gray-400">
         <h4 className="font-bold text-gray-300 mb-1">How it works:</h4>
-        <p>Agents use the original discrete left/right/jump/wait movement and 39-input state including 8 LiDAR rays. Separate chaser and evader NEAT populations evolve in the background.</p>
+        <p>Agents keep the original discrete left/right/jump/wait controller and 39-input state including 8 LiDAR rays. Sprint and controlled jump are optional progression upgrades whose intensity reuses the selected action output strength.</p>
       </div>
     </aside>
   );

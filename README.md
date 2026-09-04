@@ -7,13 +7,31 @@ This merged build deliberately keeps the **simple movement and senses from the f
 The agent policy interface is unchanged:
 
 - **Actions:** `move_left`, `move_right`, `jump`, `wait`
-- **Movement:** original acceleration, friction, max-speed, fixed jump impulse, passive energy regeneration and jump energy cost
+- **Baseline movement:** original acceleration, friction, max-speed, fixed jump impulse, passive energy regeneration and jump energy cost
 - **Inputs:** original **39-value state vector**
 - **LiDAR:** original **8 radial obstacle rays**
 - **Other senses:** self kinematics/status, camera boundaries, fall distance, platform ledges, 3 nearby platforms, target/threat dynamics, teammate dynamics and bias
 - **Episode physics/fitness:** the original discrete controller and original dense fitness terms are retained in headless evaluation
 
-The later continuous left/right drive, variable jump power, sprint channel, fatigue physiology and 31-input compact sense model are **not** used in this build.
+The later continuous left/right drive, dedicated sprint output, fatigue physiology and 31-input compact sense model are **not** used. Instead, sprint and controlled jump are optional progression upgrades layered onto the original controller without changing its four outputs or 39 inputs.
+
+
+## Progression upgrades
+
+Two optional abilities can be controlled from the **Progression Upgrades** section in the right sidebar:
+
+- **Sprint** — raises maximum horizontal speed from 5 to 7.25 and acceleration by up to 35%, with an additional stamina cost. The intensity comes from the strength of the already-selected `move_left`/`move_right` output.
+- **Controlled Jump** — scales the original jump impulse from 45% to 100% and scales jump stamina cost with it. The power comes from the strength of the already-selected `jump` output.
+
+Each upgrade has three modes:
+
+- **Off** — force-disabled regardless of performance.
+- **Auto** — permanently unlocks once the training performance score reaches the user-set threshold.
+- **On** — force-enabled immediately.
+
+The current performance score is the mean of the latest chaser and evader champion best-fitness values. Auto unlocking compares the threshold against the highest score reached so far, and unlocks latch for the current training run once reached; resetting both populations clears the unlock latch. Changing upgrade configuration discards the partially evaluated generation so a generation is never scored with mixed physics rules. Settings are saved in browser local storage.
+
+Default auto thresholds are 140 for Sprint and 180 for Controlled Jump, and both are editable in the UI.
 
 ## Applied from the current version
 

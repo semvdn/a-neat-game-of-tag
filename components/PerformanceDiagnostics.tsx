@@ -346,7 +346,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> the original discrete left/right/jump/wait controller and 39-input LiDAR state are preserved. Every genome is evaluated against rotating opponents plus historical Hall of Fame champions, while the worker pool runs independent episodes at maximum available CPU throughput. Selection proceeds through speciation, elitism, crossover and mutation.
+              <strong className="text-violet-200">Training architecture:</strong> the original discrete left/right/jump/wait controller and 39-input LiDAR state are preserved. Optional sprint and controlled-jump progression upgrades reuse the strength of the selected original output, so no extra policy outputs or senses are added. Every genome is evaluated against rotating opponents plus historical Hall of Fame champions, while the worker pool runs independent episodes at maximum available CPU throughput.
             </div>
           </div>
         )}

@@ -16,6 +16,8 @@ import type {
   BenchmarkResult,
   PerformanceDataPoint,
   EloLeaderboardEntry,
+  UpgradeConfig,
+  UpgradeRule,
 } from './types';
 import { AgentStatus } from './types';
 import {
@@ -40,6 +42,11 @@ import {
   MAX_ENERGY,
   ENERGY_REGEN_RATE,
   JUMP_ENERGY_COST,
+  SPRINT_MAX_SPEED,
+  SPRINT_ACCELERATION_MULTIPLIER,
+  SPRINT_ENERGY_COST_PER_SEC,
+  CONTROLLED_JUMP_MIN_POWER_RATIO,
+  CONTROLLED_JUMP_MIN_ENERGY_COST,
   SURVIVAL_TIME_HISTORY_LENGTH,
   TIME_TO_TAG_HISTORY_LENGTH,
   INITIAL_ELO,
@@ -62,6 +69,29 @@ const formatTrainingRate = (value: number | undefined) => {
 };
 
 const CHAMPION_WORLD_VIEWPORT = { width: 1200, height: 800 } as const;
+const DEFAULT_UPGRADE_CONFIG: UpgradeConfig = {
+  sprint: { mode: 'auto', threshold: 140 },
+  controlledJump: { mode: 'auto', threshold: 180 },
+};
+const UPGRADE_STORAGE_KEY = 'ai_tag_upgrade_config';
+
+const loadUpgradeConfig = (): UpgradeConfig => {
+  try {
+    const raw = localStorage.getItem(UPGRADE_STORAGE_KEY);
+    if (!raw) return DEFAULT_UPGRADE_CONFIG;
+    const parsed = JSON.parse(raw) as Partial<UpgradeConfig>;
+    const normalize = (rule: Partial<UpgradeRule> | undefined, fallback: UpgradeRule): UpgradeRule => ({
+      mode: rule?.mode === 'off' || rule?.mode === 'on' || rule?.mode === 'auto' ? rule.mode : fallback.mode,
+      threshold: Number.isFinite(Number(rule?.threshold)) ? Math.max(0, Number(rule?.threshold)) : fallback.threshold,
+    });
+    return {
+      sprint: normalize(parsed.sprint, DEFAULT_UPGRADE_CONFIG.sprint),
+      controlledJump: normalize(parsed.controlledJump, DEFAULT_UPGRADE_CONFIG.controlledJump),
+    };
+  } catch {
+    return DEFAULT_UPGRADE_CONFIG;
+  }
+};
 
 export const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState | null>(null);
@@ -78,6 +108,7 @@ export const App: React.FC = () => {
   const [cameraZoom, setCameraZoom] = useState(1);
   const [isVisualPaused, setIsVisualPaused] = useState(false);
   const [isTrainingPaused, setIsTrainingPaused] = useState(false);
+  const [upgradeConfig, setUpgradeConfig] = useState<UpgradeConfig>(loadUpgradeConfig);
   const stepFrameRef = useRef(false);
   const visualStepAccumulatorRef = useRef(0);
 
@@ -109,6 +140,12 @@ export const App: React.FC = () => {
     trainingEpisodesPerSecond: 0,
     trainingBackend: 'CPU optimized',
     trainingWorkerCount: 1,
+    upgradePerformanceScore: 0,
+    upgradePeakPerformanceScore: 0,
+    sprintUpgradeActive: false,
+    controlledJumpUpgradeActive: false,
+    sprintAutoUnlocked: false,
+    controlledJumpAutoUnlocked: false,
   }));
 
   const benchmarkSessionRef = useRef<{
@@ -382,6 +419,12 @@ export const App: React.FC = () => {
               trainingEpisodesPerSecond: typeof payload.trainingEpisodesPerSecond === 'number' ? payload.trainingEpisodesPerSecond : prev.trainingEpisodesPerSecond,
               trainingBackend: typeof payload.trainingBackend === 'string' ? payload.trainingBackend : prev.trainingBackend,
               trainingWorkerCount: typeof payload.trainingWorkerCount === 'number' ? payload.trainingWorkerCount : prev.trainingWorkerCount,
+              upgradePerformanceScore: typeof payload.upgradePerformanceScore === 'number' ? payload.upgradePerformanceScore : prev.upgradePerformanceScore,
+              upgradePeakPerformanceScore: typeof payload.upgradePeakPerformanceScore === 'number' ? payload.upgradePeakPerformanceScore : prev.upgradePeakPerformanceScore,
+              sprintUpgradeActive: typeof payload.sprintUpgradeActive === 'boolean' ? payload.sprintUpgradeActive : prev.sprintUpgradeActive,
+              controlledJumpUpgradeActive: typeof payload.controlledJumpUpgradeActive === 'boolean' ? payload.controlledJumpUpgradeActive : prev.controlledJumpUpgradeActive,
+              sprintAutoUnlocked: typeof payload.sprintAutoUnlocked === 'boolean' ? payload.sprintAutoUnlocked : prev.sprintAutoUnlocked,
+              controlledJumpAutoUnlocked: typeof payload.controlledJumpAutoUnlocked === 'boolean' ? payload.controlledJumpAutoUnlocked : prev.controlledJumpAutoUnlocked,
             };
           });
 
@@ -406,6 +449,11 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  useEffect(() => {
+    localStorage.setItem(UPGRADE_STORAGE_KEY, JSON.stringify(upgradeConfig));
+    workerRef.current?.postMessage({ type: 'SET_UPGRADE_CONFIG', payload: { upgradeConfig } });
+  }, [upgradeConfig]);
+
   // Background evolution is independent from the visible champion arena and always runs
   // at maximum worker throughput unless explicitly paused.
   useEffect(() => {
@@ -424,9 +472,24 @@ export const App: React.FC = () => {
         chaserElo: chaserElo.current,
         evaderElo: evaderElo.current,
         viewportSize,
+        upgradeConfig,
       },
     });
   }, [isTrainingPaused, isSimulating]);
+
+  const upgradePerformanceScore = diagnosticsState.upgradePerformanceScore || 0;
+  const upgradePeakPerformanceScore = diagnosticsState.upgradePeakPerformanceScore || upgradePerformanceScore;
+  const sprintUpgradeActive = upgradeConfig.sprint.mode === 'on' ||
+    (upgradeConfig.sprint.mode === 'auto' && (Boolean(diagnosticsState.sprintAutoUnlocked) || upgradePeakPerformanceScore >= upgradeConfig.sprint.threshold));
+  const controlledJumpUpgradeActive = upgradeConfig.controlledJump.mode === 'on' ||
+    (upgradeConfig.controlledJump.mode === 'auto' && (Boolean(diagnosticsState.controlledJumpAutoUnlocked) || upgradePeakPerformanceScore >= upgradeConfig.controlledJump.threshold));
+
+  const updateUpgradeRule = useCallback((upgrade: keyof UpgradeConfig, patch: Partial<UpgradeRule>) => {
+    setUpgradeConfig(prev => ({
+      ...prev,
+      [upgrade]: { ...prev[upgrade], ...patch },
+    }));
+  }, []);
 
   const calculateReward = (
     agent: AgentState,
@@ -579,7 +642,8 @@ export const App: React.FC = () => {
         });
 
         // 2. Champion action selection using the evolved 39-input / 4-output NEAT networks.
-        const agentActions: { [key: number]: string } = {};
+        // Upgrade intensity reuses the magnitude of the selected original output.
+        const agentActions: { [key: number]: { action: string; strength: number } } = {};
         newState.agents.forEach(agent => {
           const stateVector = getAgentStateVector(agent, newState, viewportSize);
           const isChaser = agent.status === AgentStatus.It;
@@ -590,8 +654,8 @@ export const App: React.FC = () => {
 
           const model = isChaser ? chaserAgent.current : evaderAgent.current;
           if (!model) return;
-          const { action } = model.chooseAction(stateVector);
-          agentActions[agent.id] = action;
+          const { action, actionStrength } = model.chooseAction(stateVector);
+          agentActions[agent.id] = { action, strength: actionStrength };
 
           actionCountsRef.current.all[action] = (actionCountsRef.current.all[action] || 0) + 1;
           if (isChaser) actionCountsRef.current.chaser[action] = (actionCountsRef.current.chaser[action] || 0) + 1;
@@ -611,21 +675,37 @@ export const App: React.FC = () => {
             newStatus = AgentStatus.Normal;
           }
 
-          const action = agentActions[agent.id] || agent.lastAction;
+          const actionDecision = agentActions[agent.id];
+          const action = actionDecision?.action || agent.lastAction;
+          const actionStrength = actionDecision?.strength ?? 0;
           agent.lastAction = action;
 
           agent.acceleration.x = 0;
-          if (action === 'move_left') agent.acceleration.x = -AGENT_ACCELERATION;
-          else if (action === 'move_right') agent.acceleration.x = AGENT_ACCELERATION;
+          const isMoveAction = action === 'move_left' || action === 'move_right';
+          const sprintIntensity = sprintUpgradeActive && isMoveAction && newEnergy > 0 ? actionStrength : 0;
+          const accelerationScale = 1 + (SPRINT_ACCELERATION_MULTIPLIER - 1) * sprintIntensity;
+          if (action === 'move_left') agent.acceleration.x = -AGENT_ACCELERATION * accelerationScale;
+          else if (action === 'move_right') agent.acceleration.x = AGENT_ACCELERATION * accelerationScale;
 
           if (Math.abs(agent.acceleration.x) < 0.1) newVelocity.x *= FRICTION;
           newVelocity.x += agent.acceleration.x;
-          newVelocity.x = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, newVelocity.x));
+          const maxHorizontalSpeed = MAX_SPEED + (SPRINT_MAX_SPEED - MAX_SPEED) * sprintIntensity;
+          newVelocity.x = Math.max(-maxHorizontalSpeed, Math.min(maxHorizontalSpeed, newVelocity.x));
+          if (sprintIntensity > 0) {
+            newEnergy = Math.max(0, newEnergy - SPRINT_ENERGY_COST_PER_SEC * sprintIntensity * (deltaTime / 1000));
+          }
 
+          let jumpPower = 0;
           if (action === 'jump' && agent.isOnGround) {
-            if (newEnergy >= JUMP_ENERGY_COST) {
-              newVelocity.y = JUMP_STRENGTH;
-              newEnergy -= JUMP_ENERGY_COST;
+            jumpPower = controlledJumpUpgradeActive
+              ? CONTROLLED_JUMP_MIN_POWER_RATIO + (1 - CONTROLLED_JUMP_MIN_POWER_RATIO) * actionStrength
+              : 1;
+            const jumpCost = controlledJumpUpgradeActive
+              ? CONTROLLED_JUMP_MIN_ENERGY_COST + (JUMP_ENERGY_COST - CONTROLLED_JUMP_MIN_ENERGY_COST) * jumpPower * jumpPower
+              : JUMP_ENERGY_COST;
+            if (newEnergy >= jumpCost) {
+              newVelocity.y = JUMP_STRENGTH * jumpPower;
+              newEnergy -= jumpCost;
               playDynamicJumpSound(newVelocity.y);
             }
           }
@@ -707,6 +787,8 @@ export const App: React.FC = () => {
             lastPlatformId: landedPlatformId,
             touchingCameraFrame: isTouchingFrame,
             cameraFrameContact: contactSide,
+            sprintIntensity,
+            jumpPower,
             survivalTime: agent.survivalTime || 0,
             timeSinceBecameIt: agent.timeSinceBecameIt || 0,
           };
@@ -910,7 +992,7 @@ export const App: React.FC = () => {
         return newState;
       });
     },
-    [isSimulating, viewportSize]
+    [isSimulating, viewportSize, sprintUpgradeActive, controlledJumpUpgradeActive]
   );
 
   const updateSimulation = useCallback(
@@ -1090,6 +1172,12 @@ export const App: React.FC = () => {
       trainingEpisodesPerSecond: 0,
       trainingBackend: 'CPU optimized',
       trainingWorkerCount: 1,
+      upgradePerformanceScore: 0,
+      upgradePeakPerformanceScore: 0,
+      sprintUpgradeActive: upgradeConfig.sprint.mode === 'on',
+      controlledJumpUpgradeActive: upgradeConfig.controlledJump.mode === 'on',
+      sprintAutoUnlocked: false,
+      controlledJumpAutoUnlocked: false,
     }));
   };
 
@@ -1374,6 +1462,14 @@ export const App: React.FC = () => {
           chaserElo={chaserElo.current}
           evaderElo={evaderElo.current}
           onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
+          upgradeConfig={upgradeConfig}
+          upgradePerformanceScore={upgradePerformanceScore}
+          upgradePeakPerformanceScore={upgradePeakPerformanceScore}
+          sprintUpgradeActive={sprintUpgradeActive}
+          controlledJumpUpgradeActive={controlledJumpUpgradeActive}
+          sprintAutoUnlocked={Boolean(diagnosticsState.sprintAutoUnlocked)}
+          controlledJumpAutoUnlocked={Boolean(diagnosticsState.controlledJumpAutoUnlocked)}
+          onUpdateUpgrade={updateUpgradeRule}
         />
       </div>
 

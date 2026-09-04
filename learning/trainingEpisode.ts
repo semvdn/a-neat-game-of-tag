@@ -1,6 +1,6 @@
 import { LearningAgent } from './agent';
 import { getAgentStateVector } from './state';
-import type { AgentState, GameState, PlatformState } from '../types';
+import type { ActiveUpgradeState, AgentState, GameState, PlatformState } from '../types';
 import { AgentStatus } from '../types';
 import {
   AGENT_WIDTH,
@@ -10,6 +10,11 @@ import {
   FRICTION,
   MAX_SPEED,
   JUMP_STRENGTH,
+  SPRINT_MAX_SPEED,
+  SPRINT_ACCELERATION_MULTIPLIER,
+  SPRINT_ENERGY_COST_PER_SEC,
+  CONTROLLED_JUMP_MIN_POWER_RATIO,
+  CONTROLLED_JUMP_MIN_ENERGY_COST,
   GRAVITY,
   MAX_ENERGY,
   ENERGY_REGEN_RATE,
@@ -44,6 +49,7 @@ export interface TrainingEpisodeOptions {
   trackChaserActions?: boolean;
   trackEvaderActions?: boolean;
   viewportSize?: { width: number; height: number };
+  upgrades?: ActiveUpgradeState;
 }
 
 function mulberry32(seed: number) {
@@ -139,6 +145,7 @@ export function runTrainingEpisode(
   const trackChaserActions = options.trackChaserActions !== false;
   const trackEvaderActions = options.trackEvaderActions !== false;
   const gameState = createEpisodeState(seed, viewportSize);
+  const upgrades: ActiveUpgradeState = options.upgrades || { sprint: false, controlledJump: false };
   const chaserAgent = gameState.agents[0];
   const evaders = gameState.agents.slice(1);
 
@@ -167,12 +174,14 @@ export function runTrainingEpisode(
     evaders.forEach(a => (a.survivalTime += DT));
 
     const actionIndices = new Array<number>(gameState.agents.length);
+    const actionStrengths = new Array<number>(gameState.agents.length).fill(0);
     for (let i = 0; i < gameState.agents.length; i++) {
       const agent = gameState.agents[i];
       const controller = agent.id === 1 ? chaser : evader;
       const state = getAgentStateVector(agent, gameState, viewportSize);
-      const { actionIndex } = controller.chooseAction(state);
+      const { actionIndex, actionStrength } = controller.chooseAction(state);
       actionIndices[i] = actionIndex;
+      actionStrengths[i] = actionStrength;
       if (agent.id === 1) {
         if (trackChaserActions) chaserActionCounts[actionIndex]++;
       } else if (trackEvaderActions) {
@@ -184,22 +193,43 @@ export function runTrainingEpisode(
       const agent = gameState.agents[i];
       const actionIndex = actionIndices[i] ?? ACTION_SPACE.indexOf('wait');
       const action = ACTION_SPACE[actionIndex] || 'wait';
+      const actionStrength = actionStrengths[i] || 0;
       agent.lastAction = action;
       agent.energy = Math.min(agent.maxEnergy, agent.energy + ENERGY_REGEN_RATE * (DT / 1000));
       agent.acceleration.x = 0;
-      if (action === 'move_left') agent.acceleration.x = -AGENT_ACCELERATION;
-      else if (action === 'move_right') agent.acceleration.x = AGENT_ACCELERATION;
+
+      const isMoveAction = action === 'move_left' || action === 'move_right';
+      const sprintIntensity = upgrades.sprint && isMoveAction && agent.energy > 0
+        ? actionStrength
+        : 0;
+      const accelerationScale = 1 + (SPRINT_ACCELERATION_MULTIPLIER - 1) * sprintIntensity;
+      if (action === 'move_left') agent.acceleration.x = -AGENT_ACCELERATION * accelerationScale;
+      else if (action === 'move_right') agent.acceleration.x = AGENT_ACCELERATION * accelerationScale;
 
       const velocity = { ...agent.velocity };
       if (Math.abs(agent.acceleration.x) < 0.1) velocity.x *= FRICTION;
       velocity.x += agent.acceleration.x;
-      velocity.x = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, velocity.x));
+      const maxHorizontalSpeed = MAX_SPEED + (SPRINT_MAX_SPEED - MAX_SPEED) * sprintIntensity;
+      velocity.x = Math.max(-maxHorizontalSpeed, Math.min(maxHorizontalSpeed, velocity.x));
+      if (sprintIntensity > 0) {
+        agent.energy = Math.max(0, agent.energy - SPRINT_ENERGY_COST_PER_SEC * sprintIntensity * (DT / 1000));
+      }
+      agent.sprintIntensity = sprintIntensity;
 
-      if (action === 'jump' && agent.isOnGround && agent.energy >= JUMP_ENERGY_COST) {
-        velocity.y = JUMP_STRENGTH;
-        agent.energy -= JUMP_ENERGY_COST;
-        if (agent.id === 1) chaserJumps++;
-        else evaderJumps++;
+      if (action === 'jump' && agent.isOnGround) {
+        const jumpPower = upgrades.controlledJump
+          ? CONTROLLED_JUMP_MIN_POWER_RATIO + (1 - CONTROLLED_JUMP_MIN_POWER_RATIO) * actionStrength
+          : 1;
+        const jumpCost = upgrades.controlledJump
+          ? CONTROLLED_JUMP_MIN_ENERGY_COST + (JUMP_ENERGY_COST - CONTROLLED_JUMP_MIN_ENERGY_COST) * jumpPower * jumpPower
+          : JUMP_ENERGY_COST;
+        if (agent.energy >= jumpCost) {
+          velocity.y = JUMP_STRENGTH * jumpPower;
+          agent.energy -= jumpCost;
+          agent.jumpPower = jumpPower;
+          if (agent.id === 1) chaserJumps++;
+          else evaderJumps++;
+        }
       }
 
       velocity.y += GRAVITY;

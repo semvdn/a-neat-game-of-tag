@@ -89,11 +89,15 @@ export class LearningAgent {
     return this.genome.generation || 0;
   }
 
-  chooseAction(state: number[]): { action: string; actionIndex: number } {
+  chooseAction(state: number[]): { action: string; actionIndex: number; actionStrength: number } {
     const outputs = this.network.activate(state);
     let actionIndex = 0;
-    for (let i = 1; i < outputs.length; i++) if (outputs[i] > outputs[actionIndex]) actionIndex = i;
-    return { action: ACTION_SPACE[actionIndex], actionIndex };
+    // Preserve the original 4-way discrete action decision exactly. Upgrade mechanics reuse
+    // the magnitude of the selected output instead of adding new output neurons.
+    for (let i = 1; i < ACTION_SPACE.length; i++) if (outputs[i] > outputs[actionIndex]) actionIndex = i;
+    const rawStrength = outputs[actionIndex] ?? 0;
+    const actionStrength = Math.max(0, Math.min(1, (rawStrength + 1) / 2));
+    return { action: ACTION_SPACE[actionIndex], actionIndex, actionStrength };
   }
 
 }
