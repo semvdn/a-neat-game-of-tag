@@ -351,7 +351,13 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
       <div>
         <h3 className="font-semibold mb-2 text-gray-300">Agent States</h3>
         <div className="space-y-2">
-            {agents.map(agent => (
+            {agents.map(agent => {
+                const safeMaxEnergy = Number.isFinite(agent.maxEnergy) && agent.maxEnergy > 0 ? agent.maxEnergy : 1;
+                const safeEnergy = Number.isFinite(agent.energy) ? Math.max(0, Math.min(agent.energy, safeMaxEnergy)) : 0;
+                const staminaRatio = safeEnergy / safeMaxEnergy;
+                const staminaPercent = staminaRatio * 100;
+
+                return (
                 <div key={agent.id} className="p-3 bg-gray-700 rounded-md transition-all">
                     <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-3">
@@ -364,17 +370,24 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
                     </div>
                     {/* Stamina Bar */}
                     <div className="flex items-center justify-between text-[10px] text-gray-400 font-mono mb-1">
-                        <span>Stamina {agent.energy.toFixed(0)}/{agent.maxEnergy.toFixed(0)}</span>
+                        <span>Stamina {safeEnergy.toFixed(1)}/{safeMaxEnergy.toFixed(1)} ({staminaPercent.toFixed(0)}%)</span>
                         <span className="truncate max-w-[150px]" title={agent.lastAction}>
                           {agent.lastAction}
                           {(agent.sprintIntensity || 0) > 0.05 ? ` · sprint ${Math.round((agent.sprintIntensity || 0) * 100)}%` : ''}
                           {(agent.jumpPower || 0) > 0 && agent.lastAction === 'jump' ? ` · jump ${Math.round((agent.jumpPower || 0) * 100)}%` : ''}
                         </span>
                     </div>
-                    <div className="w-full bg-gray-600 rounded-full h-2.5 mb-2">
+                    <div
+                      className="w-full bg-gray-600 rounded-full h-2.5 mb-2 overflow-hidden"
+                      role="progressbar"
+                      aria-label={`Agent ${agent.id} stamina`}
+                      aria-valuemin={0}
+                      aria-valuemax={safeMaxEnergy}
+                      aria-valuenow={safeEnergy}
+                    >
                         <div
-                          className={`${agent.energy / Math.max(1, agent.maxEnergy) < 0.3 ? 'bg-amber-500' : 'bg-green-500'} h-2.5 rounded-full transition-all`}
-                          style={{ width: `${Math.max(0, Math.min(100, (agent.energy / Math.max(1, agent.maxEnergy)) * 100))}%` }}
+                          className={`${staminaRatio < 0.3 ? 'bg-amber-500' : 'bg-green-500'} h-full w-full origin-left`}
+                          style={{ transform: `scaleX(${staminaRatio})` }}
                         ></div>
                     </div>
                     
@@ -398,7 +411,8 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
                         <RewardBreakdownDisplay breakdown={agent.rewardBreakdown} status={agent.status} />
                     )}
                 </div>
-            ))}
+                );
+            })}
         </div>
       </div>
 
