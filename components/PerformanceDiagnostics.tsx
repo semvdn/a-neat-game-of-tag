@@ -346,7 +346,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> both roles now have identical speed, acceleration, jump, 100-point stamina and recovery. Every genome is evaluated against balanced rotating opponents plus historical Hall of Fame champions. Terminal fitness uses the same 0–200 outcome scale for both roles, with only small bounded movement shaping; selection then proceeds through speciation, elitism, crossover and mutation.
+              <strong className="text-violet-200">Training architecture:</strong> the original discrete left/right/jump/wait controller and 39-input LiDAR state are preserved. Every genome is evaluated against rotating opponents plus historical Hall of Fame champions, while the worker pool runs independent episodes at maximum available CPU throughput. Selection proceeds through speciation, elitism, crossover and mutation.
             </div>
           </div>
         )}

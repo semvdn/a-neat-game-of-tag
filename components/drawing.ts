@@ -2,7 +2,7 @@
 
 import type { PlatformState, AgentState, TagEffect, GameState } from '../types';
 import { AgentStatus } from '../types';
-import { AGENT_WIDTH, AGENT_HEIGHT, FALL_BOUNDARY, WORLD_REF_WIDTH, WORLD_REF_HEIGHT } from '../constants';
+import { AGENT_WIDTH, AGENT_HEIGHT, WORLD_REF_WIDTH, WORLD_REF_HEIGHT, FALL_BOUNDARY } from '../constants';
 
 export const drawTagEffect = (ctx: CanvasRenderingContext2D, effect: TagEffect) => {
     const progress = 1 - (effect.life / effect.initialLife); // 0 to 1
@@ -42,28 +42,75 @@ export const drawAgentTrail = (ctx: CanvasRenderingContext2D, agent: AgentState)
     const g = parseInt(agent.color.slice(3, 5), 16);
     const b = parseInt(agent.color.slice(5, 7), 16);
 
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
     for (let i = 0; i < trailLength - 1; i++) {
         const startPoint = agent.trajectory[i];
         const endPoint = agent.trajectory[i + 1];
-        const progress = (i + 1) / (trailLength - 1); // oldest -> newest
-        const opacity = 0.06 + progress * 0.62;
+        
+        const opacity = (1 - (i / trailLength)) * 0.7; // Max opacity 0.7
 
         ctx.beginPath();
         ctx.moveTo(startPoint.x + agentCenterOffsetX, startPoint.y + agentCenterOffsetY);
         ctx.lineTo(endPoint.x + agentCenterOffsetX, endPoint.y + agentCenterOffsetY);
-
-        // The newest part of the trail should be strongest; the tail fades away.
-        ctx.lineWidth = 1.25 + progress * 3.25;
+        
+        ctx.lineWidth = 2 + 3 * (1 - (i/trailLength)); // Tapered line width
+        ctx.lineCap = 'round';
         ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${opacity})`;
         ctx.stroke();
     }
+};
 
+export const drawAgentLidarRays = (ctx: CanvasRenderingContext2D, agent: AgentState) => {
+    if (!agent.lidarRays || agent.lidarRays.length === 0) return;
+
+    const cx = agent.position.x + AGENT_WIDTH / 2;
+    const cy = agent.position.y + AGENT_HEIGHT / 2;
+
+    ctx.save();
+    for (let i = 0; i < agent.lidarRays.length; i++) {
+        const ray = agent.lidarRays[i];
+        const endX = cx + ray.direction.x * ray.distance;
+        const endY = cy + ray.direction.y * ray.distance;
+
+        const hasHit = ray.hitPoint !== null;
+        const norm = ray.normalizedDistance;
+
+        // Color modulation based on proximity
+        let strokeColor = 'rgba(100, 116, 139, 0.18)'; // Faint slate if far/open
+        let hitGlowColor = 'rgba(6, 182, 212, 0.7)';  // Cyan
+
+        if (hasHit) {
+            if (norm < 0.25) {
+                strokeColor = 'rgba(239, 68, 68, 0.45)'; // Red/Amber if perilously close
+                hitGlowColor = 'rgba(239, 68, 68, 0.9)';
+            } else if (norm < 0.6) {
+                strokeColor = 'rgba(234, 179, 8, 0.35)'; // Yellow
+                hitGlowColor = 'rgba(234, 179, 8, 0.8)';
+            } else {
+                strokeColor = 'rgba(16, 185, 129, 0.28)'; // Emerald
+                hitGlowColor = 'rgba(16, 185, 129, 0.75)';
+            }
+        }
+
+        // Draw ray line
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(endX, endY);
+        ctx.lineWidth = hasHit ? 1.2 : 0.8;
+        ctx.strokeStyle = strokeColor;
+        ctx.stroke();
+
+        // Draw hit contact indicator
+        if (hasHit) {
+            ctx.beginPath();
+            ctx.arc(endX, endY, 2.5, 0, Math.PI * 2);
+            ctx.fillStyle = hitGlowColor;
+            ctx.fill();
+        }
+    }
     ctx.restore();
 };
+
+
 
 const rgbaFromHex = (hex: string, alpha: number) => {
     const normalized = hex.replace('#', '');
@@ -77,9 +124,12 @@ const rgbaFromHex = (hex: string, alpha: number) => {
 };
 
 /**
- * Draw the actual observation channels that feed the current 31-input NEAT policy.
- * Geometry selection is not recomputed here: getAgentStateVector() stores sensesDebug
- * from the exact observation pass used by the network, and this renderer consumes it.
+ * Newer-style senses diagnostic view, adapted to the ORIGINAL 39-input policy.
+ *
+ * Crucially, this renderer does not calculate new policy inputs. It reads the stateVector
+ * already produced by learning/state.ts and the lidarRays stored by that same observation pass.
+ * World-object lookup below is only used to place labels/lines on the matching target, teammate,
+ * platform, and policy-camera boundaries.
  */
 export const drawAgentSenses = (
     ctx: CanvasRenderingContext2D,
@@ -87,8 +137,12 @@ export const drawAgentSenses = (
     gameState: GameState,
     cameraScale: number,
 ) => {
-    const debug = agent.sensesDebug;
-    if (!debug) return;
+    const state = agent.stateVector;
+
+    // LiDAR data is captured directly by the original sensor calculation, so it can still be
+    // shown during the first visual frame before stateVector has been attached to the UI agent.
+    drawAgentLidarRays(ctx, agent);
+    if (!state || state.length < 39) return;
 
     const unit = 1 / Math.max(0.0001, cameraScale);
     const cx = agent.position.x + AGENT_WIDTH / 2;
@@ -96,7 +150,8 @@ export const drawAgentSenses = (
     const primary = rgbaFromHex(agent.color, 0.92);
     const medium = rgbaFromHex(agent.color, 0.52);
     const faint = rgbaFromHex(agent.color, 0.24);
-    const textBg = 'rgba(3, 7, 18, 0.76)';
+    const textBg = 'rgba(3, 7, 18, 0.78)';
+
     const leftEdge = gameState.cameraPosition.x;
     const rightEdge = leftEdge + WORLD_REF_WIDTH;
     const visibleBottom = gameState.cameraPosition.y + WORLD_REF_HEIGHT;
@@ -120,60 +175,108 @@ export const drawAgentSenses = (
         ctx.restore();
     };
 
+    // Resolve the same target/threat identity used by the original state-vector code.
+    const otherAgents = gameState.agents.filter(a => a.id !== agent.id);
+    let target: AgentState | null = null;
+    if (agent.status === AgentStatus.It) {
+        const evaders = otherAgents.filter(a => a.status !== AgentStatus.It);
+        if (evaders.length > 0) {
+            target = evaders.reduce((closest, other) => {
+                const d1 = Math.hypot(agent.position.x - closest.position.x, agent.position.y - closest.position.y);
+                const d2 = Math.hypot(agent.position.x - other.position.x, agent.position.y - other.position.y);
+                return d2 < d1 ? other : closest;
+            });
+        }
+    } else {
+        target = gameState.agents.find(a => a.status === AgentStatus.It) || null;
+    }
+
+    let teammate: AgentState | null = null;
+    if (agent.status !== AgentStatus.It) {
+        const teammates = otherAgents.filter(a => a.status !== AgentStatus.It);
+        if (teammates.length > 0) {
+            teammate = teammates.reduce((closest, other) => {
+                const d1 = Math.hypot(agent.position.x - closest.position.x, agent.position.y - closest.position.y);
+                const d2 = Math.hypot(agent.position.x - other.position.x, agent.position.y - other.position.y);
+                return d2 < d1 ? other : closest;
+            });
+        }
+    }
+
+    const onPlatform = gameState.platforms.find(p => p.id === agent.lastPlatformId);
+    const sortedPlatforms = gameState.platforms
+        .filter(p => !onPlatform || p.id !== onPlatform.id)
+        .map(p => {
+            const platformCenterX = p.position.x + p.width / 2;
+            const platformCenterY = p.position.y + p.height / 2;
+            return {
+                platform: p,
+                distance: Math.hypot(platformCenterX - cx, platformCenterY - cy),
+            };
+        })
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, 3);
+
+    let referencePlatform = onPlatform || null;
+    if (!referencePlatform && gameState.platforms.length > 0) {
+        referencePlatform = gameState.platforms[0];
+        let minDist = Infinity;
+        for (const p of gameState.platforms) {
+            const pCenter = p.position.x + p.width / 2;
+            const d = Math.hypot(pCenter - cx, p.position.y - agent.position.y);
+            if (d < minDist) {
+                minDist = d;
+                referencePlatform = p;
+            }
+        }
+    }
+
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // Target / threat dynamics: dx, dy, vx, vy + opponent energy.
-    if (debug.target) {
-        const target = gameState.agents.find(a => a.id === debug.target!.id);
-        if (target) {
-            const tx = target.position.x + AGENT_WIDTH / 2;
-            const ty = target.position.y + AGENT_HEIGHT / 2;
-            ctx.setLineDash([]);
-            ctx.beginPath();
-            ctx.moveTo(cx, cy);
-            ctx.lineTo(tx, ty);
-            ctx.lineWidth = 2.0 * unit;
-            ctx.strokeStyle = primary;
-            ctx.stroke();
-            const e = debug.target.energy ?? 0;
-            label(
-                `T A${target.id} d(${debug.target.dx.toFixed(2)},${debug.target.dy.toFixed(2)}) v(${debug.target.vx.toFixed(2)},${debug.target.vy.toFixed(2)}) E${e.toFixed(2)}`,
-                (cx + tx) / 2,
-                (cy + ty) / 2 - 10 * unit,
-                'center',
-            );
-        }
+    // Target / threat channels: inputs 22..25.
+    if (target) {
+        const tx = target.position.x + AGENT_WIDTH / 2;
+        const ty = target.position.y + AGENT_HEIGHT / 2;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(tx, ty);
+        ctx.lineWidth = 2.0 * unit;
+        ctx.strokeStyle = primary;
+        ctx.stroke();
+        label(
+            `T A${target.id} d(${state[22].toFixed(2)},${state[23].toFixed(2)}) v(${state[24].toFixed(2)},${state[25].toFixed(2)})`,
+            (cx + tx) / 2,
+            (cy + ty) / 2 - 10 * unit,
+            'center',
+        );
     }
 
-    // Closest teammate dynamics exist for evaders only.
-    if (debug.teammate) {
-        const mate = gameState.agents.find(a => a.id === debug.teammate!.id);
-        if (mate) {
-            const mx = mate.position.x + AGENT_WIDTH / 2;
-            const my = mate.position.y + AGENT_HEIGHT / 2;
-            ctx.setLineDash([6 * unit, 5 * unit]);
-            ctx.beginPath();
-            ctx.moveTo(cx, cy);
-            ctx.lineTo(mx, my);
-            ctx.lineWidth = 1.4 * unit;
-            ctx.strokeStyle = medium;
-            ctx.stroke();
-            ctx.setLineDash([]);
-            label(
-                `M A${mate.id} d(${debug.teammate.dx.toFixed(2)},${debug.teammate.dy.toFixed(2)}) v(${debug.teammate.vx.toFixed(2)},${debug.teammate.vy.toFixed(2)})`,
-                (cx + mx) / 2,
-                (cy + my) / 2 + 10 * unit,
-                'center',
-            );
-        }
+    // Closest-teammate channels: inputs 26..29, meaningful for evaders.
+    if (teammate) {
+        const mx = teammate.position.x + AGENT_WIDTH / 2;
+        const my = teammate.position.y + AGENT_HEIGHT / 2;
+        ctx.setLineDash([6 * unit, 5 * unit]);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(mx, my);
+        ctx.lineWidth = 1.4 * unit;
+        ctx.strokeStyle = medium;
+        ctx.stroke();
+        ctx.setLineDash([]);
+        label(
+            `M A${teammate.id} d(${state[26].toFixed(2)},${state[27].toFixed(2)}) v(${state[28].toFixed(2)},${state[29].toFixed(2)})`,
+            (cx + mx) / 2,
+            (cy + my) / 2 + 10 * unit,
+            'center',
+        );
     }
 
-    // Three closest platform slots (excluding the current platform while grounded).
-    debug.nearbyPlatforms.forEach((slot, index) => {
-        const platform = gameState.platforms.find(p => p.id === slot.id);
-        if (!platform) return;
+    // Three nearby-platform slots: inputs 13..21.
+    sortedPlatforms.forEach(({ platform }, index) => {
+        const base = 13 + index * 3;
         const px = platform.position.x + platform.width / 2;
         const py = platform.position.y + platform.height / 2;
         ctx.setLineDash([3 * unit, 4 * unit]);
@@ -191,40 +294,37 @@ export const drawAgentSenses = (
         ctx.stroke();
         ctx.setLineDash([]);
         label(
-            `P${index + 1} d(${slot.dx.toFixed(2)},${slot.dy.toFixed(2)}) w${slot.width.toFixed(2)}`,
+            `P${index + 1} d(${state[base].toFixed(2)},${state[base + 1].toFixed(2)}) w${state[base + 2].toFixed(2)}`,
             platform.position.x + platform.width / 2,
             platform.position.y - (10 + index * 13) * unit,
             'center',
         );
     });
 
-    // Explicit ledge channels use the current platform when grounded, otherwise the nearest platform.
-    if (debug.ledges.referencePlatformId !== null) {
-        const platform = gameState.platforms.find(p => p.id === debug.ledges.referencePlatformId);
-        if (platform) {
-            const leftX = platform.position.x;
-            const rightX = platform.position.x + platform.width;
-            const topY = platform.position.y;
-            ctx.setLineDash([2 * unit, 3 * unit]);
-            ctx.lineWidth = 1.25 * unit;
-            ctx.strokeStyle = debug.ledges.alert > 0 ? 'rgba(251, 191, 36, 0.86)' : faint;
-            ctx.beginPath();
-            ctx.moveTo(cx, cy);
-            ctx.lineTo(leftX, topY);
-            ctx.moveTo(cx, cy);
-            ctx.lineTo(rightX, topY);
-            ctx.stroke();
-            ctx.setLineDash([]);
-            label(
-                `LEDGE L${debug.ledges.left.toFixed(2)} R${debug.ledges.right.toFixed(2)} min${debug.ledges.closest.toFixed(2)} alert${debug.ledges.alert.toFixed(2)}`,
-                platform.position.x + platform.width / 2,
-                platform.position.y + platform.height + 11 * unit,
-                'center',
-            );
-        }
+    // Explicit ledge channels: inputs 9..12.
+    if (referencePlatform) {
+        const leftX = referencePlatform.position.x;
+        const rightX = referencePlatform.position.x + referencePlatform.width;
+        const topY = referencePlatform.position.y;
+        ctx.setLineDash([2 * unit, 3 * unit]);
+        ctx.lineWidth = 1.25 * unit;
+        ctx.strokeStyle = state[12] > 0 ? 'rgba(251, 191, 36, 0.86)' : faint;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(leftX, topY);
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(rightX, topY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        label(
+            `LEDGE L${state[9].toFixed(2)} R${state[10].toFixed(2)} min${state[11].toFixed(2)} alert${state[12].toFixed(2)}`,
+            referencePlatform.position.x + referencePlatform.width / 2,
+            referencePlatform.position.y + referencePlatform.height + 11 * unit,
+            'center',
+        );
     }
 
-    // Explicit left/right camera boundary distances.
+    // Policy-camera boundary channels: inputs 6..8.
     ctx.setLineDash([2 * unit, 5 * unit]);
     ctx.lineWidth = 1.0 * unit;
     ctx.strokeStyle = faint;
@@ -234,11 +334,9 @@ export const drawAgentSenses = (
     ctx.lineTo(rightEdge, cy);
     ctx.stroke();
     ctx.setLineDash([]);
-    label(`L ${debug.boundaries.left.toFixed(2)}`, leftEdge + 7 * unit, cy - 10 * unit, 'left');
-    label(`R ${debug.boundaries.right.toFixed(2)}`, rightEdge - 7 * unit, cy - 10 * unit, 'right');
+    label(`L ${state[6].toFixed(2)}`, leftEdge + 7 * unit, cy - 10 * unit, 'left');
+    label(`R ${state[7].toFixed(2)}`, rightEdge - 7 * unit, cy - 10 * unit, 'right');
 
-    // Fall-boundary input. The real boundary is often below the viewport, so terminate at the
-    // visible bottom and leave a downward arrow when the sensor target is off-screen.
     const agentBottom = agent.position.y + AGENT_HEIGHT;
     const fallVisible = FALL_BOUNDARY >= gameState.cameraPosition.y && FALL_BOUNDARY <= visibleBottom;
     const fallEndY = fallVisible ? FALL_BOUNDARY : visibleBottom - 8 * unit;
@@ -248,14 +346,27 @@ export const drawAgentSenses = (
     ctx.lineWidth = 1.0 * unit;
     ctx.strokeStyle = faint;
     ctx.stroke();
-    label(`FALL${fallVisible ? '' : '↓'} ${debug.boundaries.fall.toFixed(2)}`, cx + 7 * unit, Math.min(fallEndY - 10 * unit, cy + 62 * unit), 'left');
-
-    // Self inputs: two velocities, stamina, grounded, role bit and cooldown bit.
-    const role = debug.self.isIt > 0.5 ? 'C' : 'R';
     label(
-        `A${agent.id} ${role} vx${debug.self.vx.toFixed(2)} vy${debug.self.vy.toFixed(2)} E${debug.self.energy.toFixed(2)} G${debug.self.grounded.toFixed(0)} CD${debug.self.cooldown.toFixed(0)}`,
+        `FALL${fallVisible ? '' : '↓'} ${state[8].toFixed(2)}`,
+        cx + 7 * unit,
+        Math.min(fallEndY - 10 * unit, cy + 62 * unit),
+        'left',
+    );
+
+    // Self channels: inputs 0..5. Bias (input 38) is included for completeness.
+    const role = state[4] > 0.5 ? 'C' : 'R';
+    label(
+        `A${agent.id} ${role} vx${state[0].toFixed(2)} vy${state[1].toFixed(2)} E${state[2].toFixed(2)} G${state[3].toFixed(0)} CD${state[5].toFixed(0)} B${state[38].toFixed(0)}`,
         cx,
         agent.position.y - 37 * unit,
+        'center',
+    );
+
+    // Compact LiDAR readout uses the exact eight original inputs (30..37).
+    label(
+        `RAYS ${state.slice(30, 38).map(v => v.toFixed(2)).join(' ')}`,
+        cx,
+        agent.position.y - 52 * unit,
         'center',
     );
 

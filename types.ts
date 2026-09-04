@@ -15,42 +15,13 @@ export enum AgentStatus {
 
 export type RewardBreakdown = { [key: string]: number };
 
-export interface AgentSensePlatformSlot {
-  id: number;
-  dx: number;
-  dy: number;
-  width: number;
-}
-
-export interface AgentSenseEntitySlot {
-  id: number;
-  dx: number;
-  dy: number;
-  vx: number;
-  vy: number;
-  energy?: number;
-}
-
-export interface AgentSenseDebug {
-  self: {
-    vx: number;
-    vy: number;
-    energy: number;
-    grounded: number;
-    isIt: number;
-    cooldown: number;
-  };
-  boundaries: { left: number; right: number; fall: number };
-  ledges: {
-    referencePlatformId: number | null;
-    left: number;
-    right: number;
-    closest: number;
-    alert: number;
-  };
-  nearbyPlatforms: AgentSensePlatformSlot[];
-  target: AgentSenseEntitySlot | null;
-  teammate: AgentSenseEntitySlot | null;
+export interface LidarRayData {
+  angle: number;
+  direction: Vector2D;
+  distance: number;
+  normalizedDistance: number;
+  hitPoint: Vector2D | null;
+  maxDistance: number;
 }
 
 export interface AgentState {
@@ -69,10 +40,6 @@ export interface AgentState {
   rewardBreakdown?: RewardBreakdown;
   trajectory: Vector2D[];
   lastPlatformId: number | null;
-  /** Last platform on which the agent had confirmed ground contact. Used only for fair respawns. */
-  respawnPlatformId: number | null;
-  /** Last fully-supported world-space ground position. Falling movement never changes this anchor. */
-  respawnPosition: Vector2D;
   scale: { x: number; y: number };
   energyAtLastTakeoff: number;
   positionAtLastTakeoff: Vector2D;
@@ -82,7 +49,7 @@ export interface AgentState {
   modelPerformance?: number;
   elo?: number;
   role?: 'chaser' | 'evader';
-  sensesDebug?: AgentSenseDebug;
+  lidarRays?: LidarRayData[];
   touchingCameraFrame?: boolean;
   cameraFrameContact?: 'left' | 'right' | null;
 }
@@ -146,6 +113,27 @@ export interface PerformanceDataPoint {
   evaderElo?: number;
 }
 
+export interface BenchmarkResult {
+  id: string;
+  timestamp: number;
+  modelLabel: string;
+  durationSeconds: number;
+  tagsCompleted: number;
+  fallsCount: number;
+  avgSurvivalTimeSec: number;
+  avgTimeToTagSec: number;
+  fallsPerMinute: number;
+  tagsPerMinute: number;
+  platformJumps: number;
+  actionDistribution: Record<string, number>;
+  scoreGrade: 'S' | 'A' | 'B' | 'C' | 'D';
+  baselineDelta?: {
+    survivalPct: number;
+    tagSpeedPct: number;
+    fallReductionPct: number;
+  };
+}
+
 
 export interface BalanceTelemetry {
   generation: number;
@@ -183,7 +171,10 @@ export interface DiagnosticsState {
   chaserElo: number;
   evaderElo: number;
   eloLeaderboard: EloLeaderboardEntry[];
-  showSenses?: boolean;
+  showLidar?: boolean;
+  benchmarkActive: boolean;
+  benchmarkTimeRemaining: number;
+  benchmarkResults: BenchmarkResult[];
   hallOfFame?: HallOfFameTelemetry;
   lastGenerationBalance?: BalanceTelemetry | null;
   balanceHistory?: BalanceTelemetry[];

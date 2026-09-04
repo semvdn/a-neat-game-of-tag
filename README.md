@@ -1,247 +1,104 @@
-# NEAT Tag Agents
+# NEAT Tag Agents — Original Controls + Current UI/Training Harness
 
-This branch ports the original PPO tag agents to a population-based **NEAT (NeuroEvolution of Augmenting Topologies)** trainer while keeping the existing physics, rendering, state-vector code, sound and controls.
+This merged build deliberately keeps the **simple movement and senses from the first NEAT version** while applying the **current UI/camera, diagnostics, and maximum-throughput background-training setup**.
 
-## What changed
+## Preserved from the initial version
 
-The old actor/critic + Adam + trajectory/GAE training path has been removed. Training is owned by a coordinator Web Worker plus a dynamically sized pool of episode-evaluation workers and evolves two independent populations:
+The agent policy interface is unchanged:
 
-- **Chaser population:** 48 genomes
-- **Evader population:** 48 genomes
-- **Inputs:** a compact 31-value state vector
-- **Outputs:** 4 continuous control channels (`left_drive`, `right_drive`, `jump_power`, `sprint`)
-- **Network type:** feed-forward NEAT graph (acyclic for this first implementation)
-- **Structural evolution:** add-node and add-connection mutation
-- **Genetic evolution:** innovation-number-aligned crossover, weight/bias mutation, elitism and speciation
+- **Actions:** `move_left`, `move_right`, `jump`, `wait`
+- **Movement:** original acceleration, friction, max-speed, fixed jump impulse, passive energy regeneration and jump energy cost
+- **Inputs:** original **39-value state vector**
+- **LiDAR:** original **8 radial obstacle rays**
+- **Other senses:** self kinematics/status, camera boundaries, fall distance, platform ledges, 3 nearby platforms, target/threat dynamics, teammate dynamics and bias
+- **Episode physics/fitness:** the original discrete controller and original dense fitness terms are retained in headless evaluation
 
-The main React thread no longer learns. It only renders the current champion genomes. This avoids having a second trainer that can drift away from the worker population.
+The later continuous left/right drive, variable jump power, sprint channel, fatigue physiology and 31-input compact sense model are **not** used in this build.
 
-## Training cycle
+## Applied from the current version
 
-The persistent training coordinator performs headless evolutionary evaluation continuously at the maximum throughput the browser/device can sustain. Independent matches are distributed across CPU workers (one logical core is reserved for the browser/UI, with a 12-worker cap). If nested workers are unavailable, training automatically falls back to the optimized single-worker evaluator. There is no user-set training-speed cap.
+### Independent champion arena
 
-For each generation:
+The visible game is presentation only. It runs continuously with the latest completed chaser and evader champions and has its own:
 
-1. Every chaser genome is evaluated against rotating evader genomes.
-2. Every genome receives the same number of evaluations (currently 3).
-3. Episodes end on a tag or after 12 seconds of simulated time.
-4. Fitness is averaged across the genome's matchups.
-5. Each population is speciated independently.
-6. Elites survive, parents are selected, crossover aligns genes by innovation number, then mutations create the next generation.
-7. The worker sends the best chaser and evader genomes plus generation diagnostics to the UI.
+- view speed controls (`0.5x`, `1x`, `2x`, `5x`, `10x`);
+- pause/step controls;
+- reset-view control;
+- visual camera zoom from 50% to 200%;
+- responsive full-bleed camera that does not change physics or neural inputs.
 
-The visible champion arena has its own independent `0.5x`–`10x` playback control. Changing visual playback speed does **not** recreate the worker or discard the evolving populations.
+### Maximum-throughput training
 
-## Fitness
+There is no user-set training multiplier. Once simulation starts, background evolution runs as fast as the browser/device can process it.
 
-Terminal performance is deliberately dominant, with modest dense shaping so locomotion can bootstrap before reliable tags emerge.
+The training worker:
 
-**Chaser fitness** rewards:
-- making a tag;
-- tagging earlier;
-- closing distance;
-- progress in the episode's randomized escape direction;
-- a small jump/locomotion signal.
+- uses a nested CPU evaluator pool when supported;
+- reserves one logical CPU for the browser/UI and caps the pool at 12 workers;
+- falls back to an optimized single-worker burst loop if nested workers are unavailable;
+- reports measured simulated-time speed (`×`), episodes/second, backend and worker count;
+- keeps rendering independent from training throughput.
 
-It penalizes falls and excessive average separation.
+The NEAT phenotype evaluator also uses the newer dense-array activation path from the current build to reduce allocation/GC overhead without changing the old action/state interface.
 
-**Evader fitness** rewards:
-- survival time;
-- surviving the full episode;
-- maintaining separation;
-- progress in the episode's randomized escape direction;
-- a small jump/locomotion signal.
+### Current diagnostics
 
-It penalizes falls.
+The current diagnostics suite is included, adapted to the original action/sense model. It shows:
 
-The exact coefficients are in `workers/trainingWorker.ts` and are intentionally easy to tune.
+- training throughput and backend;
+- fitness histories for both roles;
+- species/topology metrics;
+- action distributions for the original four actions;
+- champion network graph (39 inputs, 4 outputs);
+- role Elo signal;
+- current-population game-balance history;
+- Hall-of-Fame archive diagnostics;
+- champion save/load/import/export.
 
-## Continuous control + stamina
+## Evolution setup
 
-The NEAT outputs are no longer collapsed to a single discrete action. Each frame the phenotype emits:
+Two independent populations are evolved:
 
-- **left drive** and **right drive**, combined into a signed horizontal effort in `[-1, 1]`;
-- **jump power** in `[0, 1]`, allowing small hops through maximum jumps;
-- **sprint intensity** in `[0, 1]`, blending efficient cruise speed into peak speed.
+- Chaser population: 48 genomes
+- Evader population: 48 genomes
+- Rotating current-population opponents: 3 per genome
+- Historical Hall-of-Fame opponents: 1 per genome when available
+- Episode limit: 12 seconds simulated time
 
-Stamina is a physical constraint rather than a direct fitness reward:
+The Hall of Fame retains recent champions plus reservoir-sampled older champions. This is part of the current diagnostics/training harness; it does not alter the preserved movement or sensing interface.
 
-- ordinary running has a modest nonlinear cost;
-- full sprint is much more expensive (about 18 energy/second at full effort);
-- jump cost scales quadratically from roughly 3 to 15 energy;
-- recovery happens only while grounded and is strongest while resting;
-- below 30% reserve, acceleration, top speed and jump power degrade smoothly;
-- an exhausted agent can still move and can make a weaker affordable jump.
+## Important files
 
-### Fall / respawn fairness
-
-Respawning is anchored to confirmed ground contact rather than the body's position after it has fallen. Each agent remembers its own last safe platform and a fully-supported X coordinate on that platform. A fall returns to that exact anchor, zeroes velocity, preserves remaining stamina, and cannot select a different platform based on horizontal drift during the fall. The visual world keeps referenced respawn platforms from being despawned while an agent still depends on them. The fall boundary is also close to the playable world (`y = 1000`) so irrecoverable falls are resolved promptly rather than allowing the camera to travel a long distance first.
-
-Repeated falls receive an uncapped fitness cost in headless evaluation. Together with the lack of an energy refill or forward-platform selection, intentional falling is no longer a useful stamina/teleport shortcut.
-
-The roles have intentionally different physiology:
-
-- **Evader:** ~5% better burst speed/acceleration/jump, 90% base stamina capacity and 90% recovery.
-- **Chaser:** base burst ability, 110% stamina capacity and 115% recovery.
-
-This makes the evader better at creating an initial gap while giving the chaser a plausible endurance strategy: force expensive sprints/jumps, conserve energy, then attack a fatigued runner.
-
-The observation vector contains **31 inputs**: self kinematics/status, explicit camera/fall boundaries, platform ledge distances, three nearby-platform geometry slots, target/threat dynamics, closest-teammate dynamics, and target/threat energy reserve. The redundant eight-ray lidar block was removed because its obstacle information is already represented by the explicit boundary, ledge, and nearby-platform senses. This changes the NEAT input topology, so older 39-input checkpoints are intentionally rejected rather than loaded with mismatched semantics.
-
-## Mirrored and randomized evaluation
-
-Each generation now evaluates both leftward and rightward escape orientations. With the default three matchups per genome, seed parity guarantees that both orientations occur rather than relying on chance. Start spacing and translation are also randomized within a safe range.
-
-The headless course is geometrically mirrored for leftward episodes, camera tracking is allowed into negative world coordinates, and progress shaping is measured relative to the episode's flow direction. This removes the old shortcut where `move right` could become a globally correct policy. Visual champion playback also randomizes its initial orientation and spacing on reset.
-
-## NEAT implementation
-
-`learning/neat.ts` contains the evolutionary core:
-
-- node and connection genes;
-- global innovation tracking;
-- innovation-consistent node splits;
-- genome cloning and phenotype compilation;
-- feed-forward topological execution;
-- compatibility distance;
-- species assignment with an adaptive compatibility threshold;
-- fitter-parent crossover;
-- cycle-safe inheritance/mutation;
-- weight, bias, add-node, add-connection and toggle mutations;
-- tournament selection and elitism;
-- generation metrics.
-
-No third-party NEAT library is required.
-
-## Diagnostics
-
-The PPO diagnostics have been replaced by NEAT metrics:
-
-- best / mean / minimum fitness per generation;
-- species count;
-- compatibility threshold;
-- average node count;
-- average enabled connection count;
-- champion node/connection count;
-- generation counter;
-- chaser and evader action distributions;
-- champion network graph visualizer.
-
-Role-level Elo is retained only as a human-readable evaluation signal. It is **not** used for evolutionary selection.
-
-
-## Decoupled champion view and maximum-throughput training
-
-The visible canvas and the evolutionary worker now run on independent clocks.
-
-- **View:** `0.5x`, `1x`, `2x`, `5x`, `10x`, with its own pause, single-frame step, and **Reset view** control.
-- **Train:** always runs at maximum available throughput, with its own pause. The UI reports the measured simulated-time multiplier (`× realtime`), completed episodes per second, and the number of active CPU evaluation workers instead of exposing a requested speed setting.
-- The worker no longer sends sampled training game states to replace the canvas. The visible game is always one continuous champion arena.
-- After each completed generation, newly reported chaser and evader champions are hot-swapped into the running arena without resetting positions, velocity, stamina, roles, cooldowns, platforms, or game time.
-- **Reset view** resets only the visible arena and its local match history; populations, Hall of Fame, generation, and worker state continue untouched.
-- Worker counters/Elo remain worker-owned, so playing or resetting the champion view cannot distort training diagnostics.
-
-## Training performance optimizations
-
-The headless evaluator is deliberately optimized around the operations that dominate NEAT training:
-
-- compiled NEAT phenotypes use dense numeric arrays and reusable activation scratch buffers instead of allocating `Map` objects on every activation;
-- the 31-input observation path writes into reusable `Float64Array` buffers;
-- nearest-platform sensing uses a linear top-3 selection instead of allocating and sorting the full platform list every agent/frame;
-- training locomotion mutates agent state in place instead of allocating rich per-frame diagnostics objects;
-- tag checks use squared distances where only a threshold comparison is required;
-- respawns use per-agent safe-ground anchors, so fall drift cannot change the selected platform;
-- independent episode evaluations run concurrently in a worker pool.
-
-The optimized paths were regression-checked against the previous implementation: state vectors and NEAT outputs match exactly, locomotion differs only at floating-point roundoff, and fixed-genome episode fitness/outcomes match exactly for the tested seeds. In local Node microbenchmarks, the optimized single-thread episode evaluator was roughly 12× faster than the previous evaluator for the same genomes/seeds. Browser performance will vary by CPU and worker scheduling.
-
-### Why the RTX GPU is not used yet
-
-WebGPU can run compute work from Web Workers, but accelerating only the tiny NEAT network forward pass would require CPU→GPU dispatch and GPU→CPU readback every simulated frame, which is a poor trade for these small, variable-topology networks. The much larger cost is the branch-heavy game simulation and sensing. A GPU backend would therefore only make sense as a larger rewrite that keeps many complete episodes resident on the GPU in packed buffers and evaluates them in batches. For the current population size and architecture, CPU hot-path optimization plus parallel episode workers is the lower-overhead path and preserves the existing simulation exactly.
-
-## Persistence
-
-Export/save now stores the current **chaser and evader champion genomes** and their generation metadata.
-
-When champions are imported, the worker reconstructs a fresh population around each champion and mutates the non-elite copies. Full population/species state is not yet serialized, so an export is a champion checkpoint rather than an exact pause/resume snapshot.
-
-Old PPO actor/critic JSON is intentionally rejected because its tensors cannot be mapped meaningfully onto NEAT genome topology.
-
-## Main tuning constants
-
-See `constants.ts`:
-
-```ts
-NEAT_POPULATION_SIZE = 48
-NEAT_OPPONENTS_PER_GENOME = 3
-NEAT_EPISODE_MAX_MS = 12000
-NEAT_COMPATIBILITY_THRESHOLD = 0.8
-NEAT_TARGET_SPECIES = 8
-NEAT_CROSSOVER_RATE = 0.75
-NEAT_WEIGHT_MUTATION_RATE = 0.8
-NEAT_ADD_NODE_RATE = 0.03
-NEAT_ADD_CONNECTION_RATE = 0.08
-```
-
-Additional compatibility and mutation parameters live in `DEFAULT_NEAT_CONFIG` in `learning/neat.ts`.
+- `learning/state.ts` — original 39-D state vector and LiDAR inputs
+- `learning/raycast.ts` — original 8-ray sensing
+- `learning/agent.ts` — original 4-action NEAT controller wrapper
+- `learning/trainingEpisode.ts` — headless implementation of the original movement/episode behavior
+- `learning/neat.ts` — NEAT core with newer allocation-efficient phenotype evaluation
+- `workers/trainingWorker.ts` — max-throughput population/Hall-of-Fame trainer and telemetry
+- `workers/episodeWorker.ts` — parallel episode evaluator
+- `components/GameCanvas.tsx` — current responsive presentation camera with original LiDAR overlay
+- `components/InfoPanel.tsx` — current compact status panel adapted to 39 inputs
+- `components/PerformanceDiagnostics.tsx` — current diagnostics suite
+- `App.tsx` — independent champion-view and background-training orchestration
 
 ## Run locally
-
-Prerequisite: Node.js.
 
 ```bash
 npm install
 npm run dev
 ```
 
-For a production build:
+Type-check:
+
+```bash
+npm run lint
+```
+
+Production build:
 
 ```bash
 npm run build
 ```
 
-The original AI Studio/Vite Gemini environment plumbing is left in place, although the tag-agent trainer itself does not depend on Gemini.
-
-## File map
-
-- `learning/neat.ts` — genome, phenotype, mutation, crossover, speciation and population evolution
-- `learning/agent.ts` — lightweight runtime wrapper around one NEAT genome
-- `workers/trainingWorker.ts` — population ownership, generation scheduling, telemetry and CPU worker pool
-- `workers/episodeWorker.ts` — parallel episode-evaluation worker
-- `learning/trainingEpisode.ts` — optimized deterministic headless episode evaluator
-- `components/PerformanceDiagnostics.tsx` — NEAT diagnostics and topology visualizer
-- `App.tsx` — champion rendering, worker lifecycle, persistence and UI integration
-- `constants.ts` — NEAT and game parameters
-
-The former PPO math/optimizer module (`learning/math.ts`) has been removed.
-
-
-## Hall of Fame coevolution
-
-Each evaluated genome plays the normal balanced current-population matchups and, once historical champions exist, an extra matchup against the opposite role's Hall of Fame. Each role keeps up to 12 champions: the four most recent champions plus a reservoir sample of older generations. This keeps old successful strategies in the selection pressure and reduces cyclic forgetting. The archive is worker-session state; importing a champion seeds a new archive baseline.
-
-
-## Symmetric game balance
-
-Chaser and runner now use identical physiology: 100 stamina, the same acceleration, maximum speed, jump strength, recovery and fatigue curve. Their only built-in difference is the objective (tag versus survive).
-
-Evolutionary fitness is comparable across roles. Terminal outcomes share the same 0–200 scale: an early tag approaches 200 for the chaser and 0 for the runner; a late tag approaches 100/100; a full-episode survival is 0/200. Small bounded progress/separation/fall shaping helps bootstrap locomotion but cannot dominate the terminal result, and neither jumping nor unused energy is rewarded directly.
-
-Diagnostics also report per-generation tag rate, runner survival rate and mean tag time from current-population matches only. Hall-of-Fame evaluations still affect selection but are excluded from these balance metrics.
-
-### Fixed world geometry
-The champion arena uses fixed world geometry independent of the responsive canvas. Agents remain 40×60 world units, platform heights remain 20 world units, generated platform widths remain within their fixed configured range, and the initial course is based on the 1200×800 policy reference. The visual camera may uniformly scale those world units, but X/Y always share one scale so geometry never deforms. Background NEAT evaluation likewise stays on the fixed 1200×800 training world.
-
-## Agent senses overlay
-
-The champion arena includes an **Agent Senses** overlay (sidebar toggle or `S` key). It is generated from the same `getAgentStateVector()` observation pass that feeds the NEAT policy, so the visualization follows the current 31-input schema rather than a duplicated approximation.
-
-The overlay shows, per agent: normalized self velocity/energy/status, camera-left/right and fall-boundary distances, current/nearest-platform ledge distances and alert, the three nearest platform slots (`dx`, `dy`, width), target/threat dynamics plus opponent stamina, and evader teammate dynamics.
-
-### Camera zoom and framing
-The Champion Arena header includes a visual-only **− / percentage / +** camera control from 50% to 200% in 25% steps. The presentation camera is now separate from the fixed 1200×800 policy/sensor frame. It fills the entire canvas at every aspect ratio and zoom level, while the active platform band is kept at roughly 72% of canvas height so standing agents, full jumps, and the platform remain visible even at maximum zoom. Horizontal presentation tracking remains aligned with the policy camera. No red side-contact flash is drawn.
-
-Canvas sizing is owned by `GameCanvas` itself via `ResizeObserver`, avoiding transient black seams during browser/panel resize. Visual zoom never changes physics, platform/agent world dimensions, observation inputs, or worker training. Click the percentage to return to 100%.
-
-### UI density
-The application shell is rendered at a built-in 75% presentation scale with a compensated layout viewport, matching the previous appearance at 75% browser zoom while filling the browser at normal 100% zoom.
+## Senses view
+The champion arena includes the newer full Agent Senses overlay (toggle in the sidebar or press `S`), adapted to the original 39-input controller. It visualizes target/threat, teammate, nearby platform slots, ledges, policy-camera boundaries, fall distance, self-state, and all eight original LiDAR rays. The overlay reads the already-computed policy state and does not alter the sensing or movement implementation.

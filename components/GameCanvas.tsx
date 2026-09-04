@@ -7,7 +7,7 @@ interface GameCanvasProps {
   gameState: GameState;
   onFrameReady: (dataUrl: string) => void;
   showTrails: boolean;
-  showSenses: boolean;
+  showLidar: boolean;
   cameraZoom: number;
 }
 
@@ -72,7 +72,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   gameState,
   onFrameReady,
   showTrails,
-  showSenses,
+  showLidar,
   cameraZoom,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -157,7 +157,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       agents.forEach(agent => drawAgentTrail(ctx, agent));
     }
 
-    if (showSenses) {
+    if (showLidar) {
       agents.forEach(agent => drawAgentSenses(ctx, agent, gameState, cameraScale));
     }
 
@@ -166,7 +166,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     ctx.restore();
 
-    if (showSenses) {
+    if (showLidar) {
       // Screen-space legend: it stays readable and stationary while the world camera moves.
       const legendX = 10;
       const legendY = 10;
@@ -177,13 +177,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.textBaseline = 'top';
       ctx.fillStyle = '#d1d5db';
       ctx.fillText(
-        'SENSES · 31 policy inputs · T target/threat · M teammate · P1–P3 nearest platforms',
+        'SENSES · original 39 policy inputs · target/threat · teammate · platforms · ledges · boundaries',
         legendX + 7,
         legendY + 7
       );
       ctx.fillStyle = '#94a3b8';
       ctx.fillText(
-        'Boundaries + ledges + platform geometry + agent dynamics · S toggles view',
+        '8 original LiDAR rays + exact input values · visualization only · S toggles view',
         legendX + 7,
         legendY + 24
       );
@@ -192,7 +192,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // Kept for the existing API. Capture is intentionally opt-in elsewhere; do not create
     // a data URL every animation frame because it would stall the visual simulation.
     void onFrameReady;
-  }, [gameState, canvasSize, onFrameReady, showTrails, showSenses, cameraZoom]);
+  }, [gameState, canvasSize, onFrameReady, showTrails, showLidar, cameraZoom]);
 
   return (
     <canvas

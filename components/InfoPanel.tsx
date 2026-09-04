@@ -10,8 +10,8 @@ interface InfoPanelProps {
   isSimulating: boolean;
   showTrails: boolean;
   onToggleTrails: () => void;
-  showSenses: boolean;
-  onToggleSenses: () => void;
+  showLidar: boolean;
+  onToggleLidar: () => void;
   onOpenDiagnostics: () => void;
   chaserElo?: number;
   evaderElo?: number;
@@ -35,7 +35,7 @@ const ToggleSwitch: React.FC<{ id: string; checked: boolean; onChange: () => voi
 
 const stateVectorLabels = [
     // Self Kinematics & Status (6)
-    { label: 'Vel X' }, { label: 'Vel Y' }, { label: 'Energy' }, 
+    { label: 'Vel X' }, { label: 'Vel Y' }, { label: 'Energy' },
     { label: 'Ground' }, { label: 'Is It' }, { label: 'Cooldown' },
     // Explicit Boundary Distances (3)
     { label: 'Screen Left' }, { label: 'Screen Right' }, { label: 'Fall Depth' },
@@ -46,13 +46,14 @@ const stateVectorLabels = [
     { label: 'P2 dX' }, { label: 'P2 dY' }, { label: 'P2 Width' },
     { label: 'P3 dX' }, { label: 'P3 dY' }, { label: 'P3 Width' },
     // Target / Threat (4)
-    { label: 'Tgt dX' }, { label: 'Tgt dY' }, 
-    { label: 'Tgt Vel X' }, { label: 'Tgt Vel Y' },
+    { label: 'Tgt dX' }, { label: 'Tgt dY' }, { label: 'Tgt Vel X' }, { label: 'Tgt Vel Y' },
     // Teammate (4)
-    { label: 'Mate dX' }, { label: 'Mate dY' }, 
-    { label: 'Mate Vel X' }, { label: 'Mate Vel Y' },
-    // Opponent stamina (1)
-    { label: 'Opponent Energy' },
+    { label: 'Mate dX' }, { label: 'Mate dY' }, { label: 'Mate Vel X' }, { label: 'Mate Vel Y' },
+    // Original LiDAR rays (8)
+    { label: 'Ray 0° (R)' }, { label: 'Ray 45° (DR)' }, { label: 'Ray 90° (D)' }, { label: 'Ray 135° (DL)' },
+    { label: 'Ray 180° (L)' }, { label: 'Ray 225° (UL)' }, { label: 'Ray 270° (U)' }, { label: 'Ray 315° (UR)' },
+    // Bias (1)
+    { label: 'Bias' },
 ];
 
 const rewardTermOrder = [
@@ -75,7 +76,9 @@ const rewardTermOrder = [
     'successfulJump',
     'stayOnPlatform',
     'fallPenalty',
+    'highEnergyUse',
     'inactivity',
+    'highEnergy',
 ];
 
 const VectorBar: React.FC<{label: string, value: number}> = ({label, value}) => {
@@ -186,8 +189,8 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
   isSimulating,
   showTrails,
   onToggleTrails,
-  showSenses,
-  onToggleSenses,
+  showLidar,
+  onToggleLidar,
   onOpenDiagnostics,
   chaserElo,
   evaderElo,
@@ -207,10 +210,10 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
           <Radar className="w-4 h-4 text-cyan-400" />
           <div>
             <h3 className="font-semibold text-gray-300">Agent Senses</h3>
-            <p className="text-[10px] text-gray-400">31-D brain inputs · press S</p>
+            <p className="text-[10px] text-gray-400">39-D original brain inputs · full overlay + 8 LiDAR rays · press S</p>
           </div>
         </div>
-        <ToggleSwitch id="senses-toggle" checked={showSenses} onChange={onToggleSenses} />
+        <ToggleSwitch id="lidar-toggle" checked={showLidar} onChange={onToggleLidar} />
       </div>
 
       {chaserElo !== undefined && evaderElo !== undefined && (
@@ -292,7 +295,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
 
       <div className="mt-auto bg-gray-700 p-3 rounded-md text-xs text-gray-400">
         <h4 className="font-bold text-gray-300 mb-1">How it works:</h4>
-        <p>Agents evolve with separate chaser and evader NEAT populations. Speciation protects new topologies while crossover and mutation search both connection weights and network structure.</p>
+        <p>Agents use the original discrete left/right/jump/wait movement and 39-input state including 8 LiDAR rays. Separate chaser and evader NEAT populations evolve in the background.</p>
       </div>
     </aside>
   );
