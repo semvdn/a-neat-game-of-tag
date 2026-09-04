@@ -50,8 +50,8 @@ const viewportSize = { width: WORLD_REF_WIDTH, height: WORLD_REF_HEIGHT };
 let seededFromStart = false;
 
 const DEFAULT_UPGRADE_CONFIG: UpgradeConfig = {
-  sprint: { mode: 'auto', threshold: 140 },
-  controlledJump: { mode: 'auto', threshold: 180 },
+  sprint: { mode: 'auto', threshold: 140, chaserEnabled: true, runnerEnabled: true },
+  controlledJump: { mode: 'auto', threshold: 180, chaserEnabled: true, runnerEnabled: true },
 };
 let upgradeConfig: UpgradeConfig = DEFAULT_UPGRADE_CONFIG;
 let upgradePerformanceScore = 0;
@@ -60,9 +60,11 @@ let sprintAutoUnlocked = false;
 let controlledJumpAutoUnlocked = false;
 
 function sanitizeUpgradeConfig(value?: Partial<UpgradeConfig>): UpgradeConfig {
-  const normalize = (rule: any, fallback: { mode: 'off' | 'auto' | 'on'; threshold: number }) => ({
+  const normalize = (rule: any, fallback: UpgradeConfig[keyof UpgradeConfig]) => ({
     mode: rule?.mode === 'off' || rule?.mode === 'on' || rule?.mode === 'auto' ? rule.mode : fallback.mode,
     threshold: Number.isFinite(Number(rule?.threshold)) ? Math.max(0, Number(rule.threshold)) : fallback.threshold,
+    chaserEnabled: typeof rule?.chaserEnabled === 'boolean' ? rule.chaserEnabled : fallback.chaserEnabled,
+    runnerEnabled: typeof rule?.runnerEnabled === 'boolean' ? rule.runnerEnabled : fallback.runnerEnabled,
   });
   return {
     sprint: normalize(value?.sprint, DEFAULT_UPGRADE_CONFIG.sprint),
@@ -76,9 +78,15 @@ function updateAutoUnlocks() {
 }
 
 function activeUpgradeState(): ActiveUpgradeState {
+  const sprint = upgradeConfig.sprint.mode === 'on' || (upgradeConfig.sprint.mode === 'auto' && sprintAutoUnlocked);
+  const controlledJump = upgradeConfig.controlledJump.mode === 'on' || (upgradeConfig.controlledJump.mode === 'auto' && controlledJumpAutoUnlocked);
   return {
-    sprint: upgradeConfig.sprint.mode === 'on' || (upgradeConfig.sprint.mode === 'auto' && sprintAutoUnlocked),
-    controlledJump: upgradeConfig.controlledJump.mode === 'on' || (upgradeConfig.controlledJump.mode === 'auto' && controlledJumpAutoUnlocked),
+    sprint,
+    controlledJump,
+    sprintChaser: sprint && upgradeConfig.sprint.chaserEnabled,
+    sprintRunner: sprint && upgradeConfig.sprint.runnerEnabled,
+    controlledJumpChaser: controlledJump && upgradeConfig.controlledJump.chaserEnabled,
+    controlledJumpRunner: controlledJump && upgradeConfig.controlledJump.runnerEnabled,
   };
 }
 
@@ -818,7 +826,9 @@ self.onmessage = (event: MessageEvent) => {
       upgradeConfig = sanitizeUpgradeConfig(payload?.upgradeConfig);
       updateAutoUnlocks();
       const after = activeUpgradeState();
-      const physicsChanged = before.sprint !== after.sprint || before.controlledJump !== after.controlledJump;
+      const physicsChanged = before.sprint !== after.sprint || before.controlledJump !== after.controlledJump ||
+        before.sprintChaser !== after.sprintChaser || before.sprintRunner !== after.sprintRunner ||
+        before.controlledJumpChaser !== after.controlledJumpChaser || before.controlledJumpRunner !== after.controlledJumpRunner;
       // Only discard a partial generation when the effective physics capability changed.
       if (physicsChanged) {
         resetEvaluationAccumulators();

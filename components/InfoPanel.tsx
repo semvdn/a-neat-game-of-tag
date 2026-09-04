@@ -41,6 +41,16 @@ const ToggleSwitch: React.FC<{ id: string; checked: boolean; onChange: () => voi
     </label>
 );
 
+const RoleToggle: React.FC<{ id: string; label: string; checked: boolean; onChange: () => void }> = ({ id, label, checked, onChange }) => (
+  <label htmlFor={id} className={`flex min-w-0 cursor-pointer items-center justify-between gap-2 rounded border px-2 py-1.5 text-[10px] transition-colors ${checked ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-200' : 'border-gray-700 bg-gray-950/60 text-gray-500'}`}>
+    <span className="font-semibold">{label}</span>
+    <span className="relative h-4 w-7 shrink-0 rounded-full bg-gray-700">
+      <input id={id} type="checkbox" className="sr-only" checked={checked} onChange={onChange} />
+      <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${checked ? 'translate-x-3.5' : 'translate-x-0.5'}`}></span>
+    </span>
+  </label>
+);
+
 const stateVectorLabels = [
     // Self Kinematics & Status (6)
     { label: 'Vel X' }, { label: 'Vel Y' }, { label: 'Energy' },
@@ -152,6 +162,25 @@ const UpgradeControl: React.FC<{
           </button>
         ))}
       </div>
+      {rule.mode !== 'off' && (
+        <div className="mt-2">
+          <div className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-gray-500">Applied to role when active</div>
+          <div className="grid grid-cols-2 gap-1.5">
+            <RoleToggle
+              id={`${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-chaser`}
+              label="Chaser"
+              checked={rule.chaserEnabled}
+              onChange={() => onChange({ chaserEnabled: !rule.chaserEnabled })}
+            />
+            <RoleToggle
+              id={`${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-runner`}
+              label="Runner"
+              checked={rule.runnerEnabled}
+              onChange={() => onChange({ runnerEnabled: !rule.runnerEnabled })}
+            />
+          </div>
+        </div>
+      )}
       <div className="mt-2 flex items-center justify-between gap-2 text-[10px]">
         <label className="text-gray-500">Auto threshold</label>
         <input
@@ -299,7 +328,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
         </div>
         <UpgradeControl
           title="Sprint"
-          description="Raises top speed to 7.25 and acceleration up to 35%; intensity follows movement-output strength and costs stamina."
+          description="Raises top speed to 7.25 and acceleration up to 35%; intensity follows movement-output strength and costs stamina. Role switches appear once active."
           icon={<Zap className="w-4 h-4" />}
           rule={upgradeConfig.sprint}
           active={sprintUpgradeActive}
@@ -310,7 +339,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
         />
         <UpgradeControl
           title="Controlled Jump"
-          description="Jump-output strength controls 45–100% of the original jump impulse and scales its stamina cost."
+          description="Jump-output strength controls 45–100% of the original jump impulse and scales its stamina cost. Role switches appear once active."
           icon={<ArrowUp className="w-4 h-4" />}
           rule={upgradeConfig.controlledJump}
           active={controlledJumpUpgradeActive}

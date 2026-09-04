@@ -31,7 +31,7 @@ Each upgrade has three modes:
 
 The current performance score is the mean of the latest chaser and evader champion best-fitness values. Auto unlocking compares the threshold against the highest score reached so far, and unlocks latch for the current training run once reached; resetting both populations clears the unlock latch. Changing upgrade configuration discards the partially evaluated generation so a generation is never scored with mixed physics rules. Settings are saved in browser local storage.
 
-Default auto thresholds are 140 for Sprint and 180 for Controlled Jump, and both are editable in the UI.
+Default auto thresholds are 140 for Sprint and 180 for Controlled Jump, and both are editable in the UI. When an upgrade mode is Auto or On, separate Chaser and Runner switches appear. These role switches can be configured before an Auto unlock occurs; once active, only enabled roles receive the upgraded mechanic. A disabled Sprint role uses original movement, while a disabled Controlled Jump role keeps the original fixed-strength jump.
 
 ## Applied from the current version
 

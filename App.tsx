@@ -96,8 +96,8 @@ const formatTrainingRate = (value: number | undefined) => {
 
 const CHAMPION_WORLD_VIEWPORT = { width: 1200, height: 800 } as const;
 const DEFAULT_UPGRADE_CONFIG: UpgradeConfig = {
-  sprint: { mode: 'auto', threshold: 140 },
-  controlledJump: { mode: 'auto', threshold: 180 },
+  sprint: { mode: 'auto', threshold: 140, chaserEnabled: true, runnerEnabled: true },
+  controlledJump: { mode: 'auto', threshold: 180, chaserEnabled: true, runnerEnabled: true },
 };
 const UPGRADE_STORAGE_KEY = 'ai_tag_upgrade_config';
 
@@ -109,6 +109,8 @@ const loadUpgradeConfig = (): UpgradeConfig => {
     const normalize = (rule: Partial<UpgradeRule> | undefined, fallback: UpgradeRule): UpgradeRule => ({
       mode: rule?.mode === 'off' || rule?.mode === 'on' || rule?.mode === 'auto' ? rule.mode : fallback.mode,
       threshold: Number.isFinite(Number(rule?.threshold)) ? Math.max(0, Number(rule?.threshold)) : fallback.threshold,
+      chaserEnabled: typeof rule?.chaserEnabled === 'boolean' ? rule.chaserEnabled : fallback.chaserEnabled,
+      runnerEnabled: typeof rule?.runnerEnabled === 'boolean' ? rule.runnerEnabled : fallback.runnerEnabled,
     });
     return {
       sprint: normalize(parsed.sprint, DEFAULT_UPGRADE_CONFIG.sprint),
@@ -707,8 +709,11 @@ export const App: React.FC = () => {
           agent.lastAction = action;
 
           agent.acceleration.x = 0;
+          const isChaserRole = agent.status === AgentStatus.It;
+          const sprintEnabledForRole = sprintUpgradeActive && (isChaserRole ? upgradeConfig.sprint.chaserEnabled : upgradeConfig.sprint.runnerEnabled);
+          const controlledJumpEnabledForRole = controlledJumpUpgradeActive && (isChaserRole ? upgradeConfig.controlledJump.chaserEnabled : upgradeConfig.controlledJump.runnerEnabled);
           const isMoveAction = action === 'move_left' || action === 'move_right';
-          const sprintIntensity = sprintUpgradeActive && isMoveAction && newEnergy > 0 ? actionStrength : 0;
+          const sprintIntensity = sprintEnabledForRole && isMoveAction && newEnergy > 0 ? actionStrength : 0;
           const accelerationScale = 1 + (SPRINT_ACCELERATION_MULTIPLIER - 1) * sprintIntensity;
           if (action === 'move_left') agent.acceleration.x = -AGENT_ACCELERATION * accelerationScale;
           else if (action === 'move_right') agent.acceleration.x = AGENT_ACCELERATION * accelerationScale;
@@ -723,10 +728,10 @@ export const App: React.FC = () => {
 
           let jumpPower = 0;
           if (action === 'jump' && agent.isOnGround) {
-            jumpPower = controlledJumpUpgradeActive
+            jumpPower = controlledJumpEnabledForRole
               ? CONTROLLED_JUMP_MIN_POWER_RATIO + (1 - CONTROLLED_JUMP_MIN_POWER_RATIO) * actionStrength
               : 1;
-            const jumpCost = controlledJumpUpgradeActive
+            const jumpCost = controlledJumpEnabledForRole
               ? CONTROLLED_JUMP_MIN_ENERGY_COST + (JUMP_ENERGY_COST - CONTROLLED_JUMP_MIN_ENERGY_COST) * jumpPower * jumpPower
               : JUMP_ENERGY_COST;
             if (newEnergy >= jumpCost) {

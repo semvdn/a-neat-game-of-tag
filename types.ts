@@ -25,6 +25,8 @@ export type UpgradeMode = 'off' | 'auto' | 'on';
 export interface UpgradeRule {
   mode: UpgradeMode;
   threshold: number;
+  chaserEnabled: boolean;
+  runnerEnabled: boolean;
 }
 export interface UpgradeConfig {
   sprint: UpgradeRule;
@@ -33,6 +35,10 @@ export interface UpgradeConfig {
 export interface ActiveUpgradeState {
   sprint: boolean;
   controlledJump: boolean;
+  sprintChaser: boolean;
+  sprintRunner: boolean;
+  controlledJumpChaser: boolean;
+  controlledJumpRunner: boolean;
 }
 
 export interface LidarRayData {

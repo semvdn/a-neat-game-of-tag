@@ -145,7 +145,11 @@ export function runTrainingEpisode(
   const trackChaserActions = options.trackChaserActions !== false;
   const trackEvaderActions = options.trackEvaderActions !== false;
   const gameState = createEpisodeState(seed, viewportSize);
-  const upgrades: ActiveUpgradeState = options.upgrades || { sprint: false, controlledJump: false };
+  const upgrades: ActiveUpgradeState = options.upgrades || {
+    sprint: false, controlledJump: false,
+    sprintChaser: false, sprintRunner: false,
+    controlledJumpChaser: false, controlledJumpRunner: false,
+  };
   const chaserAgent = gameState.agents[0];
   const evaders = gameState.agents.slice(1);
 
@@ -198,8 +202,11 @@ export function runTrainingEpisode(
       agent.energy = Math.min(agent.maxEnergy, agent.energy + ENERGY_REGEN_RATE * (DT / 1000));
       agent.acceleration.x = 0;
 
+      const isChaserRole = agent.id === 1;
+      const sprintEnabledForRole = upgrades.sprint && (isChaserRole ? upgrades.sprintChaser : upgrades.sprintRunner);
+      const controlledJumpEnabledForRole = upgrades.controlledJump && (isChaserRole ? upgrades.controlledJumpChaser : upgrades.controlledJumpRunner);
       const isMoveAction = action === 'move_left' || action === 'move_right';
-      const sprintIntensity = upgrades.sprint && isMoveAction && agent.energy > 0
+      const sprintIntensity = sprintEnabledForRole && isMoveAction && agent.energy > 0
         ? actionStrength
         : 0;
       const accelerationScale = 1 + (SPRINT_ACCELERATION_MULTIPLIER - 1) * sprintIntensity;
@@ -217,10 +224,10 @@ export function runTrainingEpisode(
       agent.sprintIntensity = sprintIntensity;
 
       if (action === 'jump' && agent.isOnGround) {
-        const jumpPower = upgrades.controlledJump
+        const jumpPower = controlledJumpEnabledForRole
           ? CONTROLLED_JUMP_MIN_POWER_RATIO + (1 - CONTROLLED_JUMP_MIN_POWER_RATIO) * actionStrength
           : 1;
-        const jumpCost = upgrades.controlledJump
+        const jumpCost = controlledJumpEnabledForRole
           ? CONTROLLED_JUMP_MIN_ENERGY_COST + (JUMP_ENERGY_COST - CONTROLLED_JUMP_MIN_ENERGY_COST) * jumpPower * jumpPower
           : JUMP_ENERGY_COST;
         if (agent.energy >= jumpCost) {
