@@ -33,6 +33,8 @@ The current performance score is the mean of the latest chaser and evader champi
 
 Default auto thresholds are 140 for Sprint and 180 for Controlled Jump, and both are editable in the UI. When an upgrade mode is Auto or On, separate Chaser and Runner switches appear. These role switches can be configured before an Auto unlock occurs; once active, only enabled roles receive the upgraded mechanic. A disabled Sprint role uses original movement, while a disabled Controlled Jump role keeps the original fixed-strength jump.
 
+Sprint also has conditional **Advanced** menus for each enabled role. Chaser and Runner can independently override the default maximum sprint speed (7.25) and full-sprint stamina drain (28 stamina/second). Each override has its own toggle; leaving it off continues to use the project default. The role's movement-output strength still interpolates continuously between the base speed and its configured sprint maximum, and stamina drain scales with the same sprint intensity.
+
 ## Applied from the current version
 
 ### Independent champion arena

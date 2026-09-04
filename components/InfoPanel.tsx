@@ -1,9 +1,10 @@
 
 
 import React from 'react';
-import type { AgentState, RewardBreakdown, UpgradeConfig, UpgradeMode, UpgradeRule } from '../types';
+import type { AgentState, RewardBreakdown, UpgradeConfig, UpgradeMode, UpgradeRule, SprintUpgradeRule, SprintRoleAdvanced } from '../types';
 import { AgentStatus } from '../types';
-import { Radar, Shield, Swords, Zap, ArrowUp } from 'lucide-react';
+import { Radar, Shield, Swords, Zap, ArrowUp, SlidersHorizontal } from 'lucide-react';
+import { MAX_SPEED, SPRINT_MAX_SPEED, SPRINT_ENERGY_COST_PER_SEC } from '../constants';
 
 interface InfoPanelProps {
   agents: AgentState[];
@@ -22,7 +23,7 @@ interface InfoPanelProps {
   controlledJumpUpgradeActive: boolean;
   sprintAutoUnlocked: boolean;
   controlledJumpAutoUnlocked: boolean;
-  onUpdateUpgrade: (upgrade: keyof UpgradeConfig, patch: Partial<UpgradeRule>) => void;
+  onUpdateUpgrade: (upgrade: keyof UpgradeConfig, patch: Partial<UpgradeRule> | Partial<SprintUpgradeRule>) => void;
 }
 
 const statusColors: Record<AgentStatus, string> = {
@@ -201,6 +202,108 @@ const UpgradeControl: React.FC<{
   );
 };
 
+const SprintRoleAdvancedMenu: React.FC<{
+  role: 'Chaser' | 'Runner';
+  tuning: SprintRoleAdvanced;
+  onChange: (next: SprintRoleAdvanced) => void;
+}> = ({ role, tuning, onChange }) => {
+  const setNumber = (key: 'maxSpeed' | 'staminaCostPerSec', value: string) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return;
+    if (key === 'maxSpeed') onChange({ ...tuning, maxSpeed: Math.max(MAX_SPEED, Math.min(20, parsed)) });
+    else onChange({ ...tuning, staminaCostPerSec: Math.max(0, Math.min(200, parsed)) });
+  };
+
+  const effectiveSpeed = tuning.maxSpeedOverride ? tuning.maxSpeed : SPRINT_MAX_SPEED;
+  const effectiveCost = tuning.staminaCostOverride ? tuning.staminaCostPerSec : SPRINT_ENERGY_COST_PER_SEC;
+
+  return (
+    <details className="group rounded-md border border-gray-700/80 bg-gray-950/60">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 text-[10px] text-gray-400 hover:text-gray-200">
+        <span className="flex items-center gap-1.5 font-semibold"><SlidersHorizontal className="h-3 w-3" /> Advanced · {role}</span>
+        <span className="font-mono text-[9px] text-gray-500">{effectiveSpeed.toFixed(2)} max · {effectiveCost.toFixed(1)}/s</span>
+      </summary>
+      <div className="space-y-2 border-t border-gray-800 p-2.5">
+        <div className="rounded border border-gray-800 bg-gray-900/60 p-2">
+          <RoleToggle
+            id={`sprint-${role.toLowerCase()}-custom-max-speed`}
+            label="Override max sprint speed"
+            checked={tuning.maxSpeedOverride}
+            onChange={() => onChange({ ...tuning, maxSpeedOverride: !tuning.maxSpeedOverride })}
+          />
+          {tuning.maxSpeedOverride && (
+            <div className="mt-2 flex items-center justify-between gap-2 text-[10px]">
+              <label className="text-gray-500">Max speed</label>
+              <input
+                type="number"
+                min={MAX_SPEED}
+                max={20}
+                step={0.25}
+                value={tuning.maxSpeed}
+                onChange={e => setNumber('maxSpeed', e.target.value)}
+                className="w-20 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-right font-mono text-gray-200 outline-none focus:border-cyan-500"
+              />
+            </div>
+          )}
+          {!tuning.maxSpeedOverride && <div className="mt-1.5 text-[9px] text-gray-600">Default: {SPRINT_MAX_SPEED.toFixed(2)}</div>}
+        </div>
+
+        <div className="rounded border border-gray-800 bg-gray-900/60 p-2">
+          <RoleToggle
+            id={`sprint-${role.toLowerCase()}-custom-stamina-cost`}
+            label="Override stamina cost"
+            checked={tuning.staminaCostOverride}
+            onChange={() => onChange({ ...tuning, staminaCostOverride: !tuning.staminaCostOverride })}
+          />
+          {tuning.staminaCostOverride && (
+            <div className="mt-2 flex items-center justify-between gap-2 text-[10px]">
+              <label className="text-gray-500">Cost / sec at full sprint</label>
+              <input
+                type="number"
+                min={0}
+                max={200}
+                step={1}
+                value={tuning.staminaCostPerSec}
+                onChange={e => setNumber('staminaCostPerSec', e.target.value)}
+                className="w-20 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-right font-mono text-gray-200 outline-none focus:border-cyan-500"
+              />
+            </div>
+          )}
+          {!tuning.staminaCostOverride && <div className="mt-1.5 text-[9px] text-gray-600">Default: {SPRINT_ENERGY_COST_PER_SEC.toFixed(1)} stamina/sec</div>}
+        </div>
+        <div className="text-[9px] leading-relaxed text-gray-600">Sprint output strength still scales continuously from base speed {MAX_SPEED.toFixed(2)} to this max, and stamina drain scales with the same sprint intensity.</div>
+      </div>
+    </details>
+  );
+};
+
+const SprintAdvancedMenus: React.FC<{
+  rule: SprintUpgradeRule;
+  onChange: (patch: Partial<SprintUpgradeRule>) => void;
+}> = ({ rule, onChange }) => {
+  if (rule.mode === 'off') return null;
+  if (!rule.chaserEnabled && !rule.runnerEnabled) return null;
+  return (
+    <div className="-mt-1 space-y-1.5 rounded-b-lg border-x border-b border-gray-700/60 bg-gray-900/40 px-2 pb-2 pt-2">
+      <div className="px-0.5 text-[9px] font-semibold uppercase tracking-wide text-gray-600">Sprint role tuning</div>
+      {rule.chaserEnabled && (
+        <SprintRoleAdvancedMenu
+          role="Chaser"
+          tuning={rule.chaserAdvanced}
+          onChange={chaserAdvanced => onChange({ chaserAdvanced })}
+        />
+      )}
+      {rule.runnerEnabled && (
+        <SprintRoleAdvancedMenu
+          role="Runner"
+          tuning={rule.runnerAdvanced}
+          onChange={runnerAdvanced => onChange({ runnerAdvanced })}
+        />
+      )}
+    </div>
+  );
+};
+
 const StateVectorDisplay: React.FC<{ vector: number[] }> = ({ vector }) => {
     if (!vector || vector.length === 0) return null;
     return (
@@ -328,13 +431,17 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
         </div>
         <UpgradeControl
           title="Sprint"
-          description="Raises top speed to 7.25 and acceleration up to 35%; intensity follows movement-output strength and costs stamina. Role switches appear once active."
+          description="Raises top speed and acceleration up to 35%; intensity follows movement-output strength and costs stamina. Role switches appear once active."
           icon={<Zap className="w-4 h-4" />}
           rule={upgradeConfig.sprint}
           active={sprintUpgradeActive}
           autoUnlocked={sprintAutoUnlocked}
           performanceScore={upgradePerformanceScore}
           peakPerformanceScore={upgradePeakPerformanceScore}
+          onChange={patch => onUpdateUpgrade('sprint', patch)}
+        />
+        <SprintAdvancedMenus
+          rule={upgradeConfig.sprint}
           onChange={patch => onUpdateUpgrade('sprint', patch)}
         />
         <UpgradeControl

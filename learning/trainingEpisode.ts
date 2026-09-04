@@ -149,6 +149,8 @@ export function runTrainingEpisode(
     sprint: false, controlledJump: false,
     sprintChaser: false, sprintRunner: false,
     controlledJumpChaser: false, controlledJumpRunner: false,
+    sprintChaserMaxSpeed: SPRINT_MAX_SPEED, sprintRunnerMaxSpeed: SPRINT_MAX_SPEED,
+    sprintChaserStaminaCostPerSec: SPRINT_ENERGY_COST_PER_SEC, sprintRunnerStaminaCostPerSec: SPRINT_ENERGY_COST_PER_SEC,
   };
   const chaserAgent = gameState.agents[0];
   const evaders = gameState.agents.slice(1);
@@ -205,6 +207,8 @@ export function runTrainingEpisode(
       const isChaserRole = agent.id === 1;
       const sprintEnabledForRole = upgrades.sprint && (isChaserRole ? upgrades.sprintChaser : upgrades.sprintRunner);
       const controlledJumpEnabledForRole = upgrades.controlledJump && (isChaserRole ? upgrades.controlledJumpChaser : upgrades.controlledJumpRunner);
+      const roleSprintMaxSpeed = isChaserRole ? upgrades.sprintChaserMaxSpeed : upgrades.sprintRunnerMaxSpeed;
+      const roleSprintStaminaCost = isChaserRole ? upgrades.sprintChaserStaminaCostPerSec : upgrades.sprintRunnerStaminaCostPerSec;
       const isMoveAction = action === 'move_left' || action === 'move_right';
       const sprintIntensity = sprintEnabledForRole && isMoveAction && agent.energy > 0
         ? actionStrength
@@ -216,10 +220,10 @@ export function runTrainingEpisode(
       const velocity = { ...agent.velocity };
       if (Math.abs(agent.acceleration.x) < 0.1) velocity.x *= FRICTION;
       velocity.x += agent.acceleration.x;
-      const maxHorizontalSpeed = MAX_SPEED + (SPRINT_MAX_SPEED - MAX_SPEED) * sprintIntensity;
+      const maxHorizontalSpeed = MAX_SPEED + (roleSprintMaxSpeed - MAX_SPEED) * sprintIntensity;
       velocity.x = Math.max(-maxHorizontalSpeed, Math.min(maxHorizontalSpeed, velocity.x));
       if (sprintIntensity > 0) {
-        agent.energy = Math.max(0, agent.energy - SPRINT_ENERGY_COST_PER_SEC * sprintIntensity * (DT / 1000));
+        agent.energy = Math.max(0, agent.energy - roleSprintStaminaCost * sprintIntensity * (DT / 1000));
       }
       agent.sprintIntensity = sprintIntensity;
 

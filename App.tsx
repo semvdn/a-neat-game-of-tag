@@ -18,6 +18,7 @@ import type {
   EloLeaderboardEntry,
   UpgradeConfig,
   UpgradeRule,
+  SprintUpgradeRule,
 } from './types';
 import { AgentStatus } from './types';
 import {
@@ -96,7 +97,11 @@ const formatTrainingRate = (value: number | undefined) => {
 
 const CHAMPION_WORLD_VIEWPORT = { width: 1200, height: 800 } as const;
 const DEFAULT_UPGRADE_CONFIG: UpgradeConfig = {
-  sprint: { mode: 'auto', threshold: 140, chaserEnabled: true, runnerEnabled: true },
+  sprint: {
+    mode: 'auto', threshold: 140, chaserEnabled: true, runnerEnabled: true,
+    chaserAdvanced: { maxSpeedOverride: false, maxSpeed: SPRINT_MAX_SPEED, staminaCostOverride: false, staminaCostPerSec: SPRINT_ENERGY_COST_PER_SEC },
+    runnerAdvanced: { maxSpeedOverride: false, maxSpeed: SPRINT_MAX_SPEED, staminaCostOverride: false, staminaCostPerSec: SPRINT_ENERGY_COST_PER_SEC },
+  },
   controlledJump: { mode: 'auto', threshold: 180, chaserEnabled: true, runnerEnabled: true },
 };
 const UPGRADE_STORAGE_KEY = 'ai_tag_upgrade_config';
@@ -112,8 +117,19 @@ const loadUpgradeConfig = (): UpgradeConfig => {
       chaserEnabled: typeof rule?.chaserEnabled === 'boolean' ? rule.chaserEnabled : fallback.chaserEnabled,
       runnerEnabled: typeof rule?.runnerEnabled === 'boolean' ? rule.runnerEnabled : fallback.runnerEnabled,
     });
+    const normalizeAdvanced = (value: any, fallback: SprintUpgradeRule['chaserAdvanced']) => ({
+      maxSpeedOverride: typeof value?.maxSpeedOverride === 'boolean' ? value.maxSpeedOverride : fallback.maxSpeedOverride,
+      maxSpeed: Number.isFinite(Number(value?.maxSpeed)) ? Math.max(MAX_SPEED, Math.min(20, Number(value.maxSpeed))) : fallback.maxSpeed,
+      staminaCostOverride: typeof value?.staminaCostOverride === 'boolean' ? value.staminaCostOverride : fallback.staminaCostOverride,
+      staminaCostPerSec: Number.isFinite(Number(value?.staminaCostPerSec)) ? Math.max(0, Math.min(200, Number(value.staminaCostPerSec))) : fallback.staminaCostPerSec,
+    });
+    const sprintBase = normalize(parsed.sprint, DEFAULT_UPGRADE_CONFIG.sprint);
     return {
-      sprint: normalize(parsed.sprint, DEFAULT_UPGRADE_CONFIG.sprint),
+      sprint: {
+        ...sprintBase,
+        chaserAdvanced: normalizeAdvanced((parsed.sprint as Partial<SprintUpgradeRule> | undefined)?.chaserAdvanced, DEFAULT_UPGRADE_CONFIG.sprint.chaserAdvanced),
+        runnerAdvanced: normalizeAdvanced((parsed.sprint as Partial<SprintUpgradeRule> | undefined)?.runnerAdvanced, DEFAULT_UPGRADE_CONFIG.sprint.runnerAdvanced),
+      },
       controlledJump: normalize(parsed.controlledJump, DEFAULT_UPGRADE_CONFIG.controlledJump),
     };
   } catch {
@@ -512,7 +528,7 @@ export const App: React.FC = () => {
   const controlledJumpUpgradeActive = upgradeConfig.controlledJump.mode === 'on' ||
     (upgradeConfig.controlledJump.mode === 'auto' && (Boolean(diagnosticsState.controlledJumpAutoUnlocked) || upgradePeakPerformanceScore >= upgradeConfig.controlledJump.threshold));
 
-  const updateUpgradeRule = useCallback((upgrade: keyof UpgradeConfig, patch: Partial<UpgradeRule>) => {
+  const updateUpgradeRule = useCallback((upgrade: keyof UpgradeConfig, patch: Partial<UpgradeRule> | Partial<SprintUpgradeRule>) => {
     setUpgradeConfig(prev => ({
       ...prev,
       [upgrade]: { ...prev[upgrade], ...patch },
@@ -712,6 +728,9 @@ export const App: React.FC = () => {
           const isChaserRole = agent.status === AgentStatus.It;
           const sprintEnabledForRole = sprintUpgradeActive && (isChaserRole ? upgradeConfig.sprint.chaserEnabled : upgradeConfig.sprint.runnerEnabled);
           const controlledJumpEnabledForRole = controlledJumpUpgradeActive && (isChaserRole ? upgradeConfig.controlledJump.chaserEnabled : upgradeConfig.controlledJump.runnerEnabled);
+          const sprintAdvanced = isChaserRole ? upgradeConfig.sprint.chaserAdvanced : upgradeConfig.sprint.runnerAdvanced;
+          const roleSprintMaxSpeed = sprintAdvanced.maxSpeedOverride ? sprintAdvanced.maxSpeed : SPRINT_MAX_SPEED;
+          const roleSprintStaminaCost = sprintAdvanced.staminaCostOverride ? sprintAdvanced.staminaCostPerSec : SPRINT_ENERGY_COST_PER_SEC;
           const isMoveAction = action === 'move_left' || action === 'move_right';
           const sprintIntensity = sprintEnabledForRole && isMoveAction && newEnergy > 0 ? actionStrength : 0;
           const accelerationScale = 1 + (SPRINT_ACCELERATION_MULTIPLIER - 1) * sprintIntensity;
@@ -720,10 +739,10 @@ export const App: React.FC = () => {
 
           if (Math.abs(agent.acceleration.x) < 0.1) newVelocity.x *= FRICTION;
           newVelocity.x += agent.acceleration.x;
-          const maxHorizontalSpeed = MAX_SPEED + (SPRINT_MAX_SPEED - MAX_SPEED) * sprintIntensity;
+          const maxHorizontalSpeed = MAX_SPEED + (roleSprintMaxSpeed - MAX_SPEED) * sprintIntensity;
           newVelocity.x = Math.max(-maxHorizontalSpeed, Math.min(maxHorizontalSpeed, newVelocity.x));
           if (sprintIntensity > 0) {
-            newEnergy = Math.max(0, newEnergy - SPRINT_ENERGY_COST_PER_SEC * sprintIntensity * (deltaTime / 1000));
+            newEnergy = Math.max(0, newEnergy - roleSprintStaminaCost * sprintIntensity * (deltaTime / 1000));
           }
 
           let jumpPower = 0;
@@ -1029,7 +1048,7 @@ export const App: React.FC = () => {
         return newState;
       });
     },
-    [isSimulating, viewportSize, sprintUpgradeActive, controlledJumpUpgradeActive]
+    [isSimulating, viewportSize, sprintUpgradeActive, controlledJumpUpgradeActive, upgradeConfig]
   );
 
   const updateSimulation = useCallback(

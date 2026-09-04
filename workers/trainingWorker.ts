@@ -21,6 +21,9 @@ import {
   WORLD_REF_WIDTH,
   WORLD_REF_HEIGHT,
   ACTION_SPACE,
+  MAX_SPEED,
+  SPRINT_MAX_SPEED,
+  SPRINT_ENERGY_COST_PER_SEC,
 } from '../constants';
 
 const neatConfig = {
@@ -50,7 +53,11 @@ const viewportSize = { width: WORLD_REF_WIDTH, height: WORLD_REF_HEIGHT };
 let seededFromStart = false;
 
 const DEFAULT_UPGRADE_CONFIG: UpgradeConfig = {
-  sprint: { mode: 'auto', threshold: 140, chaserEnabled: true, runnerEnabled: true },
+  sprint: {
+    mode: 'auto', threshold: 140, chaserEnabled: true, runnerEnabled: true,
+    chaserAdvanced: { maxSpeedOverride: false, maxSpeed: SPRINT_MAX_SPEED, staminaCostOverride: false, staminaCostPerSec: SPRINT_ENERGY_COST_PER_SEC },
+    runnerAdvanced: { maxSpeedOverride: false, maxSpeed: SPRINT_MAX_SPEED, staminaCostOverride: false, staminaCostPerSec: SPRINT_ENERGY_COST_PER_SEC },
+  },
   controlledJump: { mode: 'auto', threshold: 180, chaserEnabled: true, runnerEnabled: true },
 };
 let upgradeConfig: UpgradeConfig = DEFAULT_UPGRADE_CONFIG;
@@ -66,8 +73,19 @@ function sanitizeUpgradeConfig(value?: Partial<UpgradeConfig>): UpgradeConfig {
     chaserEnabled: typeof rule?.chaserEnabled === 'boolean' ? rule.chaserEnabled : fallback.chaserEnabled,
     runnerEnabled: typeof rule?.runnerEnabled === 'boolean' ? rule.runnerEnabled : fallback.runnerEnabled,
   });
+  const normalizeAdvanced = (advanced: any, fallback: UpgradeConfig['sprint']['chaserAdvanced']) => ({
+    maxSpeedOverride: typeof advanced?.maxSpeedOverride === 'boolean' ? advanced.maxSpeedOverride : fallback.maxSpeedOverride,
+    maxSpeed: Number.isFinite(Number(advanced?.maxSpeed)) ? Math.max(MAX_SPEED, Math.min(20, Number(advanced.maxSpeed))) : fallback.maxSpeed,
+    staminaCostOverride: typeof advanced?.staminaCostOverride === 'boolean' ? advanced.staminaCostOverride : fallback.staminaCostOverride,
+    staminaCostPerSec: Number.isFinite(Number(advanced?.staminaCostPerSec)) ? Math.max(0, Math.min(200, Number(advanced.staminaCostPerSec))) : fallback.staminaCostPerSec,
+  });
+  const sprintBase = normalize(value?.sprint, DEFAULT_UPGRADE_CONFIG.sprint);
   return {
-    sprint: normalize(value?.sprint, DEFAULT_UPGRADE_CONFIG.sprint),
+    sprint: {
+      ...sprintBase,
+      chaserAdvanced: normalizeAdvanced(value?.sprint?.chaserAdvanced, DEFAULT_UPGRADE_CONFIG.sprint.chaserAdvanced),
+      runnerAdvanced: normalizeAdvanced(value?.sprint?.runnerAdvanced, DEFAULT_UPGRADE_CONFIG.sprint.runnerAdvanced),
+    },
     controlledJump: normalize(value?.controlledJump, DEFAULT_UPGRADE_CONFIG.controlledJump),
   };
 }
@@ -80,13 +98,21 @@ function updateAutoUnlocks() {
 function activeUpgradeState(): ActiveUpgradeState {
   const sprint = upgradeConfig.sprint.mode === 'on' || (upgradeConfig.sprint.mode === 'auto' && sprintAutoUnlocked);
   const controlledJump = upgradeConfig.controlledJump.mode === 'on' || (upgradeConfig.controlledJump.mode === 'auto' && controlledJumpAutoUnlocked);
+  const sprintChaser = sprint && upgradeConfig.sprint.chaserEnabled;
+  const sprintRunner = sprint && upgradeConfig.sprint.runnerEnabled;
+  const chaserAdvanced = upgradeConfig.sprint.chaserAdvanced;
+  const runnerAdvanced = upgradeConfig.sprint.runnerAdvanced;
   return {
     sprint,
     controlledJump,
-    sprintChaser: sprint && upgradeConfig.sprint.chaserEnabled,
-    sprintRunner: sprint && upgradeConfig.sprint.runnerEnabled,
+    sprintChaser,
+    sprintRunner,
     controlledJumpChaser: controlledJump && upgradeConfig.controlledJump.chaserEnabled,
     controlledJumpRunner: controlledJump && upgradeConfig.controlledJump.runnerEnabled,
+    sprintChaserMaxSpeed: sprintChaser && chaserAdvanced.maxSpeedOverride ? chaserAdvanced.maxSpeed : SPRINT_MAX_SPEED,
+    sprintRunnerMaxSpeed: sprintRunner && runnerAdvanced.maxSpeedOverride ? runnerAdvanced.maxSpeed : SPRINT_MAX_SPEED,
+    sprintChaserStaminaCostPerSec: sprintChaser && chaserAdvanced.staminaCostOverride ? chaserAdvanced.staminaCostPerSec : SPRINT_ENERGY_COST_PER_SEC,
+    sprintRunnerStaminaCostPerSec: sprintRunner && runnerAdvanced.staminaCostOverride ? runnerAdvanced.staminaCostPerSec : SPRINT_ENERGY_COST_PER_SEC,
   };
 }
 
@@ -828,7 +854,9 @@ self.onmessage = (event: MessageEvent) => {
       const after = activeUpgradeState();
       const physicsChanged = before.sprint !== after.sprint || before.controlledJump !== after.controlledJump ||
         before.sprintChaser !== after.sprintChaser || before.sprintRunner !== after.sprintRunner ||
-        before.controlledJumpChaser !== after.controlledJumpChaser || before.controlledJumpRunner !== after.controlledJumpRunner;
+        before.controlledJumpChaser !== after.controlledJumpChaser || before.controlledJumpRunner !== after.controlledJumpRunner ||
+        before.sprintChaserMaxSpeed !== after.sprintChaserMaxSpeed || before.sprintRunnerMaxSpeed !== after.sprintRunnerMaxSpeed ||
+        before.sprintChaserStaminaCostPerSec !== after.sprintChaserStaminaCostPerSec || before.sprintRunnerStaminaCostPerSec !== after.sprintRunnerStaminaCostPerSec;
       // Only discard a partial generation when the effective physics capability changed.
       if (physicsChanged) {
         resetEvaluationAccumulators();

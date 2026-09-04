@@ -28,8 +28,21 @@ export interface UpgradeRule {
   chaserEnabled: boolean;
   runnerEnabled: boolean;
 }
+
+export interface SprintRoleAdvanced {
+  maxSpeedOverride: boolean;
+  maxSpeed: number;
+  staminaCostOverride: boolean;
+  staminaCostPerSec: number;
+}
+
+export interface SprintUpgradeRule extends UpgradeRule {
+  chaserAdvanced: SprintRoleAdvanced;
+  runnerAdvanced: SprintRoleAdvanced;
+}
+
 export interface UpgradeConfig {
-  sprint: UpgradeRule;
+  sprint: SprintUpgradeRule;
   controlledJump: UpgradeRule;
 }
 export interface ActiveUpgradeState {
@@ -39,6 +52,10 @@ export interface ActiveUpgradeState {
   sprintRunner: boolean;
   controlledJumpChaser: boolean;
   controlledJumpRunner: boolean;
+  sprintChaserMaxSpeed: number;
+  sprintRunnerMaxSpeed: number;
+  sprintChaserStaminaCostPerSec: number;
+  sprintRunnerStaminaCostPerSec: number;
 }
 
 export interface LidarRayData {
