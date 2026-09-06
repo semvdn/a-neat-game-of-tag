@@ -324,7 +324,7 @@ const ArchitectureRoleEditor: React.FC<{
           <h4 className={`font-semibold ${roleColor}`}>{role === 'chaser' ? 'Chaser' : 'Runner'} network</h4>
           <p className="text-[10px] text-gray-500">Generation 1: {estimate.nodes} nodes · ~{estimate.connections} links · {config.initialRecurrentConnections} recurrent</p>
         </div>
-        <select disabled={disabled} value={config.preset} onChange={e => selectPreset(e.target.value as NetworkArchitecturePreset)} className="rounded border border-gray-700 bg-gray-950 px-2 py-1.5 text-xs text-gray-200 disabled:opacity-50">
+        <select disabled={disabled} value={config.preset} onChange={e => selectPreset(e.target.value as NetworkArchitecturePreset)} className={`rounded border px-2 py-1.5 text-xs font-semibold disabled:opacity-50 ${config.preset === 'custom' ? 'border-gray-700 bg-gray-950 text-gray-200' : 'border-violet-400/60 bg-violet-950/40 text-violet-100'}`} title="Selected architecture preset">
           {Object.entries(NETWORK_ARCHITECTURE_PRESET_INFO).map(([id, info]) => <option key={id} value={id}>{info.label}</option>)}
           <option value="custom">Custom</option>
         </select>
@@ -434,6 +434,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   const [architectureDraft, setArchitectureDraft] = useState<NetworkArchitectureSuiteConfig>(() => sanitizeNetworkArchitectureSuite(networkArchitecture));
   useEffect(() => setArchitectureDraft(sanitizeNetworkArchitectureSuite(networkArchitecture)), [networkArchitecture]);
   const architectureDirty = JSON.stringify(sanitizeNetworkArchitectureSuite(architectureDraft)) !== JSON.stringify(sanitizeNetworkArchitectureSuite(networkArchitecture));
+  const selectedSuitePreset = (Object.entries(NETWORK_ARCHITECTURE_SUITE_PRESETS) as [NetworkArchitectureSuitePreset, typeof NETWORK_ARCHITECTURE_SUITE_PRESETS[NetworkArchitectureSuitePreset]][]).find(([, recipe]) => JSON.stringify(sanitizeNetworkArchitectureSuite(recipe.config)) === JSON.stringify(sanitizeNetworkArchitectureSuite(architectureDraft)))?.[0] || null;
   if (!isOpen) return null;
 
   const chaserHistory = diagnostics.chaserNeatHistory || [];
@@ -713,13 +714,17 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <div className="mt-4">
                 <div className="flex items-center justify-between gap-3"><div><div className="text-xs font-semibold text-white">Experiment recipes</div><div className="text-[10px] text-gray-500">Whole-suite presets make role comparisons reproducible. Selecting one only edits the draft; Apply architecture & restart still controls when it takes effect.</div></div></div>
                 <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
-                  {(Object.entries(NETWORK_ARCHITECTURE_SUITE_PRESETS) as [NetworkArchitectureSuitePreset, typeof NETWORK_ARCHITECTURE_SUITE_PRESETS[NetworkArchitectureSuitePreset]][]).map(([id, recipe]) => (
-                    <button key={id} type="button" onClick={() => setArchitectureDraft(sanitizeNetworkArchitectureSuite(recipe.config))} className={`rounded-lg border px-3 py-2 text-left ${id === 'balanced_memory' ? 'border-fuchsia-500/40 bg-fuchsia-950/15' : 'border-gray-800 bg-black/20'}`}>
-                      <div className={`text-[11px] font-semibold ${id === 'balanced_memory' ? 'text-fuchsia-200' : 'text-gray-200'}`}>{recipe.label}{id === 'balanced_memory' ? ' · recommended' : ''}</div>
-                      <div className="mt-1 text-[9px] leading-relaxed text-gray-600">{recipe.summary}</div>
-                    </button>
-                  ))}
+                  {(Object.entries(NETWORK_ARCHITECTURE_SUITE_PRESETS) as [NetworkArchitectureSuitePreset, typeof NETWORK_ARCHITECTURE_SUITE_PRESETS[NetworkArchitectureSuitePreset]][]).map(([id, recipe]) => {
+                    const selected = selectedSuitePreset === id;
+                    return (
+                      <button key={id} type="button" aria-pressed={selected} onClick={() => setArchitectureDraft(sanitizeNetworkArchitectureSuite(recipe.config))} className={`rounded-lg border px-3 py-2 text-left transition-colors ${selected ? 'border-violet-400 bg-violet-500/20 ring-1 ring-violet-400/35' : 'border-gray-800 bg-black/20 hover:border-gray-700'}`}>
+                        <div className={`flex flex-wrap items-center gap-1.5 text-[11px] font-semibold ${selected ? 'text-violet-100' : 'text-gray-200'}`}><span>{recipe.label}</span>{selected && <span className="rounded-full bg-violet-400 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-black">selected</span>}{id === 'balanced_memory' && <span className="rounded-full border border-fuchsia-500/35 px-1.5 py-0.5 text-[8px] uppercase tracking-wide text-fuchsia-300">recommended</span>}</div>
+                        <div className={`mt-1 text-[9px] leading-relaxed ${selected ? 'text-violet-200/70' : 'text-gray-600'}`}>{recipe.summary}</div>
+                      </button>
+                    );
+                  })}
                 </div>
+                <div className="mt-2 text-[10px] text-gray-500">Draft recipe: <span className={selectedSuitePreset ? 'font-semibold text-violet-300' : 'font-semibold text-gray-300'}>{selectedSuitePreset ? NETWORK_ARCHITECTURE_SUITE_PRESETS[selectedSuitePreset].label : 'Custom / modified'}</span></div>
               </div>
               <div className="mt-3 rounded-lg border border-gray-800 bg-black/20 px-3 py-2 text-[10px] leading-relaxed text-gray-500">
                 <span className="text-gray-300">Suggested sequence:</span> FF control → Memory Lite → Balanced Memory. Use Memory Discovery to test whether recurrence emerges without being seeded; Fixed Memory Control isolates recurrent state from structural growth; Deep Memory is a later high-capacity stress test.
