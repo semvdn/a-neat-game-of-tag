@@ -64,6 +64,8 @@ export interface TrainingEpisodeResult {
   evaderDecisionCount: number;
   chaserIdleCount: number;
   evaderIdleCount: number;
+  chaserDirectionConflictCount: number;
+  evaderDirectionConflictCount: number;
   /** Fitness-bearing SAFE rightward progression, averaged across the two runner slots. */
   runnerFrontierExpansionPx: number;
   runnerFrontierExpansionViewports: number;
@@ -76,6 +78,8 @@ export interface TrainingEpisodeResult {
   runnerExplorationFitnessBonus: number;
   /** Capped minimum-pace fitness accumulated over 2-second windows. */
   runnerPaceFitnessBonus: number;
+  /** Penalty for the unsatisfied fraction of each pace window. */
+  runnerPaceShortfallPenalty: number;
   runnerPaceCompletion: number;
   runnerPaceWindowsSatisfied: number;
   runnerPaceWindowsTotal: number;
@@ -114,6 +118,7 @@ export interface TrainingEpisodeTraceAgent {
   moveRight: number;
   jump: number;
   sprint: number;
+  directionConflict: boolean;
   jumpReady: boolean;
   grounded: boolean;
   platformId: number | null;
@@ -127,6 +132,7 @@ export interface TrainingEpisodeTraceSample {
   runnerFrontierRightX: number;
   runnerFrontierExpansionPx: number;
   runnerPaceFitnessBonus: number;
+  runnerPaceShortfallPenalty: number;
   chaserPursuitFitnessBonus: number;
   closeEncounters: number;
   successfulEvades: number;
@@ -711,6 +717,7 @@ export function runTrainingEpisode(
   const paceWindowStartExpansion = new Array<number>(gameState.agents.length).fill(0);
   let nextPaceWindowAtMs = RUNNER_PACE_WINDOW_MS;
   let runnerPaceFitnessBonus = 0;
+  let runnerPaceShortfallPenalty = 0;
   let runnerPaceCompletionSum = 0;
   let runnerPaceWindowsSatisfied = 0;
   let runnerPaceWindowsTotal = 0;
@@ -749,6 +756,8 @@ export function runTrainingEpisode(
   let evaderDecisionCount = 0;
   let chaserIdleCount = 0;
   let evaderIdleCount = 0;
+  let chaserDirectionConflictCount = 0;
+  let evaderDirectionConflictCount = 0;
   const maxSteps = Math.ceil(NEAT_EPISODE_MAX_MS / DT);
   // Hot-path buffers are reused for the whole episode: no per-decision state/action arrays.
   const stateBuffers = gameState.agents.map(() => new Float64Array(STATE_VECTOR_SIZE));
@@ -760,6 +769,7 @@ export function runTrainingEpisode(
     moveRight: 0,
     jump: 0,
     sprint: 0,
+    directionConflict: false,
   }));
   // Fixed pre-physics body snapshots preserve the visual Array.map respawn semantics without
   // allocating three AgentState copies on every physics tick. Only id/position are read by respawn.
@@ -837,10 +847,12 @@ export function runTrainingEpisode(
         if (trackChaserActions) {
           chaserDecisionCount++;
           if (activeControls === 0) chaserIdleCount++;
+          if (decision.directionConflict) chaserDirectionConflictCount++;
         }
       } else if (trackEvaderActions) {
         evaderDecisionCount++;
         if (activeControls === 0) evaderIdleCount++;
+        if (decision.directionConflict) evaderDirectionConflictCount++;
       }
     }
 
@@ -994,6 +1006,12 @@ export function runTrainingEpisode(
       const averageRunnerProgress = safeProgressThisWindow / 2;
       const completion = Math.min(1, averageRunnerProgress / runnerPaceTargetPx);
       runnerPaceFitnessBonus += completion * runnerPaceRewardPerWindow;
+      // The pace target is a requirement, not merely an optional bonus. With bonus-only shaping a
+      // stationary Runner can sit on the +100 fitness baseline, avoid falls, and outperform agents
+      // that actually attempt the level. Missing a window therefore carries a modest shortfall cost
+      // (2/3 of the configured full-window reward at zero completion), while satisfying the target
+      // still tops out at the same positive reward.
+      runnerPaceShortfallPenalty += (1 - completion) * runnerPaceRewardPerWindow * (2 / 3);
       runnerPaceCompletionSum += completion;
       runnerPaceWindowsTotal++;
       if (completion >= 0.999) runnerPaceWindowsSatisfied++;
@@ -1030,6 +1048,7 @@ export function runTrainingEpisode(
         runnerFrontierRightX,
         runnerFrontierExpansionPx: runnerSafeRightExpansionByBody.reduce((sum, value) => sum + value, 0) / 2,
         runnerPaceFitnessBonus,
+        runnerPaceShortfallPenalty,
         chaserPursuitFitnessBonus,
         closeEncounters,
         successfulEvades,
@@ -1053,6 +1072,7 @@ export function runTrainingEpisode(
           moveRight: decisions[gameState.agents.indexOf(agent)]?.moveRight || 0,
           jump: decisions[gameState.agents.indexOf(agent)]?.jump || 0,
           sprint: decisions[gameState.agents.indexOf(agent)]?.sprint || 0,
+          directionConflict: decisions[gameState.agents.indexOf(agent)]?.directionConflict || false,
           jumpReady: agent.jumpArmed !== false,
           grounded: agent.isOnGround,
           platformId: agent.lastPlatformId,
@@ -1082,7 +1102,7 @@ export function runTrainingEpisode(
     ? nearestRunnerDistanceAccum / nearestRunnerDistanceSamples
     : 0;
   const chaserFitness = FITNESS_BASE + chaserEventScore * FITNESS_PER_EVENT + chaserPursuitFitnessBonus;
-  const evaderFitness = FITNESS_BASE + evaderEventScore * FITNESS_PER_EVENT + runnerPaceFitnessBonus;
+  const evaderFitness = FITNESS_BASE + evaderEventScore * FITNESS_PER_EVENT + runnerPaceFitnessBonus - runnerPaceShortfallPenalty;
 
   return {
     chaserFitness,
@@ -1103,6 +1123,8 @@ export function runTrainingEpisode(
     evaderDecisionCount,
     chaserIdleCount,
     evaderIdleCount,
+    chaserDirectionConflictCount,
+    evaderDirectionConflictCount,
     runnerFrontierExpansionPx,
     runnerFrontierExpansionViewports,
     runnerLeftFrontierExpansionPx,
@@ -1110,6 +1132,7 @@ export function runTrainingEpisode(
     runnerRightFrontierExpansionPx,
     runnerExplorationFitnessBonus,
     runnerPaceFitnessBonus,
+    runnerPaceShortfallPenalty,
     runnerPaceCompletion,
     runnerPaceWindowsSatisfied,
     runnerPaceWindowsTotal,

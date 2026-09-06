@@ -321,6 +321,8 @@ When all three runs reach the chosen target generation, the app automatically do
 
 The original run is restored automatically after export. **Cancel & restore** aborts the temporary suite and restores that same snapshot without retaining the temporary populations. Save/load/import/reset and architecture-apply controls are locked while the suite is active to keep comparisons clean. The experiment target is configurable from 50 to 1500 generations per architecture; 500 is the default.
 
+The experiment build also guards against a stationary-policy collapse uncovered by the first 500-generation comparison. Opposing left/right outputs are now treated as competing motor commands rather than subtracting two saturated activations into zero; near-ties keep the previous direction until both are released. Direction-conflict rate is recorded explicitly. Runner pace is also a requirement rather than a bonus-only objective: the unsatisfied part of each 2-second window incurs a modest shortfall penalty (two-thirds of the configured full-window reward at zero completion). Retained-generalist scoring penalizes excessive idle/conflicting controls so a spawn camper cannot become the long-lived visible champion simply by avoiding falls or collecting incidental tags.
+
 ## Analysis recording and deterministic behavior probes
 
 The Diagnostics → Models tab includes **Export analysis JSON**. This is intentionally smaller and more analysis-oriented than a full evolutionary checkpoint. It contains:

@@ -22,6 +22,7 @@ export class LearningAgent {
   private genome: NeatGenomeData;
   private network: NeatNetwork;
   public role: NeatRole;
+  private lastHorizontalDirection = new Map<number, -1 | 0 | 1>();
 
   constructor(role: NeatRole = 'general', genome?: NeatGenomeData) {
     this.role = role;
@@ -38,6 +39,7 @@ export class LearningAgent {
     const tracker = new InnovationTracker(STATE_VECTOR_SIZE + ACTION_SPACE.length);
     this.genome = createMinimalGenome(`${this.role}_runtime`, this.role, tracker, 1);
     this.network = new NeatNetwork(this.genome);
+    this.lastHorizontalDirection.clear();
   }
 
   public getWeights(): AgentWeights {
@@ -59,6 +61,7 @@ export class LearningAgent {
     this.genome = cloneGenome(weights);
     this.role = weights.role || this.role;
     this.network = new NeatNetwork(this.genome);
+    this.lastHorizontalDirection.clear();
   }
 
   public setGeneration(generation: number) {
@@ -111,14 +114,49 @@ export class LearningAgent {
       moveRight: number;
       jump: number;
       sprint: number;
+      directionConflict: boolean;
     },
     contextId = 0
   ): typeof out {
     const outputs = this.network.activateFast(state, contextId);
-    // Factorized controls: positive output activation independently drives each control.
-    // Left/right may be held while jump is active, which makes ordinary platforming evolvable.
-    const moveLeft = Math.max(0, Math.min(1, outputs[0] ?? 0));
-    const moveRight = Math.max(0, Math.min(1, outputs[1] ?? 0));
+    // Factorized controls: jump and sprint remain independent, while the opposing horizontal
+    // outputs are arbitrated into one effective motor direction. This keeps movement+jump
+    // composable without allowing saturated left+right outputs to cancel into a free no-op.
+    const rawMoveLeft = Math.max(0, Math.min(1, outputs[0] ?? 0));
+    const rawMoveRight = Math.max(0, Math.min(1, outputs[1] ?? 0));
+    const leftActive = rawMoveLeft >= POLICY_CONTROL_ACTIVE_THRESHOLD;
+    const rightActive = rawMoveRight >= POLICY_CONTROL_ACTIVE_THRESHOLD;
+    const directionConflict = leftActive && rightActive;
+    let moveLeft = 0;
+    let moveRight = 0;
+
+    if (directionConflict) {
+      // Two independent sigmoid direction outputs can otherwise saturate together and cancel to
+      // almost exactly zero (right - left), which evolution discovered as a cheap stationary
+      // policy. Treat left/right as competing motor commands instead: a clear winner wins, while
+      // near-ties keep the previously chosen direction until both controls are released.
+      const delta = rawMoveRight - rawMoveLeft;
+      const previous = this.lastHorizontalDirection.get(contextId) || 0;
+      const direction: -1 | 1 = Math.abs(delta) >= 0.08
+        ? (delta > 0 ? 1 : -1)
+        : previous !== 0
+          ? previous
+          : (delta >= 0 ? 1 : -1);
+      const strength = Math.max(rawMoveLeft, rawMoveRight);
+      if (direction > 0) moveRight = strength;
+      else moveLeft = strength;
+      this.lastHorizontalDirection.set(contextId, direction);
+    } else if (rightActive) {
+      moveRight = rawMoveRight;
+      this.lastHorizontalDirection.set(contextId, 1);
+    } else if (leftActive) {
+      moveLeft = rawMoveLeft;
+      this.lastHorizontalDirection.set(contextId, -1);
+    } else {
+      // Releasing both directional controls is the deliberate neutral command and also resets
+      // directional hysteresis so a later tie can choose a new direction.
+      this.lastHorizontalDirection.set(contextId, 0);
+    }
     const jump = Math.max(0, Math.min(1, outputs[2] ?? 0));
     const sprint = Math.max(0, Math.min(1, outputs[3] ?? 0));
 
@@ -126,6 +164,7 @@ export class LearningAgent {
     out.moveRight = moveRight;
     out.jump = jump;
     out.sprint = sprint;
+    out.directionConflict = directionConflict;
 
     let actionIndex = 0;
     let strength = moveLeft;
@@ -146,6 +185,7 @@ export class LearningAgent {
     moveRight: number;
     jump: number;
     sprint: number;
+    directionConflict: boolean;
   } {
     return this.chooseActionInto(state, {
       action: 'idle',
@@ -155,11 +195,14 @@ export class LearningAgent {
       moveRight: 0,
       jump: 0,
       sprint: 0,
+      directionConflict: false,
     }, contextId);
   }
 
   public resetState(contextId?: number): void {
     this.network.resetState(contextId);
+    if (contextId === undefined) this.lastHorizontalDirection.clear();
+    else this.lastHorizontalDirection.delete(contextId);
   }
 
 }

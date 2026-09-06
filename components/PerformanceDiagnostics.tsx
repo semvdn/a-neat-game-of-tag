@@ -579,20 +579,23 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="grid md:grid-cols-4 gap-3">
-              <MetricCard label="Runner right-drive" value={benchmark ? `${(benchmark.evader.rightActionShare * 100).toFixed(1)}%` : '—'} hint="independent control active; can overlap jump" />
+              <MetricCard label="Runner right-drive" value={benchmark ? `${(benchmark.evader.rightActionShare * 100).toFixed(1)}%` : '—'} hint="effective rightward motor command; can overlap jump" />
               <MetricCard label="Runner jump" value={benchmark ? `${(benchmark.evader.jumpActionShare * 100).toFixed(1)}%` : '—'} hint="independent control active" />
               <MetricCard label="Runner sprint" value={benchmark ? `${(benchmark.evader.sprintActionShare * 100).toFixed(1)}%` : '—'} hint="effective sprint boost; saturated Sprint without movement no longer counts" />
-              <MetricCard label="Runner idle" value={benchmark ? `${(benchmark.evader.idleActionShare * 100).toFixed(1)}%` : '—'} hint="no control above activation threshold" />
+              <MetricCard label="Runner idle" value={benchmark ? `${(benchmark.evader.idleActionShare * 100).toFixed(1)}%` : '—'} hint="no effective control above activation threshold" />
             </div>
 
             <div className="grid md:grid-cols-4 gap-3">
               <MetricCard label="Runner pace completion" value={balance?.runnerPaceCompletion != null ? `${(balance.runnerPaceCompletion * 100).toFixed(1)}%` : '—'} hint={`${diagnostics.trainingFitnessConfig?.runnerPaceTargetPxPerWindow ?? 0}px target every 2s`} />
               <MetricCard label="Runner pace bonus / ep" value={balance?.runnerPaceBonusPerEpisode != null ? `+${balance.runnerPaceBonusPerEpisode.toFixed(2)}` : '—'} hint={`capped at +${diagnostics.trainingFitnessConfig?.runnerPaceRewardPerWindow ?? 0} per window`} />
+              <MetricCard label="Pace shortfall / ep" value={balance?.runnerPaceShortfallPenaltyPerEpisode != null ? `-${balance.runnerPaceShortfallPenaltyPerEpisode.toFixed(2)}` : '—'} hint="unsatisfied pace-window fraction; prevents free stationary survival" />
               <MetricCard label="Chaser pursuit bonus / ep" value={balance?.chaserPursuitBonusPerEpisode != null ? `+${balance.chaserPursuitBonusPerEpisode.toFixed(2)}` : '—'} hint="runner-visited platforms; capped +5 / 2s" />
               <MetricCard label="Safe right / episode" value={balance?.runnerFrontierExpansionViewportsPerEpisode != null ? `${balance.runnerFrontierExpansionViewportsPerEpisode.toFixed(2)} view` : '—'} hint="diagnostic distance only; no longer linear fitness" />
             </div>
 
             <div className="grid md:grid-cols-4 gap-3">
+              <MetricCard label="Chaser dir conflict" value={balance?.chaserDirectionConflictShare != null ? `${(balance.chaserDirectionConflictShare * 100).toFixed(1)}%` : '—'} hint="raw left+right both active; motor arbitration prevents cancellation" />
+              <MetricCard label="Runner dir conflict" value={balance?.runnerDirectionConflictShare != null ? `${(balance.runnerDirectionConflictShare * 100).toFixed(1)}%` : '—'} hint="raw left+right both active; should fall as policies clean up" />
               <MetricCard label="Close encounters / ep" value={balance?.closeEncountersPerEpisode != null ? balance.closeEncountersPerEpisode.toFixed(2) : '—'} hint="nearest Runner enters ≤180px" />
               <MetricCard label="Successful evades / ep" value={balance?.successfulEvadesPerEpisode != null ? balance.successfulEvadesPerEpisode.toFixed(2) : '—'} hint="encounter opens back beyond 380px without a tag" />
               <MetricCard label="Mean chase distance" value={balance?.meanNearestRunnerDistancePx != null ? `${balance.meanNearestRunnerDistancePx.toFixed(0)} px` : '—'} hint={balance?.timeWithin400Pct != null ? `${(balance.timeWithin400Pct * 100).toFixed(0)}% of time within 400px` : 'nearest Runner'} />

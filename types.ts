@@ -195,6 +195,9 @@ export interface BalanceTelemetry {
   runnerPaceCompletion?: number;
   runnerPaceWindowsSatisfiedPerEpisode?: number;
   runnerPaceBonusPerEpisode?: number;
+  runnerPaceShortfallPenaltyPerEpisode?: number;
+  chaserDirectionConflictShare?: number;
+  runnerDirectionConflictShare?: number;
   chaserPursuitBonusPerEpisode?: number;
   chaserPursuitLandingsPerEpisode?: number;
   runnerPlatformLandingsPerEpisode?: number;
@@ -223,6 +226,8 @@ export interface BenchmarkRoleTelemetry {
   sprintActionShare: number;
   /** Fraction of decisions with no factorized control above the active threshold. */
   idleActionShare: number;
+  /** Fraction of decisions where both opposing horizontal outputs were simultaneously active. */
+  directionConflictShare?: number;
   /** Candidate runner frontier expansion on the permanent benchmark; 0 for chaser-role benchmarks. */
   explorationViewportsPerEpisode?: number;
   paceCompletion?: number;

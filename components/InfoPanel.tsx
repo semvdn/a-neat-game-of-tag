@@ -446,7 +446,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
         </div>
 
         <p className="mt-2 text-[9px] leading-relaxed text-gray-600">
-          Default pace is 260 px per 2 seconds with +15 maximum reward. The Chaser follow reward is capped at +5 per 2-second window, so actual tags remain much more valuable. Changing any shaping value restarts the current evaluation generation on a new benchmark revision.
+          Default pace is 260 px per 2 seconds with +15 maximum reward. Missing pace is no longer free: the unsatisfied fraction also carries a shortfall penalty equal to two-thirds of the configured reward scale. The Chaser follow reward is capped at +5 per 2-second window, so actual tags remain much more valuable. Changing any shaping value restarts the current evaluation generation on a new benchmark revision.
         </p>
       </div>
 
