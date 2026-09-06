@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { DiagnosticsState } from '../types';
+import type { StoredCheckpointSummary } from '../services/checkpointStore';
 import { NETWORK_ARCHITECTURE_PRESETS, NETWORK_ARCHITECTURE_PRESET_INFO, NETWORK_ARCHITECTURE_SUITE_PRESETS, sanitizeNetworkArchitectureSuite, type NeatGenerationMetrics, type NeatGenomeData, type NetworkArchitectureConfig, type NetworkArchitecturePreset, type NetworkArchitectureSuiteConfig, type NetworkArchitectureSuitePreset } from '../learning/neat';
 import { ACTION_SPACE, STATE_VECTOR_SIZE } from '../constants';
 import {
@@ -17,6 +18,9 @@ import {
   Upload,
   Save,
   HardDrive,
+  FolderOpen,
+  Trash2,
+  Database,
   MonitorPlay,
   Cpu,
 } from 'lucide-react';
@@ -38,10 +42,14 @@ interface PerformanceDiagnosticsProps {
   onClose: () => void;
   onExportModels?: () => void;
   onExportAnalysis?: () => void;
-  onImportModels?: (json: string) => boolean;
-  onSaveLocalStorage?: () => void;
-  onLoadLocalStorage?: () => void;
-  hasSavedModel?: boolean;
+  onImportModels?: (json: string, fileName?: string) => Promise<boolean>;
+  storedCheckpoints: StoredCheckpointSummary[];
+  checkpointLibraryBusy: boolean;
+  checkpointLibraryMessage?: string | null;
+  onSaveCheckpoint: (name: string) => void;
+  onLoadStoredCheckpoint: (id: string) => Promise<boolean>;
+  onDeleteStoredCheckpoint: (id: string) => Promise<void>;
+  onExportStoredCheckpoint: (id: string) => Promise<void>;
   networkArchitecture: NetworkArchitectureSuiteConfig;
   onApplyNetworkArchitecture: (config: NetworkArchitectureSuiteConfig) => void;
 }
@@ -54,6 +62,12 @@ const formatTrainingRate = (value: number | undefined) => {
   if (safe >= 100) return safe.toFixed(0);
   if (safe >= 10) return safe.toFixed(1);
   return safe.toFixed(2);
+};
+
+const formatBytes = (bytes: number) => {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${bytes} B`;
 };
 
 const MetricCard: React.FC<{ label: string; value: React.ReactNode; hint?: string }> = ({ label, value, hint }) => (
@@ -367,9 +381,13 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   onExportModels,
   onExportAnalysis,
   onImportModels,
-  onSaveLocalStorage,
-  onLoadLocalStorage,
-  hasSavedModel,
+  storedCheckpoints,
+  checkpointLibraryBusy,
+  checkpointLibraryMessage,
+  onSaveCheckpoint,
+  onLoadStoredCheckpoint,
+  onDeleteStoredCheckpoint,
+  onExportStoredCheckpoint,
   networkArchitecture,
   onApplyNetworkArchitecture,
 }) => {
@@ -377,6 +395,9 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   const [role, setRole] = useState<'chaser' | 'evader'>('chaser');
   const [confirmReset, setConfirmReset] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [saveName, setSaveName] = useState('');
+  const [pendingLoadId, setPendingLoadId] = useState<string | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [architectureDraft, setArchitectureDraft] = useState<NetworkArchitectureSuiteConfig>(() => sanitizeNetworkArchitectureSuite(networkArchitecture));
   useEffect(() => setArchitectureDraft(sanitizeNetworkArchitectureSuite(networkArchitecture)), [networkArchitecture]);
   const architectureDirty = JSON.stringify(sanitizeNetworkArchitectureSuite(architectureDraft)) !== JSON.stringify(sanitizeNetworkArchitectureSuite(networkArchitecture));
@@ -396,17 +417,17 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   const selectedMetrics = role === 'chaser' ? chaserMetrics : evaderMetrics;
   const generation = diagnostics.generation || Math.max(chaserMetrics?.generation || 0, evaderMetrics?.generation || 0);
 
-  const upload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const upload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file || !onImportModels) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const ok = onImportModels(String(reader.result || ''));
-      setStatus(ok ? 'Imported NEAT checkpoint/model.' : 'Import failed. This build expects a compatible NEAT checkpoint or genome JSON.');
-      setTimeout(() => setStatus(null), 3500);
-    };
-    reader.readAsText(file);
     event.target.value = '';
+    if (!file || !onImportModels) return;
+    try {
+      const ok = await onImportModels(await file.text(), file.name);
+      setStatus(ok ? 'Import accepted.' : 'Import failed.');
+    } catch {
+      setStatus('Import failed.');
+    }
+    setTimeout(() => setStatus(null), 3500);
   };
 
   return (
@@ -707,24 +728,66 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
         )}
 
         {tab === 'models' && (
-          <div className="max-w-4xl mx-auto space-y-5">
-            <div className="rounded-xl border border-cyan-500/25 bg-cyan-950/10 p-4">
-              <div className="flex items-center gap-2 mb-3"><BarChart3 className="w-4 h-4 text-cyan-300" /><h3 className="font-semibold text-white">Training analysis recording</h3></div>
-              <p className="text-xs leading-relaxed text-gray-500">Export a compact analysis file designed for post-hoc review. It contains the full per-generation analysis log plus three deterministic champion probe episodes (visual, varied and mid-game) sampled every 250 ms with body positions, actions, roles, energy, cooldowns, camera position, platforms and frontier progression.</p>
-              <button onClick={onExportAnalysis} className="mt-3 px-3 py-2 rounded border border-cyan-500/40 text-cyan-200 text-xs flex items-center gap-1"><Download className="w-3.5 h-3.5" />Export analysis JSON</button>
-              <p className="mt-2 text-[10px] text-gray-600">Upload this JSON back into ChatGPT and I can analyze trends and actual learned movement rather than relying only on screenshots or descriptions.</p>
+          <div className="max-w-5xl mx-auto space-y-5">
+            <div className="rounded-xl border border-violet-500/25 bg-violet-950/10 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="max-w-3xl">
+                  <div className="flex items-center gap-2"><Database className="w-4 h-4 text-violet-300" /><h3 className="font-semibold text-white">Checkpoint library</h3></div>
+                  <p className="mt-1 text-xs leading-relaxed text-gray-500">Named full-run checkpoints are stored in IndexedDB rather than the old single localStorage slot, so large evolved populations can be kept without immediately hitting localStorage quota limits. Saves are captured only at a completed-generation boundary.</p>
+                </div>
+                <label className="px-3 py-2 rounded border border-violet-500/40 text-violet-200 text-xs flex items-center gap-1 cursor-pointer hover:bg-violet-950/30"><Upload className="w-3.5 h-3.5" />Import JSON & load<input type="file" accept="application/json,.json" className="hidden" onChange={upload} disabled={checkpointLibraryBusy} /></label>
+              </div>
+
+              <div className="mt-4 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto]">
+                <input value={saveName} onChange={e => setSaveName(e.target.value)} disabled={checkpointLibraryBusy} placeholder={`Checkpoint gen ${generation}`} className="min-w-0 rounded border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 disabled:opacity-50" />
+                <button disabled={checkpointLibraryBusy} onClick={() => { onSaveCheckpoint(saveName.trim() || `Checkpoint gen ${generation}`); setSaveName(''); }} className="px-3 py-2 rounded bg-violet-400 text-black text-xs font-bold flex items-center justify-center gap-1 disabled:opacity-40"><Save className="w-3.5 h-3.5" />Save current run</button>
+                <button disabled={checkpointLibraryBusy} onClick={onExportModels} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center justify-center gap-1 disabled:opacity-40"><Download className="w-3.5 h-3.5" />Export current</button>
+              </div>
+              {(checkpointLibraryMessage || status) && <div className="mt-3 rounded border border-violet-500/20 bg-black/20 px-3 py-2 text-xs text-violet-200">{checkpointLibraryMessage || status}</div>}
             </div>
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-              <div className="flex items-center gap-2 mb-4"><HardDrive className="w-4 h-4 text-violet-300" /><h3 className="font-semibold text-white">Evolution checkpoint persistence</h3></div>
-              <div className="flex flex-wrap gap-2">
-                <button onClick={() => { onSaveLocalStorage?.(); setStatus('Saving full evolutionary checkpoint locally…'); }} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1"><Save className="w-3.5 h-3.5" />Save</button>
-                <button disabled={!hasSavedModel} onClick={() => { onLoadLocalStorage?.(); setStatus('Loading full evolutionary checkpoint…'); }} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1 disabled:opacity-40"><HardDrive className="w-3.5 h-3.5" />Load</button>
-                <button onClick={onExportModels} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1"><Download className="w-3.5 h-3.5" />Export checkpoint</button>
-                <label className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1 cursor-pointer"><Upload className="w-3.5 h-3.5" />Import checkpoint<input type="file" accept="application/json" className="hidden" onChange={upload} /></label>
+              <div className="flex items-center justify-between gap-3">
+                <div><div className="flex items-center gap-2"><HardDrive className="w-4 h-4 text-violet-300" /><h3 className="font-semibold text-white">Saved runs</h3></div><p className="mt-1 text-[10px] text-gray-600">Loading replaces the active populations, species, Hall of Fame, benchmark bank, retained champions, Elo and diagnostics with the selected checkpoint.</p></div>
+                <span className="rounded-full border border-gray-800 bg-black/30 px-2 py-1 text-[10px] font-mono text-gray-400">{storedCheckpoints.length} saved</span>
               </div>
-              {status && <div className="mt-3 text-xs text-violet-200">{status}</div>}
-              <p className="mt-4 text-xs text-gray-500 leading-relaxed">Full checkpoints preserve both populations, persistent species/innovation history, Hall of Fame, frozen benchmark references, Elo, diagnostics counters, and manual ability configuration. Checkpoints are captured at completed-generation boundaries so an interrupted evaluator batch can never corrupt evolutionary state. Legacy champion-only JSON remains importable and seeds fresh populations.</p>
+
+              {storedCheckpoints.length === 0 ? (
+                <div className="mt-4 rounded-lg border border-dashed border-gray-800 px-4 py-7 text-center text-xs text-gray-600">No local checkpoints yet. Give the current run a name and save it above.</div>
+              ) : (
+                <div className="mt-4 space-y-2">
+                  {storedCheckpoints.map(item => (
+                    <div key={item.id} className="rounded-lg border border-gray-800 bg-black/25 p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-white">{item.name}</div>
+                          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-gray-500">
+                            <span className="font-mono text-violet-300">Gen {item.generation}</span>
+                            <span>{new Date(item.savedAt).toLocaleString()}</span>
+                            <span>{formatBytes(item.bytes)}</span>
+                            <span className="capitalize">{item.architectureLabel}</span>
+                            {(item.chaserChampionGeneration != null || item.runnerChampionGeneration != null) && <span>retained C{item.chaserChampionGeneration ?? '—'} / R{item.runnerChampionGeneration ?? '—'}</span>}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          <button disabled={checkpointLibraryBusy} onClick={() => setPendingLoadId(item.id)} className="rounded border border-emerald-500/35 px-2.5 py-1.5 text-[10px] text-emerald-200 flex items-center gap-1 disabled:opacity-40"><FolderOpen className="w-3 h-3" />Load</button>
+                          <button disabled={checkpointLibraryBusy} onClick={() => onExportStoredCheckpoint(item.id)} className="rounded border border-gray-700 px-2.5 py-1.5 text-[10px] text-gray-300 flex items-center gap-1 disabled:opacity-40"><Download className="w-3 h-3" />Export</button>
+                          <button disabled={checkpointLibraryBusy} onClick={() => setPendingDeleteId(item.id)} className="rounded border border-red-500/25 px-2.5 py-1.5 text-[10px] text-red-300 flex items-center gap-1 disabled:opacity-40"><Trash2 className="w-3 h-3" />Delete</button>
+                        </div>
+                      </div>
+                      {pendingLoadId === item.id && <div className="mt-3 flex flex-wrap items-center gap-2 rounded border border-emerald-500/20 bg-emerald-950/10 px-3 py-2 text-[10px] text-emerald-200"><span className="mr-auto">Replace the active run with this generation {item.generation} checkpoint?</span><button disabled={checkpointLibraryBusy} onClick={async () => { await onLoadStoredCheckpoint(item.id); setPendingLoadId(null); }} className="rounded bg-emerald-400 px-2.5 py-1 font-bold text-black">Load checkpoint</button><button onClick={() => setPendingLoadId(null)} className="rounded border border-gray-700 px-2.5 py-1 text-gray-300">Cancel</button></div>}
+                      {pendingDeleteId === item.id && <div className="mt-3 flex flex-wrap items-center gap-2 rounded border border-red-500/20 bg-red-950/10 px-3 py-2 text-[10px] text-red-200"><span className="mr-auto">Delete this saved checkpoint from this browser?</span><button disabled={checkpointLibraryBusy} onClick={async () => { await onDeleteStoredCheckpoint(item.id); setPendingDeleteId(null); }} className="rounded bg-red-400 px-2.5 py-1 font-bold text-black">Delete</button><button onClick={() => setPendingDeleteId(null)} className="rounded border border-gray-700 px-2.5 py-1 text-gray-300">Cancel</button></div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="mt-4 text-[10px] leading-relaxed text-gray-600">Full checkpoints preserve populations, innovation/species history, Hall of Fame, frozen benchmark references, retained generalist champions, Elo, architecture, fitness settings and diagnostics. Legacy champion-only JSON is still importable, but cannot restore a full evolutionary run.</p>
+            </div>
+
+            <div className="rounded-xl border border-cyan-500/25 bg-cyan-950/10 p-4">
+              <div className="flex items-center gap-2 mb-3"><BarChart3 className="w-4 h-4 text-cyan-300" /><h3 className="font-semibold text-white">Training analysis recording</h3></div>
+              <p className="text-xs leading-relaxed text-gray-500">Export the compact analysis report separately from restorable checkpoints. It contains generation history and deterministic champion probes for evaluating learned behavior.</p>
+              <button onClick={onExportAnalysis} className="mt-3 px-3 py-2 rounded border border-cyan-500/40 text-cyan-200 text-xs flex items-center gap-1"><Download className="w-3.5 h-3.5" />Export analysis JSON</button>
             </div>
 
             <div className="rounded-xl border border-red-500/20 bg-red-950/10 p-4">

@@ -9,6 +9,15 @@ import { createLeaderboardEntries } from './learning/elo';
 import { getAgentStateVector } from './learning/state';
 import { initAudio, playDynamicJumpSound, playTagSound, playFallSound, playToggleSound } from './services/soundService';
 import {
+  deleteStoredCheckpoint,
+  listStoredCheckpoints,
+  migrateLegacyLocalStorageCheckpoint,
+  readStoredCheckpoint,
+  saveStoredCheckpoint,
+  validateFullCheckpointJson,
+  type StoredCheckpointSummary,
+} from './services/checkpointStore';
+import {
   advanceRoleTimers,
   maintainPlatformsForCamera,
   resolveTagSwap,
@@ -193,6 +202,9 @@ export const App: React.FC = () => {
   const [upgradeConfig, setUpgradeConfig] = useState<UpgradeConfig>(loadUpgradeConfig);
   const [trainingFitnessConfig, setTrainingFitnessConfig] = useState<TrainingFitnessConfig>(loadTrainingFitnessConfig);
   const [networkArchitecture, setNetworkArchitecture] = useState<NetworkArchitectureSuiteConfig>(loadNetworkArchitecture);
+  const [storedCheckpoints, setStoredCheckpoints] = useState<StoredCheckpointSummary[]>([]);
+  const [checkpointLibraryBusy, setCheckpointLibraryBusy] = useState(false);
+  const [checkpointLibraryMessage, setCheckpointLibraryMessage] = useState<string | null>(null);
   const stepFrameRef = useRef(false);
   const visualStepAccumulatorRef = useRef(0);
   const wakeLockRef = useRef<any>(null);
@@ -269,10 +281,34 @@ export const App: React.FC = () => {
   const installedChampionGenerationRef = useRef({ chaser: -1, evader: -1 });
   const checkpointRequestCounterRef = useRef(1);
   const analysisRequestCounterRef = useRef(1);
-  const pendingCheckpointActionRef = useRef<{ requestId: number; action: 'save' | 'export' } | null>(null);
+  const pendingCheckpointActionRef = useRef<{ requestId: number; action: 'library' | 'export'; name?: string } | null>(null);
   const pendingRestoreDiagnosticsRef = useRef<DiagnosticsState | null>(null);
   const diagnosticsStateRef = useRef(diagnosticsState);
   diagnosticsStateRef.current = diagnosticsState;
+
+  const refreshStoredCheckpointLibrary = useCallback(async () => {
+    try {
+      const items = await listStoredCheckpoints();
+      setStoredCheckpoints(items);
+    } catch (error) {
+      console.error('Failed to read checkpoint library:', error);
+      setCheckpointLibraryMessage('Checkpoint library is unavailable in this browser. Export JSON files instead.');
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        await migrateLegacyLocalStorageCheckpoint('ai_tag_studio_models');
+        if (!cancelled) await refreshStoredCheckpointLibrary();
+      } catch (error) {
+        console.error('Failed to initialize checkpoint library:', error);
+        if (!cancelled) setCheckpointLibraryMessage('Could not initialize the checkpoint library.');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [refreshStoredCheckpointLibrary]);
 
   const initializeGameState = useCallback(() => {
     chaserAgent.current = new LearningAgent('chaser');
@@ -551,7 +587,7 @@ export const App: React.FC = () => {
           pendingCheckpointActionRef.current = null;
           const checkpoint = payload.checkpoint;
           const filePayload = {
-            version: '4.0.0',
+            version: '4.1.0',
             algorithm: 'NEAT',
             kind: 'full-evolution-checkpoint',
             timestamp: Date.now(),
@@ -560,12 +596,18 @@ export const App: React.FC = () => {
             uiDiagnostics: diagnosticsStateRef.current,
           };
           const serialized = JSON.stringify(filePayload, null, pending.action === 'export' ? 2 : 0);
-          if (pending.action === 'save') {
-            try {
-              localStorage.setItem('ai_tag_studio_models', serialized);
-            } catch (error) {
-              console.error('Full checkpoint is too large for browser local storage; use Export JSON instead.', error);
-            }
+          if (pending.action === 'library') {
+            const name = pending.name?.trim() || `Generation ${checkpoint.generation}`;
+            saveStoredCheckpoint(serialized, name)
+              .then(summary => {
+                setCheckpointLibraryMessage(`Saved “${summary.name}” at generation ${summary.generation}.`);
+                return refreshStoredCheckpointLibrary();
+              })
+              .catch(error => {
+                console.error('Failed to save checkpoint to library:', error);
+                setCheckpointLibraryMessage(`Save failed: ${error instanceof Error ? error.message : 'unknown storage error'}`);
+              })
+              .finally(() => setCheckpointLibraryBusy(false));
           } else {
             const blob = new Blob([serialized], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
@@ -574,14 +616,20 @@ export const App: React.FC = () => {
             a.download = `neat_tag_checkpoint_gen${checkpoint.generation}.json`;
             a.click();
             URL.revokeObjectURL(url);
+            setCheckpointLibraryMessage(`Exported generation ${checkpoint.generation} checkpoint.`);
+            setCheckpointLibraryBusy(false);
           }
         } else if (type === 'RESTORE_CHECKPOINT_RESPONSE') {
           if (!payload?.ok) {
             console.error('Failed to restore full evolution checkpoint:', payload?.message || 'Unknown checkpoint error');
             pendingRestoreDiagnosticsRef.current = null;
-          } else if (pendingRestoreDiagnosticsRef.current) {
-            setDiagnosticsState(pendingRestoreDiagnosticsRef.current);
+            setCheckpointLibraryMessage(`Load failed: ${payload?.message || 'unknown checkpoint error'}`);
+            setCheckpointLibraryBusy(false);
+          } else {
+            if (pendingRestoreDiagnosticsRef.current) setDiagnosticsState(pendingRestoreDiagnosticsRef.current);
             pendingRestoreDiagnosticsRef.current = null;
+            setCheckpointLibraryMessage('Checkpoint restored successfully.');
+            setCheckpointLibraryBusy(false);
           }
         } else if (type === 'SYNC_WEIGHTS_RESPONSE') {
           if (payload.chaserWeights && chaserAgent.current) {
@@ -1309,10 +1357,14 @@ export const App: React.FC = () => {
         }));
   };
 
-  const requestFullCheckpoint = (action: 'save' | 'export') => {
-    if (!workerRef.current) return;
+  const requestFullCheckpoint = (action: 'library' | 'export', name?: string) => {
+    if (!workerRef.current) {
+      setCheckpointLibraryMessage('Training worker is not available yet.');
+      setCheckpointLibraryBusy(false);
+      return;
+    }
     const requestId = checkpointRequestCounterRef.current++;
-    pendingCheckpointActionRef.current = { requestId, action };
+    pendingCheckpointActionRef.current = { requestId, action, name };
     workerRef.current.postMessage({ type: 'CHECKPOINT_REQUEST', payload: { requestId } });
   };
 
@@ -1394,31 +1446,104 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleSaveModels = () => requestFullCheckpoint('save');
+  const handleSaveCheckpoint = (name: string) => {
+    setCheckpointLibraryBusy(true);
+    setCheckpointLibraryMessage('Capturing the next safe completed-generation checkpoint…');
+    requestFullCheckpoint('library', name);
+  };
 
-  const handleLoadModels = (): boolean => {
+  const handleLoadStoredCheckpoint = async (id: string): Promise<boolean> => {
+    setCheckpointLibraryBusy(true);
+    setCheckpointLibraryMessage('Reading checkpoint from the local library…');
     try {
-      const raw = localStorage.getItem('ai_tag_studio_models');
-      if (!raw) return false;
-      return restoreModelPayload(JSON.parse(raw));
+      const serialized = await readStoredCheckpoint(id);
+      if (!serialized) throw new Error('Saved checkpoint was not found.');
+      const ok = restoreModelPayload(JSON.parse(serialized));
+      if (!ok) throw new Error('Checkpoint is incompatible with this build.');
+      setCheckpointLibraryMessage('Restoring evolutionary state…');
+      return true;
     } catch (error) {
-      console.error('Failed to load models/checkpoint:', error);
+      console.error('Failed to load stored checkpoint:', error);
+      setCheckpointLibraryMessage(`Load failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      setCheckpointLibraryBusy(false);
       return false;
     }
   };
 
-  const handleExportModels = () => requestFullCheckpoint('export');
+  const handleDeleteStoredCheckpoint = async (id: string): Promise<void> => {
+    setCheckpointLibraryBusy(true);
+    try {
+      await deleteStoredCheckpoint(id);
+      await refreshStoredCheckpointLibrary();
+      setCheckpointLibraryMessage('Saved checkpoint deleted.');
+    } catch (error) {
+      console.error('Failed to delete checkpoint:', error);
+      setCheckpointLibraryMessage(`Delete failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    } finally {
+      setCheckpointLibraryBusy(false);
+    }
+  };
+
+  const handleExportStoredCheckpoint = async (id: string): Promise<void> => {
+    setCheckpointLibraryBusy(true);
+    try {
+      const serialized = await readStoredCheckpoint(id);
+      if (!serialized) throw new Error('Saved checkpoint was not found.');
+      const payload = JSON.parse(serialized);
+      const generation = payload?.evolutionCheckpoint?.generation || payload?.generation || 0;
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `neat_tag_checkpoint_gen${generation}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setCheckpointLibraryMessage(`Exported saved generation ${generation} checkpoint.`);
+    } catch (error) {
+      console.error('Failed to export stored checkpoint:', error);
+      setCheckpointLibraryMessage(`Export failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    } finally {
+      setCheckpointLibraryBusy(false);
+    }
+  };
+
+  const handleExportModels = () => {
+    setCheckpointLibraryBusy(true);
+    setCheckpointLibraryMessage('Capturing the next safe completed-generation checkpoint for export…');
+    requestFullCheckpoint('export');
+  };
   const handleExportAnalysis = () => {
     if (!workerRef.current) return;
     const requestId = analysisRequestCounterRef.current++;
     workerRef.current.postMessage({ type: 'ANALYSIS_EXPORT_REQUEST', payload: { requestId } });
   };
 
-  const handleImportModels = (jsonString: string): boolean => {
+  const handleImportModels = async (jsonString: string, fileName?: string): Promise<boolean> => {
+    setCheckpointLibraryBusy(true);
+    setCheckpointLibraryMessage('Validating imported model file…');
     try {
-      return restoreModelPayload(JSON.parse(jsonString));
+      const payload = JSON.parse(jsonString);
+      const validation = validateFullCheckpointJson(jsonString);
+      if (validation.valid) {
+        const baseName = (fileName || `Imported generation ${validation.generation || 0}`).replace(/\.json$/i, '');
+        await saveStoredCheckpoint(JSON.stringify(payload), baseName);
+        await refreshStoredCheckpointLibrary();
+        const ok = restoreModelPayload(payload);
+        if (!ok) throw new Error('Imported checkpoint is incompatible with this build.');
+        setCheckpointLibraryMessage(`Imported “${baseName}” into the library and started restoring it…`);
+        return true;
+      }
+
+      // Champion-only legacy JSON is still supported, but it cannot represent a restorable full run.
+      const ok = restoreModelPayload(payload);
+      if (!ok) throw new Error(validation.message || 'Unsupported model file.');
+      setCheckpointLibraryMessage('Imported legacy champion weights. A fresh evolutionary population was seeded.');
+      setCheckpointLibraryBusy(false);
+      return true;
     } catch (error) {
-      console.error('Failed to parse uploaded models/checkpoint JSON:', error);
+      console.error('Failed to import models/checkpoint:', error);
+      setCheckpointLibraryMessage(`Import failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      setCheckpointLibraryBusy(false);
       return false;
     }
   };
@@ -1637,12 +1762,16 @@ export const App: React.FC = () => {
         onResetWeights={handleResetWeights}
         avgSurvivalTime={gameState.avgSurvivalTime}
         avgTimeToTag={gameState.avgTimeToTag}
-        onSaveLocalStorage={handleSaveModels}
-        onLoadLocalStorage={handleLoadModels}
+        storedCheckpoints={storedCheckpoints}
+        checkpointLibraryBusy={checkpointLibraryBusy}
+        checkpointLibraryMessage={checkpointLibraryMessage}
+        onSaveCheckpoint={handleSaveCheckpoint}
+        onLoadStoredCheckpoint={handleLoadStoredCheckpoint}
+        onDeleteStoredCheckpoint={handleDeleteStoredCheckpoint}
+        onExportStoredCheckpoint={handleExportStoredCheckpoint}
         onExportModels={handleExportModels}
         onExportAnalysis={handleExportAnalysis}
         onImportModels={handleImportModels}
-        hasSavedModel={Boolean(localStorage.getItem('ai_tag_studio_models'))}
         networkArchitecture={networkArchitecture}
         onApplyNetworkArchitecture={handleApplyNetworkArchitecture}
       />
