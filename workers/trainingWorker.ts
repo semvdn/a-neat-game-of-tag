@@ -1,5 +1,5 @@
 import { LearningAgent, type AgentWeights } from '../learning/agent';
-import { NeatPopulation, DEFAULT_NEAT_CONFIG, cloneGenome, type NeatGenerationMetrics, type NeatGenomeData, type NeatPopulationCheckpoint } from '../learning/neat';
+import { NeatPopulation, DEFAULT_NEAT_CONFIG, DEFAULT_NETWORK_ARCHITECTURE_SUITE, sanitizeNetworkArchitectureSuite, cloneGenome, type NeatGenerationMetrics, type NeatGenomeData, type NeatPopulationCheckpoint, type NetworkArchitectureSuiteConfig } from '../learning/neat';
 import { updateEloRatings, createLeaderboardEntries } from '../learning/elo';
 import {
   runTrainingEpisode,
@@ -45,7 +45,7 @@ import {
   MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM,
 } from '../constants';
 
-const neatConfig = {
+const baseNeatConfig = {
   ...DEFAULT_NEAT_CONFIG,
   populationSize: NEAT_POPULATION_SIZE,
   compatibilityThreshold: NEAT_COMPATIBILITY_THRESHOLD,
@@ -56,8 +56,24 @@ const neatConfig = {
   addConnectionRate: NEAT_ADD_CONNECTION_RATE,
 };
 
-let chaserPopulation = new NeatPopulation('chaser', neatConfig);
-let evaderPopulation = new NeatPopulation('evader', neatConfig);
+let networkArchitecture: NetworkArchitectureSuiteConfig = sanitizeNetworkArchitectureSuite(DEFAULT_NETWORK_ARCHITECTURE_SUITE);
+
+function populationConfig(role: 'chaser' | 'evader') {
+  const architecture = role === 'chaser' ? networkArchitecture.chaser : networkArchitecture.runner;
+  return {
+    ...baseNeatConfig,
+    addNodeRate: architecture.addNodeRate,
+    addConnectionRate: architecture.addConnectionRate,
+    initialArchitecture: { ...architecture, hiddenLayers: [...architecture.hiddenLayers] },
+  };
+}
+
+function createFreshPopulation(role: 'chaser' | 'evader') {
+  return new NeatPopulation(role, populationConfig(role));
+}
+
+let chaserPopulation = createFreshPopulation('chaser');
+let evaderPopulation = createFreshPopulation('evader');
 let chaserControllers = chaserPopulation.genomes.map(g => new LearningAgent('chaser', g));
 let evaderControllers = evaderPopulation.genomes.map(g => new LearningAgent('evader', g));
 
@@ -194,6 +210,7 @@ interface EvolutionCheckpoint {
   lastEvaderMetrics: NeatGenerationMetrics | null;
   upgradeConfig: UpgradeConfig;
   trainingFitnessConfig?: TrainingFitnessConfig;
+  networkArchitecture?: NetworkArchitectureSuiteConfig;
   /** Fitness semantics marker for compatibility with checkpoints created before right-only exploration. */
   explorationRewardMode?: 'safe-per-runner-right-frontier';
   gameplayObjectiveVersion?: 'pace-pursuit-branches-v1';
@@ -808,6 +825,7 @@ function recordGenerationAnalysis(generation: number): void {
       runner: actionSharesFromArray(generationActionCountsEvader, generationDecisionCountEvader, generationIdleCountEvader),
     },
     fitnessConfig: { ...trainingFitnessConfig },
+    networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
   };
   analysisHistory.push(record);
   if (analysisHistory.length > MAX_ANALYSIS_HISTORY) analysisHistory.splice(0, analysisHistory.length - MAX_ANALYSIS_HISTORY);
@@ -827,6 +845,7 @@ function buildEvolutionCheckpoint(): EvolutionCheckpoint {
     lastEvaderMetrics: lastEvaderMetrics ? { ...lastEvaderMetrics } : null,
     upgradeConfig: sanitizeUpgradeConfig(upgradeConfig),
     trainingFitnessConfig: sanitizeTrainingFitnessConfig(trainingFitnessConfig),
+    networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     explorationRewardMode: 'safe-per-runner-right-frontier',
     gameplayObjectiveVersion: 'pace-pursuit-branches-v1',
     actionSchema: 'factorized-controls-v1',
@@ -883,6 +902,9 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
     throw new Error('This checkpoint predates the factorized movement+jump controller. Start a fresh run or load a checkpoint created by this build.');
   }
 
+  networkArchitecture = sanitizeNetworkArchitectureSuite(checkpoint.networkArchitecture || DEFAULT_NETWORK_ARCHITECTURE_SUITE);
+  chaserPopulation = createFreshPopulation('chaser');
+  evaderPopulation = createFreshPopulation('evader');
   chaserPopulation.restoreCheckpoint(checkpoint.chaserPopulation);
   evaderPopulation.restoreCheckpoint(checkpoint.evaderPopulation);
   championChaser = new LearningAgent('chaser', checkpoint.championChaser);
@@ -1991,6 +2013,7 @@ function buildAnalysisExport() {
     actionSpace: [...ACTION_SPACE],
     actionSchema: 'factorized-controls-v1',
     gameplayObjectiveVersion: 'pace-pursuit-branches-v1',
+    networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     viewportSize: { ...viewportSize },
     fitness: {
       chaser: '100 + 20 * (tags - chaserFalls) + capped runner-visited-platform pursuit shaping',
@@ -2082,6 +2105,7 @@ function emitTelemetry(force = false) {
       lastGenerationBalance,
       hallOfFame: currentHallOfFameTelemetry(),
       trainingFitnessConfig: { ...trainingFitnessConfig },
+      networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
       lastCrossGenerationBenchmark,
       benchmarkSuiteRevision,
     },
@@ -2126,13 +2150,61 @@ function seedPopulations(chaserWeights?: AgentWeights, evaderWeights?: AgentWeig
   captureSafeCheckpoint();
 }
 
+function resetEntireEvolutionRun(): void {
+  chaserPopulation = createFreshPopulation('chaser');
+  evaderPopulation = createFreshPopulation('evader');
+  refreshControllers();
+  championChaser = new LearningAgent('chaser', chaserPopulation.genomes[0]);
+  championEvader = new LearningAgent('evader', evaderPopulation.genomes[0]);
+  lastChaserMetrics = null;
+  lastEvaderMetrics = null;
+  seededFromStart = true;
+  totalTags = 0;
+  totalFalls = 0;
+  totalChaserFalls = 0;
+  totalRunnerFalls = 0;
+  totalJumps = 0;
+  totalEvaluationMatches = 0;
+  totalChaserEpisodeWins = 0;
+  totalEvaderEpisodeWins = 0;
+  totalEpisodeDraws = 0;
+  totalSimulatedTime = 0;
+  completedEpisodes = 0;
+  evaluatorRecoveryCount = 0;
+  lastEvaluatorRecoveryReason = '';
+  chaserElo = INITIAL_ELO;
+  evaderElo = INITIAL_ELO;
+  recentSurvivalTimes.length = 0;
+  recentTimesToTag.length = 0;
+  Object.keys(actionCountsChaser).forEach(k => delete actionCountsChaser[k]);
+  Object.keys(actionCountsEvader).forEach(k => delete actionCountsEvader[k]);
+  clearHallOfFame();
+  analysisHistory.length = 0;
+  lastGenerationBalance = null;
+  resetBenchmarkSuite();
+  resetEvaluationAccumulators();
+  invalidateParallelGeneration();
+  resetTrainingThroughput();
+  captureSafeCheckpoint();
+  emitTelemetry(true);
+  if (isRunning) startTrainingEngine();
+}
+
 self.onmessage = (event: MessageEvent) => {
   const { type, payload } = event.data;
 
   switch (type) {
     case 'START': {
-      if (!seededFromStart && (payload?.chaserWeights || payload?.evaderWeights)) {
-        seedPopulations(payload?.chaserWeights, payload?.evaderWeights);
+      if (!seededFromStart) {
+        if (payload?.networkArchitecture) networkArchitecture = sanitizeNetworkArchitectureSuite(payload.networkArchitecture);
+        chaserPopulation = createFreshPopulation('chaser');
+        evaderPopulation = createFreshPopulation('evader');
+        refreshControllers();
+        championChaser = new LearningAgent('chaser', chaserPopulation.genomes[0]);
+        championEvader = new LearningAgent('evader', evaderPopulation.genomes[0]);
+        resetBenchmarkSuite();
+        resetEvaluationAccumulators();
+        invalidateParallelGeneration();
         seededFromStart = true;
       }
       if (typeof payload?.chaserElo === 'number') chaserElo = payload.chaserElo;
@@ -2151,6 +2223,16 @@ self.onmessage = (event: MessageEvent) => {
       if (timerId) clearTimeout(timerId);
       resetTrainingThroughput();
       startTrainingEngine();
+      break;
+    }
+
+    case 'SET_NETWORK_ARCHITECTURE': {
+      networkArchitecture = sanitizeNetworkArchitectureSuite(payload?.networkArchitecture);
+      resetEntireEvolutionRun();
+      self.postMessage({
+        type: 'NETWORK_ARCHITECTURE_APPLIED',
+        payload: { networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture) },
+      });
       break;
     }
 
@@ -2300,43 +2382,7 @@ self.onmessage = (event: MessageEvent) => {
     }
 
     case 'RESET':
-      chaserPopulation = new NeatPopulation('chaser', neatConfig);
-      evaderPopulation = new NeatPopulation('evader', neatConfig);
-      refreshControllers();
-      championChaser = new LearningAgent('chaser', chaserPopulation.genomes[0]);
-      championEvader = new LearningAgent('evader', evaderPopulation.genomes[0]);
-      lastChaserMetrics = null;
-      lastEvaderMetrics = null;
-      seededFromStart = false;
-      totalTags = 0;
-      totalFalls = 0;
-      totalChaserFalls = 0;
-      totalRunnerFalls = 0;
-      totalJumps = 0;
-      totalEvaluationMatches = 0;
-      totalChaserEpisodeWins = 0;
-      totalEvaderEpisodeWins = 0;
-      totalEpisodeDraws = 0;
-      totalSimulatedTime = 0;
-      completedEpisodes = 0;
-      evaluatorRecoveryCount = 0;
-      lastEvaluatorRecoveryReason = '';
-      chaserElo = INITIAL_ELO;
-      evaderElo = INITIAL_ELO;
-      recentSurvivalTimes.length = 0;
-      recentTimesToTag.length = 0;
-      Object.keys(actionCountsChaser).forEach(k => delete actionCountsChaser[k]);
-      Object.keys(actionCountsEvader).forEach(k => delete actionCountsEvader[k]);
-      clearHallOfFame();
-      analysisHistory.length = 0;
-      lastGenerationBalance = null;
-      resetBenchmarkSuite();
-      resetEvaluationAccumulators();
-      invalidateParallelGeneration();
-      resetTrainingThroughput();
-      captureSafeCheckpoint();
-      emitTelemetry(true);
-      if (isRunning) startTrainingEngine();
+      resetEntireEvolutionRun();
       break;
   }
 };

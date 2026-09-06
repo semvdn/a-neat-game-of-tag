@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { DiagnosticsState } from '../types';
-import type { NeatGenerationMetrics, NeatGenomeData } from '../learning/neat';
+import { NETWORK_ARCHITECTURE_PRESETS, sanitizeNetworkArchitectureSuite, type NeatGenerationMetrics, type NeatGenomeData, type NetworkArchitectureConfig, type NetworkArchitecturePreset, type NetworkArchitectureSuiteConfig } from '../learning/neat';
 import { ACTION_SPACE, STATE_VECTOR_SIZE } from '../constants';
 import {
   Activity,
@@ -42,6 +42,8 @@ interface PerformanceDiagnosticsProps {
   onSaveLocalStorage?: () => void;
   onLoadLocalStorage?: () => void;
   hasSavedModel?: boolean;
+  networkArchitecture: NetworkArchitectureSuiteConfig;
+  onApplyNetworkArchitecture: (config: NetworkArchitectureSuiteConfig) => void;
 }
 
 const fmt = (v: number | undefined, digits = 2) => (Number.isFinite(v) ? Number(v).toFixed(digits) : '—');
@@ -208,6 +210,93 @@ const FitnessSummary: React.FC<{ title: string; metrics?: NeatGenerationMetrics 
   </div>
 );
 
+const architectureEstimate = (config: NetworkArchitectureConfig) => {
+  const layers = [STATE_VECTOR_SIZE, ...config.hiddenLayers, ACTION_SPACE.length];
+  const nodes = layers.reduce((a, b) => a + b, 0);
+  let candidates = 0;
+  for (let i = 0; i < layers.length - 1; i++) candidates += layers[i] * layers[i + 1];
+  if (config.hiddenLayers.length > 0 && config.inputOutputSkip) candidates += STATE_VECTOR_SIZE * ACTION_SPACE.length;
+  if (config.hiddenLayerSkips && config.hiddenLayers.length > 1) {
+    for (let i = 0; i < config.hiddenLayers.length - 1; i++) {
+      for (let j = i + 2; j < config.hiddenLayers.length; j++) candidates += config.hiddenLayers[i] * config.hiddenLayers[j];
+    }
+  }
+  return { nodes, connections: Math.max(ACTION_SPACE.length, Math.round(candidates * config.connectionDensity)) };
+};
+
+const ArchitectureRoleEditor: React.FC<{
+  role: 'chaser' | 'runner';
+  config: NetworkArchitectureConfig;
+  disabled?: boolean;
+  onChange: (next: NetworkArchitectureConfig) => void;
+}> = ({ role, config, disabled, onChange }) => {
+  const estimate = architectureEstimate(config);
+  const update = (patch: Partial<NetworkArchitectureConfig>) => onChange({ ...config, ...patch, preset: 'custom' });
+  const selectPreset = (preset: NetworkArchitecturePreset) => {
+    if (preset === 'custom') return;
+    const base = NETWORK_ARCHITECTURE_PRESETS[preset];
+    onChange({ ...base, hiddenLayers: [...base.hiddenLayers] });
+  };
+  const setLayerCount = (count: number) => {
+    const next = [...config.hiddenLayers];
+    while (next.length < count) next.push(next.length === 0 ? 16 : Math.max(8, Math.round(next[next.length - 1] * 0.75)));
+    next.length = count;
+    update({ hiddenLayers: next });
+  };
+  const setLayerWidth = (index: number, width: number) => {
+    const next = [...config.hiddenLayers];
+    next[index] = Math.max(1, Math.min(48, Math.round(width || 1)));
+    update({ hiddenLayers: next });
+  };
+  return (
+    <div className={`rounded-xl border p-4 ${role === 'chaser' ? 'border-red-500/20 bg-red-950/10' : 'border-cyan-500/20 bg-cyan-950/10'} ${disabled ? 'opacity-55' : ''}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h4 className={`font-semibold ${role === 'chaser' ? 'text-red-200' : 'text-cyan-200'}`}>{role === 'chaser' ? 'Chaser' : 'Runner'} network</h4>
+          <p className="text-[10px] text-gray-500">Estimated generation-1 topology: {estimate.nodes} nodes · ~{estimate.connections} enabled links</p>
+        </div>
+        <select disabled={disabled} value={config.preset} onChange={e => selectPreset(e.target.value as NetworkArchitecturePreset)} className="rounded border border-gray-700 bg-gray-950 px-2 py-1.5 text-xs text-gray-200 disabled:opacity-50">
+          <option value="minimal">Minimal NEAT</option><option value="compact">Compact 12</option><option value="deep">Deep 16→12 · recommended</option><option value="wide">Wide 24→16</option><option value="custom">Custom</option>
+        </select>
+      </div>
+
+      <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <label className="text-xs text-gray-400">Hidden layers
+          <select disabled={disabled} value={config.hiddenLayers.length} onChange={e => setLayerCount(Number(e.target.value))} className="mt-1 w-full rounded border border-gray-700 bg-gray-950 px-2 py-2 text-gray-200">
+            {[0,1,2,3].map(n => <option key={n} value={n}>{n === 0 ? '0 · minimal' : n}</option>)}
+          </select>
+        </label>
+        <label className="text-xs text-gray-400">Connection density <span className="float-right font-mono text-violet-300">{Math.round(config.connectionDensity * 100)}%</span>
+          <input disabled={disabled} type="range" min={0.1} max={1} step={0.05} value={config.connectionDensity} onChange={e => update({ connectionDensity: Number(e.target.value) })} className="mt-2 w-full" />
+        </label>
+        <label className="text-xs text-gray-400">Initial weight scale <span className="float-right font-mono text-violet-300">±{config.initialWeightScale.toFixed(2)}</span>
+          <input disabled={disabled} type="range" min={0.1} max={3} step={0.05} value={config.initialWeightScale} onChange={e => update({ initialWeightScale: Number(e.target.value) })} className="mt-2 w-full" />
+        </label>
+      </div>
+
+      {config.hiddenLayers.length > 0 && <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+        {config.hiddenLayers.map((width, index) => <label key={index} className="text-[10px] text-gray-500">Layer {index + 1} width
+          <input disabled={disabled} type="number" min={1} max={48} value={width} onChange={e => setLayerWidth(index, Number(e.target.value))} className="mt-1 w-full rounded border border-gray-700 bg-gray-950 px-2 py-1.5 font-mono text-xs text-gray-200" />
+        </label>)}
+      </div>}
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <label className="flex items-center justify-between gap-3 rounded border border-gray-800 bg-black/20 px-3 py-2 text-xs text-gray-400"><span>Input → output skip links</span><input disabled={disabled} type="checkbox" checked={config.inputOutputSkip} onChange={e => update({ inputOutputSkip: e.target.checked })} /></label>
+        <label className="flex items-center justify-between gap-3 rounded border border-gray-800 bg-black/20 px-3 py-2 text-xs text-gray-400"><span>Hidden-layer skip links</span><input disabled={disabled || config.hiddenLayers.length < 2} type="checkbox" checked={config.hiddenLayerSkips} onChange={e => update({ hiddenLayerSkips: e.target.checked })} /></label>
+      </div>
+
+      <div className="mt-4 grid gap-4 md:grid-cols-2">
+        <label className="text-xs text-gray-400">Add-node mutation <span className="float-right font-mono text-amber-300">{(config.addNodeRate * 100).toFixed(1)}%</span>
+          <input disabled={disabled} type="range" min={0} max={0.2} step={0.005} value={config.addNodeRate} onChange={e => update({ addNodeRate: Number(e.target.value) })} className="mt-2 w-full" />
+        </label>
+        <label className="text-xs text-gray-400">Add-connection mutation <span className="float-right font-mono text-amber-300">{(config.addConnectionRate * 100).toFixed(1)}%</span>
+          <input disabled={disabled} type="range" min={0} max={0.3} step={0.005} value={config.addConnectionRate} onChange={e => update({ addConnectionRate: Number(e.target.value) })} className="mt-2 w-full" />
+        </label>
+      </div>
+    </div>
+  );
+};
+
 export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   diagnostics,
   visualSpeed,
@@ -229,11 +318,16 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   onSaveLocalStorage,
   onLoadLocalStorage,
   hasSavedModel,
+  networkArchitecture,
+  onApplyNetworkArchitecture,
 }) => {
-  const [tab, setTab] = useState<'overview' | 'fitness' | 'network' | 'actions' | 'models'>('overview');
+  const [tab, setTab] = useState<'overview' | 'fitness' | 'network' | 'architecture' | 'actions' | 'models'>('overview');
   const [role, setRole] = useState<'chaser' | 'evader'>('chaser');
   const [confirmReset, setConfirmReset] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [architectureDraft, setArchitectureDraft] = useState<NetworkArchitectureSuiteConfig>(() => sanitizeNetworkArchitectureSuite(networkArchitecture));
+  useEffect(() => setArchitectureDraft(sanitizeNetworkArchitectureSuite(networkArchitecture)), [networkArchitecture]);
+  const architectureDirty = JSON.stringify(sanitizeNetworkArchitectureSuite(architectureDraft)) !== JSON.stringify(sanitizeNetworkArchitectureSuite(networkArchitecture));
   if (!isOpen) return null;
 
   const chaserHistory = diagnostics.chaserNeatHistory || [];
@@ -309,6 +403,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
           ['overview', Activity, 'Overview'],
           ['fitness', Trophy, 'Fitness'],
           ['network', Network, 'Topology'],
+          ['architecture', Brain, 'Architecture'],
           ['actions', BarChart3, 'Actions'],
           ['models', HardDrive, 'Models'],
         ].map(([id, Icon, label]) => {
@@ -483,10 +578,38 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               </div>
               <FitnessSummary title={`${role === 'chaser' ? 'Chaser' : 'Evader'} champion`} metrics={selectedMetrics} />
               <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4 text-xs text-gray-400 leading-relaxed">
-                Green links are positive weights; red links are negative. NEAT begins with direct input→output links, then structural mutations split links to create hidden nodes and add new acyclic connections.
+                Green links are positive weights; red links are negative. The Architecture tab controls the generation-1 topology. NEAT then continues adding hidden nodes and acyclic connections at the configured structural mutation rates.
               </div>
             </div>
             <NetworkGraph genome={selectedGenome} />
+          </div>
+        )}
+
+        {tab === 'architecture' && (
+          <div className="max-w-6xl mx-auto space-y-5">
+            <div className="rounded-xl border border-violet-500/25 bg-violet-950/10 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="max-w-3xl">
+                  <div className="flex items-center gap-2"><Brain className="h-4 w-4 text-violet-300" /><h3 className="font-semibold text-white">Network architecture experiment suite</h3></div>
+                  <p className="mt-1 text-xs leading-relaxed text-gray-500">Configure the generation-1 feed-forward topology and how aggressively NEAT grows it afterward. Applying a new architecture intentionally starts both populations at generation 1 so benchmark comparisons are clean. The settings are stored in full checkpoints and analysis exports.</p>
+                </div>
+                <label className="flex items-center gap-2 rounded border border-gray-700 bg-black/20 px-3 py-2 text-xs text-gray-300"><input type="checkbox" checked={architectureDraft.linkedRoles} onChange={e => setArchitectureDraft(prev => ({ ...prev, linkedRoles: e.target.checked, runner: e.target.checked ? { ...prev.chaser, hiddenLayers: [...prev.chaser.hiddenLayers] } : prev.runner }))} />Use same architecture for both roles</label>
+              </div>
+              <div className="mt-3 grid gap-2 text-[10px] text-gray-500 md:grid-cols-4">
+                <div><span className="text-gray-300">Minimal:</span> canonical direct input→output NEAT</div><div><span className="text-gray-300">Compact:</span> one 12-node hidden layer</div><div><span className="text-gray-300">Deep:</span> 16→12 hidden layers</div><div><span className="text-gray-300">Wide:</span> 24→16 plus hidden skips</div>
+              </div>
+            </div>
+
+            <ArchitectureRoleEditor role="chaser" config={architectureDraft.chaser} onChange={next => setArchitectureDraft(prev => ({ ...prev, chaser: next, runner: prev.linkedRoles ? { ...next, hiddenLayers: [...next.hiddenLayers] } : prev.runner }))} />
+            <ArchitectureRoleEditor role="runner" config={architectureDraft.linkedRoles ? architectureDraft.chaser : architectureDraft.runner} disabled={architectureDraft.linkedRoles} onChange={next => setArchitectureDraft(prev => ({ ...prev, runner: next }))} />
+
+            <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div><h4 className="font-semibold text-white">Apply experiment</h4><p className="text-xs text-gray-500">Architecture changes cannot be mixed into an existing population. Applying resets populations, species, Hall of Fame, Elo, benchmark bank and generation history.</p></div>
+                <div className="flex gap-2"><button disabled={!architectureDirty} onClick={() => setArchitectureDraft(sanitizeNetworkArchitectureSuite(networkArchitecture))} className="rounded border border-gray-700 px-3 py-2 text-xs disabled:opacity-35">Revert draft</button><button disabled={!architectureDirty} onClick={() => { const applied = sanitizeNetworkArchitectureSuite(architectureDraft); onApplyNetworkArchitecture(applied); setArchitectureDraft(applied); setStatus('Architecture applied. Fresh populations started at generation 1.'); }} className="rounded bg-violet-400 px-3 py-2 text-xs font-bold text-black disabled:opacity-35">Apply architecture & restart</button></div>
+              </div>
+              {!architectureDirty && <p className="mt-3 text-[10px] text-emerald-300">Draft matches the currently applied architecture.</p>}
+            </div>
           </div>
         )}
 

@@ -1,1 +1,1 @@
-Add capped pace shaping, pursuit play and branching routes
+Add configurable NEAT network architecture suite

@@ -79,6 +79,85 @@ export interface NeatGenerationMetrics {
   timestamp: number;
 }
 
+export type NetworkArchitecturePreset = 'minimal' | 'compact' | 'deep' | 'wide' | 'custom';
+
+export interface NetworkArchitectureConfig {
+  preset: NetworkArchitecturePreset;
+  /** Feed-forward hidden layer widths, from input side to output side. Empty means canonical minimal NEAT. */
+  hiddenLayers: number[];
+  /** Deterministic fraction of candidate connections instantiated inside each configured layer edge. */
+  connectionDensity: number;
+  /** Add direct input -> output skip links even when hidden layers exist. */
+  inputOutputSkip: boolean;
+  /** Add skip links across non-adjacent hidden layers. */
+  hiddenLayerSkips: boolean;
+  /** Scale of uniformly sampled initial weights. */
+  initialWeightScale: number;
+  /** Structural mutation rates can be tuned alongside starting depth for controlled architecture experiments. */
+  addNodeRate: number;
+  addConnectionRate: number;
+}
+
+export interface NetworkArchitectureSuiteConfig {
+  linkedRoles: boolean;
+  chaser: NetworkArchitectureConfig;
+  runner: NetworkArchitectureConfig;
+}
+
+export const NETWORK_ARCHITECTURE_PRESETS: Record<Exclude<NetworkArchitecturePreset, 'custom'>, NetworkArchitectureConfig> = {
+  minimal: {
+    preset: 'minimal', hiddenLayers: [], connectionDensity: 1, inputOutputSkip: true, hiddenLayerSkips: false,
+    initialWeightScale: 1.5, addNodeRate: 0.03, addConnectionRate: 0.08,
+  },
+  compact: {
+    preset: 'compact', hiddenLayers: [12], connectionDensity: 0.75, inputOutputSkip: true, hiddenLayerSkips: false,
+    initialWeightScale: 1.25, addNodeRate: 0.025, addConnectionRate: 0.06,
+  },
+  deep: {
+    preset: 'deep', hiddenLayers: [16, 12], connectionDensity: 0.65, inputOutputSkip: true, hiddenLayerSkips: false,
+    initialWeightScale: 1.15, addNodeRate: 0.02, addConnectionRate: 0.05,
+  },
+  wide: {
+    preset: 'wide', hiddenLayers: [24, 16], connectionDensity: 0.55, inputOutputSkip: true, hiddenLayerSkips: true,
+    initialWeightScale: 1.0, addNodeRate: 0.018, addConnectionRate: 0.045,
+  },
+};
+
+export const DEFAULT_NETWORK_ARCHITECTURE_SUITE: NetworkArchitectureSuiteConfig = {
+  linkedRoles: true,
+  chaser: { ...NETWORK_ARCHITECTURE_PRESETS.minimal, hiddenLayers: [] },
+  runner: { ...NETWORK_ARCHITECTURE_PRESETS.minimal, hiddenLayers: [] },
+};
+
+export function sanitizeNetworkArchitectureConfig(value?: Partial<NetworkArchitectureConfig>): NetworkArchitectureConfig {
+  const preset = value?.preset && ['minimal','compact','deep','wide','custom'].includes(value.preset)
+    ? value.preset as NetworkArchitecturePreset
+    : 'custom';
+  const widths = Array.isArray(value?.hiddenLayers) ? value!.hiddenLayers! : [];
+  const hiddenLayers = widths.slice(0, 3).map(width => Math.max(1, Math.min(48, Math.round(Number(width) || 1))));
+  const density = Number(value?.connectionDensity);
+  const scale = Number(value?.initialWeightScale);
+  const addNode = Number(value?.addNodeRate);
+  const addConnection = Number(value?.addConnectionRate);
+  return {
+    preset,
+    hiddenLayers,
+    connectionDensity: Number.isFinite(density) ? Math.max(0.1, Math.min(1, density)) : 1,
+    inputOutputSkip: value?.inputOutputSkip !== false,
+    hiddenLayerSkips: value?.hiddenLayerSkips === true,
+    initialWeightScale: Number.isFinite(scale) ? Math.max(0.1, Math.min(3, scale)) : 1.5,
+    addNodeRate: Number.isFinite(addNode) ? Math.max(0, Math.min(0.2, addNode)) : 0.03,
+    addConnectionRate: Number.isFinite(addConnection) ? Math.max(0, Math.min(0.3, addConnection)) : 0.08,
+  };
+}
+
+export function sanitizeNetworkArchitectureSuite(value?: Partial<NetworkArchitectureSuiteConfig>): NetworkArchitectureSuiteConfig {
+  const linkedRoles = value?.linkedRoles !== false;
+  const chaser = sanitizeNetworkArchitectureConfig(value?.chaser);
+  const runner = linkedRoles ? { ...chaser, hiddenLayers: [...chaser.hiddenLayers] } : sanitizeNetworkArchitectureConfig(value?.runner);
+  return { linkedRoles, chaser, runner };
+}
+
 export interface NeatConfig {
   populationSize: number;
   compatibilityThreshold: number;
@@ -102,6 +181,7 @@ export interface NeatConfig {
   protectedSpeciesCount: number;
   stagnationEmaAlpha: number;
   stagnationImprovementEpsilon: number;
+  initialArchitecture: NetworkArchitectureConfig;
 }
 
 export const DEFAULT_NEAT_CONFIG: NeatConfig = {
@@ -127,11 +207,12 @@ export const DEFAULT_NEAT_CONFIG: NeatConfig = {
   protectedSpeciesCount: 2,
   stagnationEmaAlpha: 0.25,
   stagnationImprovementEpsilon: 0.01,
+  initialArchitecture: { ...NETWORK_ARCHITECTURE_PRESETS.minimal, hiddenLayers: [] },
 };
 
 const cloneNodes = (nodes: NodeGene[]) => nodes.map(n => ({ ...n }));
 const cloneConnections = (connections: ConnectionGene[]) => connections.map(c => ({ ...c }));
-const randomWeight = () => (Math.random() * 2 - 1) * 1.5;
+const randomWeight = (scale = 1.5) => (Math.random() * 2 - 1) * scale;
 
 export class InnovationTracker {
   private nextInnovation = 0;
@@ -191,6 +272,108 @@ export class InnovationTracker {
   }
 }
 
+function deterministicConnectionSelected(fromId: number, toId: number, density: number): boolean {
+  if (density >= 0.999) return true;
+  let h = Math.imul(fromId + 1, 0x45d9f3b) ^ Math.imul(toId + 11, 0x119de1f3);
+  h ^= h >>> 16;
+  const unit = (h >>> 0) / 4294967296;
+  return unit < density;
+}
+
+function connectLayerPair(
+  connections: ConnectionGene[],
+  tracker: InnovationTracker,
+  sources: number[],
+  targets: number[],
+  density: number,
+  weightScale: number
+) {
+  const existing = new Set(connections.map(c => `${c.inNode}->${c.outNode}`));
+  for (let ti = 0; ti < targets.length; ti++) {
+    const target = targets[ti];
+    let targetHasIncoming = false;
+    for (let si = 0; si < sources.length; si++) {
+      const source = sources[si];
+      if (!deterministicConnectionSelected(source, target, density)) continue;
+      const key = `${source}->${target}`;
+      if (existing.has(key)) continue;
+      existing.add(key);
+      targetHasIncoming = true;
+      connections.push({ innovation: tracker.getInnovation(source, target), inNode: source, outNode: target, weight: randomWeight(weightScale), enabled: true });
+    }
+    // At low density, guarantee that every target is reachable from the immediately preceding layer.
+    if (!targetHasIncoming && sources.length > 0) {
+      const source = sources[ti % sources.length];
+      const key = `${source}->${target}`;
+      if (!existing.has(key)) {
+        existing.add(key);
+        connections.push({ innovation: tracker.getInnovation(source, target), inNode: source, outNode: target, weight: randomWeight(weightScale), enabled: true });
+      }
+    }
+  }
+}
+
+export function initialNodeCountForArchitecture(
+  architecture: NetworkArchitectureConfig,
+  inputCount = STATE_VECTOR_SIZE,
+  outputCount = ACTION_SPACE.length
+): number {
+  return inputCount + outputCount + sanitizeNetworkArchitectureConfig(architecture).hiddenLayers.reduce((a, b) => a + b, 0);
+}
+
+export function createGenomeWithArchitecture(
+  id: string,
+  role: NeatRole,
+  tracker: InnovationTracker,
+  generation = 1,
+  inputCount = STATE_VECTOR_SIZE,
+  outputCount = ACTION_SPACE.length,
+  architecture: NetworkArchitectureConfig = NETWORK_ARCHITECTURE_PRESETS.minimal
+): NeatGenomeData {
+  const arch = sanitizeNetworkArchitectureConfig(architecture);
+  const nodes: NodeGene[] = [];
+  const inputIds: number[] = [];
+  const outputIds: number[] = [];
+  for (let i = 0; i < inputCount; i++) { nodes.push({ id: i, type: 'input', bias: 0 }); inputIds.push(i); }
+  for (let o = 0; o < outputCount; o++) {
+    const nodeId = inputCount + o;
+    nodes.push({ id: nodeId, type: 'output', bias: randomWeight(arch.initialWeightScale) * 0.1 });
+    outputIds.push(nodeId);
+  }
+
+  let nextNodeId = inputCount + outputCount;
+  const hiddenLayerIds: number[][] = [];
+  for (const width of arch.hiddenLayers) {
+    const layer: number[] = [];
+    for (let i = 0; i < width; i++) {
+      const nodeId = nextNodeId++;
+      nodes.push({ id: nodeId, type: 'hidden', bias: randomWeight(arch.initialWeightScale) * 0.1 });
+      layer.push(nodeId);
+    }
+    hiddenLayerIds.push(layer);
+  }
+
+  const connections: ConnectionGene[] = [];
+  if (hiddenLayerIds.length === 0) {
+    connectLayerPair(connections, tracker, inputIds, outputIds, arch.connectionDensity, arch.initialWeightScale);
+  } else {
+    connectLayerPair(connections, tracker, inputIds, hiddenLayerIds[0], arch.connectionDensity, arch.initialWeightScale);
+    for (let layer = 0; layer < hiddenLayerIds.length - 1; layer++) {
+      connectLayerPair(connections, tracker, hiddenLayerIds[layer], hiddenLayerIds[layer + 1], arch.connectionDensity, arch.initialWeightScale);
+    }
+    connectLayerPair(connections, tracker, hiddenLayerIds[hiddenLayerIds.length - 1], outputIds, arch.connectionDensity, arch.initialWeightScale);
+    if (arch.inputOutputSkip) connectLayerPair(connections, tracker, inputIds, outputIds, arch.connectionDensity, arch.initialWeightScale);
+    if (arch.hiddenLayerSkips && hiddenLayerIds.length > 1) {
+      for (let fromLayer = 0; fromLayer < hiddenLayerIds.length - 1; fromLayer++) {
+        for (let toLayer = fromLayer + 2; toLayer < hiddenLayerIds.length; toLayer++) {
+          connectLayerPair(connections, tracker, hiddenLayerIds[fromLayer], hiddenLayerIds[toLayer], arch.connectionDensity * 0.5, arch.initialWeightScale);
+        }
+      }
+    }
+  }
+  return { id, role, generation, nodes, connections, fitness: 0 };
+}
+
 export function createMinimalGenome(
   id: string,
   role: NeatRole,
@@ -199,25 +382,7 @@ export function createMinimalGenome(
   inputCount = STATE_VECTOR_SIZE,
   outputCount = ACTION_SPACE.length
 ): NeatGenomeData {
-  const nodes: NodeGene[] = [];
-  for (let i = 0; i < inputCount; i++) nodes.push({ id: i, type: 'input', bias: 0 });
-  for (let o = 0; o < outputCount; o++) nodes.push({ id: inputCount + o, type: 'output', bias: randomWeight() * 0.15 });
-
-  const connections: ConnectionGene[] = [];
-  for (let i = 0; i < inputCount; i++) {
-    for (let o = 0; o < outputCount; o++) {
-      const outNode = inputCount + o;
-      connections.push({
-        innovation: tracker.getInnovation(i, outNode),
-        inNode: i,
-        outNode,
-        weight: randomWeight(),
-        enabled: true,
-      });
-    }
-  }
-
-  return { id, role, generation, nodes, connections, fitness: 0 };
+  return createGenomeWithArchitecture(id, role, tracker, generation, inputCount, outputCount, NETWORK_ARCHITECTURE_PRESETS.minimal);
 }
 
 export function cloneGenome(genome: NeatGenomeData, id = genome.id): NeatGenomeData {
@@ -642,10 +807,11 @@ export class NeatPopulation {
   private extinctSpeciesSinceLastEvolution = 0;
 
   constructor(public readonly role: 'chaser' | 'evader', public readonly config: NeatConfig = { ...DEFAULT_NEAT_CONFIG }) {
-    this.tracker = new InnovationTracker(STATE_VECTOR_SIZE + ACTION_SPACE.length);
+    const architecture = sanitizeNetworkArchitectureConfig(config.initialArchitecture);
+    this.tracker = new InnovationTracker(initialNodeCountForArchitecture(architecture));
     this.compatibilityThreshold = config.compatibilityThreshold;
     for (let i = 0; i < config.populationSize; i++) {
-      const genome = createMinimalGenome(`${role}_g1_${i}`, role, this.tracker, 1);
+      const genome = createGenomeWithArchitecture(`${role}_g1_${i}`, role, this.tracker, 1, STATE_VECTOR_SIZE, ACTION_SPACE.length, architecture);
       // Initial diversity is weight-level; topology starts minimal as in canonical NEAT.
       this.genomes.push(genome);
     }
@@ -726,14 +892,15 @@ export class NeatPopulation {
 
   public reset() {
     this.generation = 1;
-    this.tracker = new InnovationTracker(STATE_VECTOR_SIZE + ACTION_SPACE.length);
+    const architecture = sanitizeNetworkArchitectureConfig(this.config.initialArchitecture);
+    this.tracker = new InnovationTracker(initialNodeCountForArchitecture(architecture));
     this.compatibilityThreshold = this.config.compatibilityThreshold;
     this.speciesCounter = 0;
     this.speciesRecords.clear();
     this.extinctSpeciesSinceLastEvolution = 0;
     this.genomes = [];
     for (let i = 0; i < this.config.populationSize; i++) {
-      this.genomes.push(createMinimalGenome(`${this.role}_g1_${i}`, this.role, this.tracker, 1));
+      this.genomes.push(createGenomeWithArchitecture(`${this.role}_g1_${i}`, this.role, this.tracker, 1, STATE_VECTOR_SIZE, ACTION_SPACE.length, architecture));
     }
   }
 

@@ -122,6 +122,27 @@ The rolling procedural generator now begins introducing route-choice structures 
 
 Both routes are deliberately reachable and reconnect quickly. This gives the Runner a route choice while allowing the Chaser to follow directly or attempt an interception, instead of permanently separating the players. Branch generation uses the same deterministic RNG in visual and headless simulation, preserves the platform array's x-order, and branch landings are tracked separately in diagnostics. Upper/lower branches are subtly differentiated visually so route choices are readable during champion play.
 
+
+## Configurable network architecture experiments
+
+The Diagnostics suite now includes an **Architecture** tab for controlled experiments with deeper starting networks. Architecture changes are staged in a draft and only take effect after pressing **Apply architecture & restart**, which intentionally starts fresh Chaser/Runner populations at generation 1 so results from incompatible topologies are not mixed.
+
+The suite supports four starting presets plus custom configurations:
+
+- **Minimal NEAT** — canonical 25 inputs → 4 factorized outputs with no seeded hidden layer.
+- **Compact 12** — one 12-node hidden layer.
+- **Deep 16→12** — two hidden layers and the recommended first deeper-network experiment.
+- **Wide 24→16** — wider two-layer seed with hidden-layer skip links.
+- **Custom** — 0–3 hidden layers, each 1–48 nodes.
+
+For each role the user can configure hidden depth/width, deterministic initial connection density (10–100%), direct input→output skip links, non-adjacent hidden-layer skip links, initial weight scale, add-node mutation rate, and add-connection mutation rate. Chaser and Runner architectures are linked by default but can be unlinked for asymmetric experiments.
+
+Every genome in a fresh population receives the same deterministic starting connection topology for the selected architecture; only weights/biases differ. This prevents connection-density experiments from accidentally comparing different random wiring diagrams inside the same generation. NEAT remains fully active afterward and can add nodes/connections beyond the seeded layers.
+
+Applied architecture settings are persisted locally, included in full evolutionary checkpoints, emitted in worker telemetry, and written into every generation of the analysis export. This makes it possible to compare benchmark/tag/interaction performance against actual starting depth and topology growth. Existing checkpoints without architecture metadata migrate as Minimal NEAT.
+
+Custom networks are intentionally bounded to three hidden layers of 48 nodes each because much larger dense seeds can reduce training throughput dramatically without necessarily improving behavior.
+
 ## Persistent long-term species management
 
 NEAT species now persist as real evolutionary lineages instead of being rebuilt from scratch every generation. Each species keeps a stable ID, representative, creation generation, age, best-ever raw fitness, smoothed relative performance, and last-improvement generation.

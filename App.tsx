@@ -4,6 +4,7 @@ import { InfoPanel } from './components/InfoPanel';
 import { PerformanceDiagnostics } from './components/PerformanceDiagnostics';
 import { useGameLoop } from './hooks/useGameLoop';
 import { LearningAgent } from './learning/agent';
+import { DEFAULT_NETWORK_ARCHITECTURE_SUITE, sanitizeNetworkArchitectureSuite, type NetworkArchitectureSuiteConfig } from './learning/neat';
 import { createLeaderboardEntries } from './learning/elo';
 import { getAgentStateVector } from './learning/state';
 import { initAudio, playDynamicJumpSound, playTagSound, playFallSound, playToggleSound } from './services/soundService';
@@ -164,6 +165,16 @@ const loadTrainingFitnessConfig = (): TrainingFitnessConfig => {
   }
 };
 
+const NETWORK_ARCHITECTURE_STORAGE_KEY = 'ai_tag_network_architecture_suite_v1';
+const loadNetworkArchitecture = (): NetworkArchitectureSuiteConfig => {
+  try {
+    const raw = localStorage.getItem(NETWORK_ARCHITECTURE_STORAGE_KEY);
+    return raw ? sanitizeNetworkArchitectureSuite(JSON.parse(raw)) : sanitizeNetworkArchitectureSuite(DEFAULT_NETWORK_ARCHITECTURE_SUITE);
+  } catch {
+    return sanitizeNetworkArchitectureSuite(DEFAULT_NETWORK_ARCHITECTURE_SUITE);
+  }
+};
+
 export const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -181,6 +192,7 @@ export const App: React.FC = () => {
   const [isTrainingPaused, setIsTrainingPaused] = useState(false);
   const [upgradeConfig, setUpgradeConfig] = useState<UpgradeConfig>(loadUpgradeConfig);
   const [trainingFitnessConfig, setTrainingFitnessConfig] = useState<TrainingFitnessConfig>(loadTrainingFitnessConfig);
+  const [networkArchitecture, setNetworkArchitecture] = useState<NetworkArchitectureSuiteConfig>(loadNetworkArchitecture);
   const stepFrameRef = useRef(false);
   const visualStepAccumulatorRef = useRef(0);
   const wakeLockRef = useRef<any>(null);
@@ -219,6 +231,7 @@ export const App: React.FC = () => {
     sprintUpgradeActive: false,
     controlledJumpUpgradeActive: false,
     trainingFitnessConfig: loadTrainingFitnessConfig(),
+    networkArchitecture: loadNetworkArchitecture(),
   }));
 
 
@@ -253,7 +266,7 @@ export const App: React.FC = () => {
   // Web Worker for Headless Accelerated Simulation
   const workerRef = useRef<Worker | null>(null);
   const initializedRef = useRef(false);
-  const installedChampionGenerationRef = useRef({ chaser: 0, evader: 0 });
+  const installedChampionGenerationRef = useRef({ chaser: -1, evader: -1 });
   const checkpointRequestCounterRef = useRef(1);
   const analysisRequestCounterRef = useRef(1);
   const pendingCheckpointActionRef = useRef<{ requestId: number; action: 'save' | 'export' } | null>(null);
@@ -404,6 +417,10 @@ export const App: React.FC = () => {
           if (typeof payload.totalTags === 'number') totalTagsRef.current = payload.totalTags;
           if (typeof payload.totalFalls === 'number') totalFallsRef.current = payload.totalFalls;
           if (typeof payload.totalJumps === 'number') totalJumpsRef.current = payload.totalJumps;
+          if (payload.networkArchitecture) {
+            const incomingArchitecture = sanitizeNetworkArchitectureSuite(payload.networkArchitecture);
+            setNetworkArchitecture(prev => JSON.stringify(prev) === JSON.stringify(incomingArchitecture) ? prev : incomingArchitecture);
+          }
 
           // Hot-swap completed-generation champions into the persistent visible arena.
           // The bodies keep their positions, velocity, stamina, roles and game state.
@@ -506,6 +523,7 @@ export const App: React.FC = () => {
               sprintUpgradeActive: typeof payload.sprintUpgradeActive === 'boolean' ? payload.sprintUpgradeActive : prev.sprintUpgradeActive,
               controlledJumpUpgradeActive: typeof payload.controlledJumpUpgradeActive === 'boolean' ? payload.controlledJumpUpgradeActive : prev.controlledJumpUpgradeActive,
               trainingFitnessConfig: payload.trainingFitnessConfig || prev.trainingFitnessConfig,
+              networkArchitecture: payload.networkArchitecture || prev.networkArchitecture,
             };
           });
 
@@ -617,9 +635,10 @@ export const App: React.FC = () => {
         viewportSize,
         upgradeConfig,
         trainingFitnessConfig,
+        networkArchitecture,
       },
     });
-  }, [isTrainingPaused, isSimulating]);
+  }, [isTrainingPaused, isSimulating, networkArchitecture]);
 
   // Keep the display awake while training is actively running. Chromium releases screen wake
   // locks automatically when a document becomes hidden, so reacquire it when the page becomes
@@ -1202,6 +1221,34 @@ export const App: React.FC = () => {
     });
   }, [viewportSize]);
 
+  const handleApplyNetworkArchitecture = useCallback((next: NetworkArchitectureSuiteConfig) => {
+    const sanitized = sanitizeNetworkArchitectureSuite(next);
+    setNetworkArchitecture(sanitized);
+    localStorage.setItem(NETWORK_ARCHITECTURE_STORAGE_KEY, JSON.stringify(sanitized));
+    installedChampionGenerationRef.current = { chaser: -1, evader: -1 };
+    chaserElo.current = INITIAL_ELO;
+    evaderElo.current = INITIAL_ELO;
+    recentSurvivalTimes.current = [];
+    recentTimesToTag.current = [];
+    actionCountsRef.current = { all: {}, chaser: {}, evader: {} };
+    totalTagsRef.current = 0;
+    totalFallsRef.current = 0;
+    totalJumpsRef.current = 0;
+    workerRef.current?.postMessage({ type: 'SET_NETWORK_ARCHITECTURE', payload: { networkArchitecture: sanitized } });
+    setDiagnosticsState(prev => ({
+      ...prev,
+      chaserNeatHistory: [], evaderNeatHistory: [], lastChaserNeatMetrics: null, lastEvaderNeatMetrics: null,
+      chaserChampionGenome: null, evaderChampionGenome: null, performanceHistory: [], totalTags: 0, totalFalls: 0,
+      totalSuccessfulJumps: 0, actionDistribution: {}, chaserActionDistribution: {}, evaderActionDistribution: {}, generation: 0,
+      chaserElo: INITIAL_ELO, evaderElo: INITIAL_ELO,
+      eloLeaderboard: createLeaderboardEntries(INITIAL_ELO, INITIAL_ELO, 0, 0, 0, 0, 0, 0, 0),
+      hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: 12, opponentsPerGenome: 1, chaserGenerations: [], evaderGenerations: [], chaserRecentSize: 0, evaderRecentSize: 0, chaserDiverseSize: 0, evaderDiverseSize: 0, chaserDiversity: 0, evaderDiversity: 0 },
+      lastCrossGenerationBenchmark: null, benchmarkHistory: [], benchmarkSuiteRevision: 0,
+      lastGenerationBalance: null, balanceHistory: [], trainingSpeedX: 0, trainingEpisodesPerSecond: 0,
+      networkArchitecture: sanitized,
+    }));
+  }, []);
+
   const handleResetWeights = () => {
     installedChampionGenerationRef.current = { chaser: -1, evader: -1 };
     if (workerRef.current) {
@@ -1248,6 +1295,7 @@ export const App: React.FC = () => {
           sprintUpgradeActive: upgradeConfig.sprint.mode === 'on',
       controlledJumpUpgradeActive: upgradeConfig.controlledJump.mode === 'on',
       trainingFitnessConfig: { ...trainingFitnessConfig },
+      networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
         }));
   };
 
@@ -1585,6 +1633,8 @@ export const App: React.FC = () => {
         onExportAnalysis={handleExportAnalysis}
         onImportModels={handleImportModels}
         hasSavedModel={Boolean(localStorage.getItem('ai_tag_studio_models'))}
+        networkArchitecture={networkArchitecture}
+        onApplyNetworkArchitecture={handleApplyNetworkArchitecture}
       />
     </div>
   );

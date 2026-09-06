@@ -1,6 +1,6 @@
 
 import type { LearningAgent } from './learning/agent';
-import type { NeatGenerationMetrics, NeatGenomeData } from './learning/neat';
+import type { NeatGenerationMetrics, NeatGenomeData, NetworkArchitectureSuiteConfig } from './learning/neat';
 
 export interface Vector2D {
   x: number;
@@ -287,6 +287,7 @@ export interface DiagnosticsState {
   sprintUpgradeActive?: boolean;
   controlledJumpUpgradeActive?: boolean;
   trainingFitnessConfig?: TrainingFitnessConfig;
+  networkArchitecture?: NetworkArchitectureSuiteConfig;
 }
 
 export interface TrainingGenerationAnalysisRecord {
@@ -306,5 +307,6 @@ export interface TrainingGenerationAnalysisRecord {
     runner: Record<string, number>;
   };
   fitnessConfig: TrainingFitnessConfig;
+  networkArchitecture?: NetworkArchitectureSuiteConfig;
 }
 
