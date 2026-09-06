@@ -245,7 +245,7 @@ const SprintRoleAdvancedMenu: React.FC<{
           )}
           {!tuning.staminaCostOverride && <div className="mt-1.5 text-[9px] text-gray-600">Default: {SPRINT_ENERGY_COST_PER_SEC.toFixed(1)} stamina/sec</div>}
         </div>
-        <div className="text-[9px] leading-relaxed text-gray-600">Sprint output strength still scales continuously from base speed {MAX_SPEED.toFixed(2)} to this max, and stamina drain scales with the same sprint intensity.</div>
+        <div className="text-[9px] leading-relaxed text-gray-600">Sprint output strength still scales continuously from base speed {MAX_SPEED.toFixed(2)} to this max. Effective sprint drains stamina; holding Sprint high while not using it blocks stamina regeneration, so permanently saturated Sprint is no longer free.</div>
       </div>
     </details>
   );
@@ -400,7 +400,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
         </div>
         <UpgradeControl
           title="Sprint"
-          description="Raises top speed and acceleration up to 35%; the independent Sprint output controls intensity and costs stamina. Horizontal drive and jump remain simultaneous."
+          description="Raises top speed and acceleration up to 35%; the independent Sprint output controls intensity. Effective sprint costs stamina, and Sprint must be released to regenerate it, so timing the output matters."
           icon={<Zap className="w-4 h-4" />}
           rule={upgradeConfig.sprint}
           active={sprintUpgradeActive}

@@ -1,1 +1,1 @@
-Add curated feed-forward and recurrent architecture presets
+Make sprint timing meaningful

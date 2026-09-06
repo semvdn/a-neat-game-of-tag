@@ -107,7 +107,7 @@ export function stepAgentPhysicsInPlace(
   let positionX = agent.position.x;
   let positionY = agent.position.y;
   let cooldownTimer = Math.max(0, (agent.cooldownTimer || 0) - deltaTime);
-  let energy = Math.min(agent.maxEnergy, agent.energy + ENERGY_REGEN_RATE * (deltaTime / 1000));
+  let energy = agent.energy;
   let status = agent.status;
 
   if (status === AgentStatus.Cooldown && cooldownTimer === 0) status = AgentStatus.Normal;
@@ -145,8 +145,15 @@ export function stepAgentPhysicsInPlace(
   }
 
   const horizontalDrive = Math.max(-1, Math.min(1, moveRight - moveLeft));
+  const sprintHeld = sprintEnabledForRole && sprintControl >= POLICY_CONTROL_ACTIVE_THRESHOLD;
+  // Releasing Sprint is what permits stamina recovery. A saturated Sprint output while standing
+  // still no longer has a free neutral effect: it blocks regeneration, giving temporal control of
+  // sprint a real purpose without charging stamina for acceleration that was never produced.
+  if (!sprintHeld) {
+    energy = Math.min(agent.maxEnergy, energy + ENERGY_REGEN_RATE * (deltaTime / 1000));
+  }
   const sprintIntensity =
-    sprintEnabledForRole && Math.abs(horizontalDrive) >= POLICY_CONTROL_ACTIVE_THRESHOLD && energy > 0
+    sprintHeld && Math.abs(horizontalDrive) >= POLICY_CONTROL_ACTIVE_THRESHOLD && energy > 0
       ? sprintControl
       : 0;
   const accelerationScale = 1 + (SPRINT_ACCELERATION_MULTIPLIER - 1) * sprintIntensity;

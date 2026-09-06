@@ -823,7 +823,12 @@ export function runTrainingEpisode(
         if (isChaserRole) { if (trackChaserActions) chaserActionCounts[2]++; }
         else if (trackEvaderActions) evaderActionCounts[2]++;
       }
-      if (decision.sprint >= POLICY_CONTROL_ACTIVE_THRESHOLD) {
+      const sprintEnabledForRole = upgrades.sprint && (isChaserRole ? upgrades.sprintChaser : upgrades.sprintRunner);
+      const effectiveSprint = sprintEnabledForRole &&
+        Math.abs(horizontalDrive) >= POLICY_CONTROL_ACTIVE_THRESHOLD &&
+        decision.sprint >= POLICY_CONTROL_ACTIVE_THRESHOLD &&
+        agent.energy > 0;
+      if (effectiveSprint) {
         activeControls++;
         if (isChaserRole) { if (trackChaserActions) chaserActionCounts[3]++; }
         else if (trackEvaderActions) evaderActionCounts[3]++;

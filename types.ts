@@ -219,7 +219,7 @@ export interface BenchmarkRoleTelemetry {
   rightActionShare: number;
   /** Fraction of decisions with jump output above the active threshold. */
   jumpActionShare: number;
-  /** Fraction of decisions with sprint output above the active threshold. */
+  /** Fraction of decisions where Sprint is actually boosting horizontal movement. */
   sprintActionShare: number;
   /** Fraction of decisions with no factorized control above the active threshold. */
   idleActionShare: number;

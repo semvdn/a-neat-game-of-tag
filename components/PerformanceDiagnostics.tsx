@@ -509,7 +509,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             <div className="grid md:grid-cols-4 gap-3">
               <MetricCard label="Runner right-drive" value={benchmark ? `${(benchmark.evader.rightActionShare * 100).toFixed(1)}%` : '—'} hint="independent control active; can overlap jump" />
               <MetricCard label="Runner jump" value={benchmark ? `${(benchmark.evader.jumpActionShare * 100).toFixed(1)}%` : '—'} hint="independent control active" />
-              <MetricCard label="Runner sprint" value={benchmark ? `${(benchmark.evader.sprintActionShare * 100).toFixed(1)}%` : '—'} hint="0 while Sprint ability is disabled" />
+              <MetricCard label="Runner sprint" value={benchmark ? `${(benchmark.evader.sprintActionShare * 100).toFixed(1)}%` : '—'} hint="effective sprint boost; saturated Sprint without movement no longer counts" />
               <MetricCard label="Runner idle" value={benchmark ? `${(benchmark.evader.idleActionShare * 100).toFixed(1)}%` : '—'} hint="no control above activation threshold" />
             </div>
 

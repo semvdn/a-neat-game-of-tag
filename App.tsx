@@ -929,7 +929,8 @@ export const App: React.FC = () => {
           const activeNames: string[] = [];
           if (movementName) activeNames.push(movementName);
           if (decision.jump >= POLICY_CONTROL_ACTIVE_THRESHOLD) activeNames.push('jump');
-          if (decision.sprint >= POLICY_CONTROL_ACTIVE_THRESHOLD) activeNames.push('sprint');
+          const sprintEnabledForRole = sprintUpgradeActive && (isChaser ? upgradeConfig.sprint.chaserEnabled : upgradeConfig.sprint.runnerEnabled);
+          if (sprintEnabledForRole && Math.abs(horizontalDrive) >= POLICY_CONTROL_ACTIVE_THRESHOLD && decision.sprint >= POLICY_CONTROL_ACTIVE_THRESHOLD && agent.energy > 0) activeNames.push('sprint');
           for (const name of activeNames) {
             active++;
             actionCountsRef.current.all[name] = (actionCountsRef.current.all[name] || 0) + 1;
