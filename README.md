@@ -127,7 +127,23 @@ Both routes are deliberately reachable and reconnect quickly. This gives the Run
 
 The Diagnostics suite includes an **Architecture** tab where architecture is split into three separate ideas: the **generation-1 starting architecture**, whether each structural dimension is allowed to **evolve**, and a **hard cap** that evolution cannot exceed. Changes remain staged until **Apply architecture & restart** is pressed, which intentionally starts fresh populations at generation 1.
 
-The built-in Minimal, Compact, Deep 16→12 and Wide 24→16 presets remain available, and Custom now supports up to **6 starting hidden layers** with up to **64 nodes per starting layer**. For each Chaser/Runner role the user can independently configure:
+The architecture picker now includes curated feed-forward and recurrent presets, while Custom still supports up to **6 starting hidden layers** with up to **64 nodes per starting layer**. The recurrent presets are deliberately conservative because a small number of one-step memory links can add much more behavioural capacity than the same number of ordinary feed-forward links.
+
+| Preset | Generation-1 topology | Memory growth | Intended use |
+| --- | --- | --- | --- |
+| Minimal NEAT | direct 25→4 | none | fastest control baseline |
+| Compact 12 | 25→12→4 | none | cheap nonlinear baseline |
+| Deep 16→12 | 25→16→12→4 | none | primary feed-forward control for recurrence experiments |
+| Wide 24→16 | wider 2-layer + hidden skips | none | capacity-without-memory stress test |
+| Memory Lite | 12 hidden + 4 recurrent | evolves to 16 recurrent | cheapest useful recurrent experiment |
+| **Memory Balanced** | 16→12 + 8 recurrent | evolves to 32 recurrent | **recommended general recurrent preset** |
+| Memory Discovery | 16→12 + 0 recurrent | recurrence may emerge up to 32 | tests whether evolution chooses memory without being seeded |
+| Fixed Memory Control | fixed 16→12 + exactly 12 recurrent | no structural growth | isolates the effect of recurrent state from topology growth |
+| Deep Memory | 20→16→12 + 12 recurrent | evolves to 48 recurrent | later high-capacity temporal stress test; slower/harder |
+
+The Architecture tab also provides whole-experiment recipes: **FF control**, **Balanced memory**, **Chaser memory specialist**, **Runner memory specialist**, and **Tactical asymmetric**. These recipes configure both roles together, including asymmetric Chaser/Runner memory experiments, but remain staged until **Apply architecture & restart** is pressed.
+
+For each Chaser/Runner role the user can independently configure:
 
 - starting hidden-layer count and every starting layer width;
 - whether **hidden-layer count may evolve**, its maximum depth (up to 8), and add-layer mutation rate;
@@ -144,7 +160,7 @@ All structural caps are enforced inside mutation itself. Disabled recurrent gene
 
 Generation metrics now record average/champion hidden-node count, hidden-layer count and recurrent-connection count. The network visualization places evolved hidden nodes by feed-forward depth and draws recurrent memory links as dashed fuchsia arcs. Full checkpoints and analysis exports preserve the complete architecture/evolution configuration.
 
-The presets intentionally start with recurrence **off**. Recurrent search substantially enlarges the evolutionary space, so a sensible first memory experiment is a Deep 16→12 network with perhaps 4–8 starting recurrent links, recurrent evolution enabled, and a cap around 16–24 rather than immediately allowing hundreds of memory connections.
+A useful experiment sequence is **Deep 16→12 (feed-forward control) → Memory Lite → Memory Balanced**. Memory Discovery is useful after that if you want to ask whether recurrence is selected by evolution rather than supplied at generation 1. Fixed Memory Control is the cleanest way to separate “memory helps” from “structural growth helps”. Deep Memory should be treated as a later stress test rather than a default because it increases both evaluation cost and the search space.
 
 ## Persistent long-term species management
 

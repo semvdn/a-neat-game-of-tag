@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { DiagnosticsState } from '../types';
-import { NETWORK_ARCHITECTURE_PRESETS, sanitizeNetworkArchitectureSuite, type NeatGenerationMetrics, type NeatGenomeData, type NetworkArchitectureConfig, type NetworkArchitecturePreset, type NetworkArchitectureSuiteConfig } from '../learning/neat';
+import { NETWORK_ARCHITECTURE_PRESETS, NETWORK_ARCHITECTURE_PRESET_INFO, NETWORK_ARCHITECTURE_SUITE_PRESETS, sanitizeNetworkArchitectureSuite, type NeatGenerationMetrics, type NeatGenomeData, type NetworkArchitectureConfig, type NetworkArchitecturePreset, type NetworkArchitectureSuiteConfig, type NetworkArchitectureSuitePreset } from '../learning/neat';
 import { ACTION_SPACE, STATE_VECTOR_SIZE } from '../constants';
 import {
   Activity,
@@ -278,9 +278,16 @@ const ArchitectureRoleEditor: React.FC<{
           <p className="text-[10px] text-gray-500">Generation 1: {estimate.nodes} nodes · ~{estimate.connections} links · {config.initialRecurrentConnections} recurrent</p>
         </div>
         <select disabled={disabled} value={config.preset} onChange={e => selectPreset(e.target.value as NetworkArchitecturePreset)} className="rounded border border-gray-700 bg-gray-950 px-2 py-1.5 text-xs text-gray-200 disabled:opacity-50">
-          <option value="minimal">Minimal NEAT</option><option value="compact">Compact 12</option><option value="deep">Deep 16→12</option><option value="wide">Wide 24→16</option><option value="custom">Custom</option>
+          {Object.entries(NETWORK_ARCHITECTURE_PRESET_INFO).map(([id, info]) => <option key={id} value={id}>{info.label}</option>)}
+          <option value="custom">Custom</option>
         </select>
       </div>
+      {config.preset !== 'custom' && NETWORK_ARCHITECTURE_PRESET_INFO[config.preset] && (
+        <div className="mt-3 rounded-lg border border-gray-800 bg-black/20 px-3 py-2">
+          <div className="text-[10px] font-semibold text-gray-300">{NETWORK_ARCHITECTURE_PRESET_INFO[config.preset].summary}</div>
+          <div className="mt-0.5 text-[10px] text-gray-600">{NETWORK_ARCHITECTURE_PRESET_INFO[config.preset].use}</div>
+        </div>
+      )}
 
       <div className="mt-4 rounded-lg border border-gray-800 bg-black/20 p-3">
         <div className="flex items-center justify-between gap-3"><div><div className="text-xs font-semibold text-white">Hidden layers</div><div className="text-[10px] text-gray-500">Choose starting depth, whether depth can evolve, and its hard ceiling.</div></div><span className="font-mono text-xs text-violet-300">{config.hiddenLayers.length} → max {config.maxHiddenLayers}</span></div>
@@ -640,8 +647,19 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                 </div>
                 <label className="flex items-center gap-2 rounded border border-gray-700 bg-black/20 px-3 py-2 text-xs text-gray-300"><input type="checkbox" checked={architectureDraft.linkedRoles} onChange={e => setArchitectureDraft(prev => ({ ...prev, linkedRoles: e.target.checked, runner: e.target.checked ? { ...prev.chaser, hiddenLayers: [...prev.chaser.hiddenLayers] } : prev.runner }))} />Use same architecture for both roles</label>
               </div>
-              <div className="mt-3 grid gap-2 text-[10px] text-gray-500 md:grid-cols-4">
-                <div><span className="text-gray-300">Minimal:</span> canonical direct input→output NEAT</div><div><span className="text-gray-300">Compact:</span> one 12-node hidden layer</div><div><span className="text-gray-300">Deep:</span> 16→12 hidden layers</div><div><span className="text-gray-300">Wide:</span> 24→16 plus hidden skips</div>
+              <div className="mt-4">
+                <div className="flex items-center justify-between gap-3"><div><div className="text-xs font-semibold text-white">Experiment recipes</div><div className="text-[10px] text-gray-500">Whole-suite presets make role comparisons reproducible. Selecting one only edits the draft; Apply architecture & restart still controls when it takes effect.</div></div></div>
+                <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+                  {(Object.entries(NETWORK_ARCHITECTURE_SUITE_PRESETS) as [NetworkArchitectureSuitePreset, typeof NETWORK_ARCHITECTURE_SUITE_PRESETS[NetworkArchitectureSuitePreset]][]).map(([id, recipe]) => (
+                    <button key={id} type="button" onClick={() => setArchitectureDraft(sanitizeNetworkArchitectureSuite(recipe.config))} className={`rounded-lg border px-3 py-2 text-left ${id === 'balanced_memory' ? 'border-fuchsia-500/40 bg-fuchsia-950/15' : 'border-gray-800 bg-black/20'}`}>
+                      <div className={`text-[11px] font-semibold ${id === 'balanced_memory' ? 'text-fuchsia-200' : 'text-gray-200'}`}>{recipe.label}{id === 'balanced_memory' ? ' · recommended' : ''}</div>
+                      <div className="mt-1 text-[9px] leading-relaxed text-gray-600">{recipe.summary}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-3 rounded-lg border border-gray-800 bg-black/20 px-3 py-2 text-[10px] leading-relaxed text-gray-500">
+                <span className="text-gray-300">Suggested sequence:</span> FF control → Memory Lite → Balanced Memory. Use Memory Discovery to test whether recurrence emerges without being seeded; Fixed Memory Control isolates recurrent state from structural growth; Deep Memory is a later high-capacity stress test.
               </div>
             </div>
 

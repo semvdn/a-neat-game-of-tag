@@ -1,1 +1,1 @@
-Add evolvable depth, width and recurrent architecture controls
+Add curated feed-forward and recurrent architecture presets

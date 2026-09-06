@@ -89,7 +89,17 @@ export interface NeatGenerationMetrics {
   timestamp: number;
 }
 
-export type NetworkArchitecturePreset = 'minimal' | 'compact' | 'deep' | 'wide' | 'custom';
+export type NetworkArchitecturePreset =
+  | 'minimal'
+  | 'compact'
+  | 'deep'
+  | 'wide'
+  | 'memory_lite'
+  | 'memory_balanced'
+  | 'memory_evolve'
+  | 'memory_fixed'
+  | 'memory_deep'
+  | 'custom';
 
 export interface NetworkArchitectureConfig {
   preset: NetworkArchitecturePreset;
@@ -134,6 +144,8 @@ export interface NetworkArchitectureSuiteConfig {
 }
 
 export const NETWORK_ARCHITECTURE_PRESETS: Record<Exclude<NetworkArchitecturePreset, 'custom'>, NetworkArchitectureConfig> = {
+  // Feed-forward controls. These remain useful baselines when testing whether recurrence actually
+  // improves tag behaviour rather than merely increasing network size.
   minimal: {
     preset: 'minimal', hiddenLayers: [], evolveHiddenLayers: true, maxHiddenLayers: 4, evolveHiddenNodes: true, maxHiddenNodes: 64,
     connectionDensity: 1, inputOutputSkip: true, hiddenLayerSkips: false, initialWeightScale: 1.5,
@@ -158,6 +170,82 @@ export const NETWORK_ARCHITECTURE_PRESETS: Record<Exclude<NetworkArchitecturePre
     addNodeRate: 0.018, addLayerRate: 0.007, addConnectionRate: 0.045,
     initialRecurrentConnections: 0, evolveRecurrentConnections: false, maxRecurrentConnections: 0, addRecurrentConnectionRate: 0,
   },
+
+  // Recurrent presets are intentionally conservative. One-step memory is powerful enough that a
+  // small number of recurrent genes can materially change behaviour, so caps grow more slowly than
+  // the feed-forward topology caps.
+  memory_lite: {
+    preset: 'memory_lite', hiddenLayers: [12], evolveHiddenLayers: true, maxHiddenLayers: 3, evolveHiddenNodes: true, maxHiddenNodes: 64,
+    connectionDensity: 0.70, inputOutputSkip: true, hiddenLayerSkips: false, initialWeightScale: 1.15,
+    addNodeRate: 0.02, addLayerRate: 0.006, addConnectionRate: 0.05,
+    initialRecurrentConnections: 4, evolveRecurrentConnections: true, maxRecurrentConnections: 16, addRecurrentConnectionRate: 0.008,
+  },
+  memory_balanced: {
+    preset: 'memory_balanced', hiddenLayers: [16, 12], evolveHiddenLayers: true, maxHiddenLayers: 4, evolveHiddenNodes: true, maxHiddenNodes: 96,
+    connectionDensity: 0.60, inputOutputSkip: true, hiddenLayerSkips: false, initialWeightScale: 1.0,
+    addNodeRate: 0.018, addLayerRate: 0.005, addConnectionRate: 0.045,
+    initialRecurrentConnections: 8, evolveRecurrentConnections: true, maxRecurrentConnections: 32, addRecurrentConnectionRate: 0.012,
+  },
+  memory_evolve: {
+    preset: 'memory_evolve', hiddenLayers: [16, 12], evolveHiddenLayers: true, maxHiddenLayers: 4, evolveHiddenNodes: true, maxHiddenNodes: 96,
+    connectionDensity: 0.60, inputOutputSkip: true, hiddenLayerSkips: false, initialWeightScale: 1.0,
+    addNodeRate: 0.018, addLayerRate: 0.005, addConnectionRate: 0.045,
+    initialRecurrentConnections: 0, evolveRecurrentConnections: true, maxRecurrentConnections: 32, addRecurrentConnectionRate: 0.015,
+  },
+  memory_fixed: {
+    preset: 'memory_fixed', hiddenLayers: [16, 12], evolveHiddenLayers: false, maxHiddenLayers: 2, evolveHiddenNodes: false, maxHiddenNodes: 28,
+    connectionDensity: 0.65, inputOutputSkip: true, hiddenLayerSkips: false, initialWeightScale: 1.0,
+    addNodeRate: 0, addLayerRate: 0, addConnectionRate: 0,
+    initialRecurrentConnections: 12, evolveRecurrentConnections: false, maxRecurrentConnections: 12, addRecurrentConnectionRate: 0,
+  },
+  memory_deep: {
+    preset: 'memory_deep', hiddenLayers: [20, 16, 12], evolveHiddenLayers: true, maxHiddenLayers: 5, evolveHiddenNodes: true, maxHiddenNodes: 128,
+    connectionDensity: 0.50, inputOutputSkip: true, hiddenLayerSkips: true, initialWeightScale: 0.9,
+    addNodeRate: 0.015, addLayerRate: 0.004, addConnectionRate: 0.035,
+    initialRecurrentConnections: 12, evolveRecurrentConnections: true, maxRecurrentConnections: 48, addRecurrentConnectionRate: 0.01,
+  },
+};
+
+export const NETWORK_ARCHITECTURE_PRESET_INFO: Record<Exclude<NetworkArchitecturePreset, 'custom'>, { label: string; summary: string; use: string }> = {
+  minimal: { label: 'Minimal NEAT', summary: 'No starting hidden layer or memory.', use: 'Control baseline; fastest training.' },
+  compact: { label: 'Compact 12', summary: 'One small feed-forward hidden layer.', use: 'Low-cost nonlinear baseline.' },
+  deep: { label: 'Deep 16→12', summary: 'Two feed-forward layers with moderate growth headroom.', use: 'Best feed-forward comparison for memory presets.' },
+  wide: { label: 'Wide 24→16', summary: 'Wider feed-forward network with hidden skip links.', use: 'Tests capacity without temporal memory.' },
+  memory_lite: { label: 'Memory Lite', summary: '12 hidden nodes + 4 recurrent links, evolving to 16.', use: 'Cheapest recurrent test; good first memory experiment.' },
+  memory_balanced: { label: 'Memory Balanced', summary: '16→12 hidden layers + 8 recurrent links, evolving to 32.', use: 'Recommended general-purpose recurrent preset.' },
+  memory_evolve: { label: 'Memory Discovery', summary: 'Starts feed-forward; recurrence may evolve up to 32 links.', use: 'Tests whether evolution chooses memory when it is useful.' },
+  memory_fixed: { label: 'Fixed Memory Control', summary: 'Fixed 16→12 topology with exactly 12 recurrent links.', use: 'Clean control for memory benefit without structural growth.' },
+  memory_deep: { label: 'Deep Memory', summary: '20→16→12 with 12 recurrent links, evolving to 48.', use: 'High-capacity temporal experiment; slower and harder to evolve.' },
+};
+
+export type NetworkArchitectureSuitePreset = 'ff_control' | 'balanced_memory' | 'chaser_memory' | 'runner_memory' | 'tactical_asymmetric';
+
+export const NETWORK_ARCHITECTURE_SUITE_PRESETS: Record<NetworkArchitectureSuitePreset, { label: string; summary: string; config: NetworkArchitectureSuiteConfig }> = {
+  ff_control: {
+    label: 'FF control',
+    summary: 'Deep feed-forward 16→12 for both roles; no recurrence.',
+    config: { linkedRoles: true, chaser: { ...NETWORK_ARCHITECTURE_PRESETS.deep, hiddenLayers: [16, 12] }, runner: { ...NETWORK_ARCHITECTURE_PRESETS.deep, hiddenLayers: [16, 12] } },
+  },
+  balanced_memory: {
+    label: 'Balanced memory',
+    summary: 'Recommended: Memory Balanced for both Chaser and Runner.',
+    config: { linkedRoles: true, chaser: { ...NETWORK_ARCHITECTURE_PRESETS.memory_balanced, hiddenLayers: [16, 12] }, runner: { ...NETWORK_ARCHITECTURE_PRESETS.memory_balanced, hiddenLayers: [16, 12] } },
+  },
+  chaser_memory: {
+    label: 'Chaser memory specialist',
+    summary: 'Memory Balanced Chaser vs Deep feed-forward Runner.',
+    config: { linkedRoles: false, chaser: { ...NETWORK_ARCHITECTURE_PRESETS.memory_balanced, hiddenLayers: [16, 12] }, runner: { ...NETWORK_ARCHITECTURE_PRESETS.deep, hiddenLayers: [16, 12] } },
+  },
+  runner_memory: {
+    label: 'Runner memory specialist',
+    summary: 'Deep feed-forward Chaser vs Memory Balanced Runner.',
+    config: { linkedRoles: false, chaser: { ...NETWORK_ARCHITECTURE_PRESETS.deep, hiddenLayers: [16, 12] }, runner: { ...NETWORK_ARCHITECTURE_PRESETS.memory_balanced, hiddenLayers: [16, 12] } },
+  },
+  tactical_asymmetric: {
+    label: 'Tactical asymmetric',
+    summary: 'Deep Memory Chaser vs Memory Lite Runner; richer pursuit planning without over-sizing the Runner.',
+    config: { linkedRoles: false, chaser: { ...NETWORK_ARCHITECTURE_PRESETS.memory_deep, hiddenLayers: [20, 16, 12] }, runner: { ...NETWORK_ARCHITECTURE_PRESETS.memory_lite, hiddenLayers: [12] } },
+  },
 };
 
 export const DEFAULT_NETWORK_ARCHITECTURE_SUITE: NetworkArchitectureSuiteConfig = {
@@ -167,7 +255,7 @@ export const DEFAULT_NETWORK_ARCHITECTURE_SUITE: NetworkArchitectureSuiteConfig 
 };
 
 export function sanitizeNetworkArchitectureConfig(value?: Partial<NetworkArchitectureConfig>): NetworkArchitectureConfig {
-  const preset = value?.preset && ['minimal','compact','deep','wide','custom'].includes(value.preset)
+  const preset = value?.preset && ['minimal','compact','deep','wide','memory_lite','memory_balanced','memory_evolve','memory_fixed','memory_deep','custom'].includes(value.preset)
     ? value.preset as NetworkArchitecturePreset
     : 'custom';
   const widths = Array.isArray(value?.hiddenLayers) ? value!.hiddenLayers! : [];
