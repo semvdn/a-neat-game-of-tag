@@ -388,6 +388,8 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   const benchmarkHistory = diagnostics.benchmarkHistory || [];
   const benchmark = diagnostics.lastCrossGenerationBenchmark;
   const balance = diagnostics.lastGenerationBalance;
+  const retainedChaser = diagnostics.chaserGeneralistChampion;
+  const retainedRunner = diagnostics.evaderGeneralistChampion;
   const chaserMetrics = diagnostics.lastChaserNeatMetrics;
   const evaderMetrics = diagnostics.lastEvaderNeatMetrics;
   const selectedGenome = role === 'chaser' ? diagnostics.chaserChampionGenome : diagnostics.evaderChampionGenome;
@@ -492,9 +494,16 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="grid md:grid-cols-3 gap-3">
-              <MetricCard label="Fixed benchmark C" value={benchmark ? fmt(benchmark.chaser.meanFitness) : '—'} hint={benchmark ? `${benchmark.chaser.matches} permanent reference matches` : 'telemetry only; never used for selection'} />
-              <MetricCard label="Fixed benchmark R" value={benchmark ? fmt(benchmark.evader.meanFitness) : '—'} hint={benchmark ? `${benchmark.evader.matches} matches · ${((benchmark.evader.paceCompletion ?? 0) * 100).toFixed(0)}% pace` : 'telemetry only; never used for selection'} />
+              <MetricCard label="Fixed benchmark C" value={benchmark ? fmt(benchmark.chaser.meanFitness) : '—'} hint={benchmark ? `${benchmark.chaser.matches} permanent reference matches · generation champion` : 'frozen-suite validation'} />
+              <MetricCard label="Fixed benchmark R" value={benchmark ? fmt(benchmark.evader.meanFitness) : '—'} hint={benchmark ? `${benchmark.evader.matches} matches · ${((benchmark.evader.paceCompletion ?? 0) * 100).toFixed(0)}% pace · generation champion` : 'frozen-suite validation'} />
               <MetricCard label="Benchmark suite" value={benchmark ? `v${benchmark.suiteRevision}` : `v${diagnostics.benchmarkSuiteRevision ?? 0}`} hint="same frozen opponents, seeds and start modes across generations" />
+            </div>
+
+            <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
+              <MetricCard label="Retained Chaser" value={retainedChaser ? `g${retainedChaser.generation}` : '—'} hint={retainedChaser ? `generalist ${retainedChaser.score.toFixed(1)} · benchmark ${retainedChaser.benchmark.meanFitness.toFixed(1)}` : 'best validated generalist so far'} />
+              <MetricCard label="Retained Runner" value={retainedRunner ? `g${retainedRunner.generation}` : '—'} hint={retainedRunner ? `generalist ${retainedRunner.score.toFixed(1)} · ${((retainedRunner.benchmark.paceCompletion ?? 0) * 100).toFixed(0)}% pace` : 'best validated generalist so far'} />
+              <MetricCard label="Runner retained fitness" value={retainedRunner ? retainedRunner.benchmark.meanFitness.toFixed(1) : '—'} hint="frozen benchmark; low-pace camping is penalized in retention score" />
+              <MetricCard label="Retention margin" value="+1.5" hint="challenger must clearly beat incumbent; population selection itself is unchanged" />
             </div>
 
             <div className="grid md:grid-cols-4 gap-3">
@@ -534,7 +543,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                 ]}
                 emptyLabel="Complete at least two generations to compare champions on the permanent benchmark suite."
               />
-              <p className="mt-2 text-xs text-gray-500">Each champion is tested against the same frozen run-start reference bank, the same permanent seeds, and the same visual/varied/mid-game scenario mix. These matches do not affect fitness, champion selection, Elo, or population telemetry. The suite revision changes when a new run/import is seeded, enabled physics abilities change, or pace/pursuit shaping is retuned.</p>
+              <p className="mt-2 text-xs text-gray-500">Each generation champion is tested against the same frozen run-start reference bank, permanent seeds, and visual/varied/mid-game scenario mix. These matches never alter breeding fitness or Elo. A separate retained-generalist layer uses the frozen suite only to decide which already-evolved policy is kept for the visible game/checkpoint, preventing transient co-evolutionary champions from replacing stronger generalists. The suite revision changes when a new run/import is seeded, enabled physics abilities change, or pace/pursuit shaping is retuned.</p>
             </div>
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
@@ -590,7 +599,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> persistent NEAT species now carry lineage age and progress across generations, with conservative stagnation pruning and protected young/top lineages. The compact 25-input policy now has factorized left-drive, right-drive, jump and sprint outputs, so horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities. Every genome is evaluated against common opponent panels plus Hall of Fame champions. Recent champions are retained alongside a strength-aware behaviorally diverse historical archive, while a separate fixed benchmark tracks real cross-generation progress without influencing selection. Runner shaping is now a capped 2-second pace requirement rather than an unbounded distance reward, and Chaser shaping gives a small capped signal for safely following Runner-used terrain. Jump requires a release before it can fire again, and later procedural terrain can branch into upper/lower routes that reconnect. The worker pool preloads genomes and batches episodes for lower messaging overhead.
+              <strong className="text-violet-200">Training architecture:</strong> persistent NEAT species now carry lineage age and progress across generations, with conservative stagnation pruning and protected young/top lineages. The compact 25-input policy now has factorized left-drive, right-drive, jump and sprint outputs, so horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities. Every genome is evaluated against common opponent panels plus Hall of Fame champions. Recent champions are retained alongside a strength-aware behaviorally diverse historical archive, while a separate fixed benchmark tracks cross-generation progress and now gates only visible/generalist champion retention, never population breeding. Runner shaping is now a capped 2-second pace requirement rather than an unbounded distance reward, and Chaser shaping gives a small capped signal for safely following Runner-used terrain. Jump requires a release before it can fire again, and later procedural terrain can branch into upper/lower routes that reconnect. The worker pool preloads genomes and batches episodes for lower messaging overhead.
             </div>
           </div>
         )}

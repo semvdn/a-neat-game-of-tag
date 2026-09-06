@@ -1,6 +1,6 @@
 # NEAT Tag Agents — Shared Simulation, Compact Senses, Fair Evaluation
 
-This build evolves two NEAT policies—**Chaser** and **Runner**—inside the same gameplay rules used by the visible champion arena. Training runs continuously in background workers while the latest completed champions are shown in the browser.
+This build evolves two NEAT policies—**Chaser** and **Runner**—inside the same gameplay rules used by the visible champion arena. Training runs continuously in background workers while a retained fixed-benchmark **generalist champion** for each role is shown in the browser, so a transient co-evolutionary winner cannot automatically replace a stronger policy.
 
 ## Policy interface
 
@@ -112,7 +112,7 @@ Fitness comparisons use **common opponent panels** rather than different random 
 - Common Hall-of-Fame opponent: 1 when available
 - Held-out champion validation: top 4 candidates against 4 unused current-population opponents plus up to 2 Hall-of-Fame opponents
 
-Every candidate in a role sees the same opponent identities and scenario seeds for that evaluation round. The strongest candidates are then separately re-tested on a held-out panel before champion selection.
+Every candidate in a role sees the same opponent identities and scenario seeds for that evaluation round. The strongest candidates are then separately re-tested on a held-out panel before the generation champion is selected. A second retention layer evaluates the best held-out candidates on the frozen benchmark and only replaces the visible/saved generalist champion when the challenger clears a real score margin. This retention layer never changes breeding fitness.
 
 
 
@@ -159,6 +159,7 @@ Recurrent links are genuine one-step memory connections rather than feed-forward
 All structural caps are enforced inside mutation itself. Disabled recurrent genes still count toward the recurrent gene cap, preventing long runs from accumulating unlimited historical recurrent genes. Starting recurrent topology is deterministic across the population just like starting feed-forward topology, so architecture comparisons do not accidentally compare different random wiring diagrams.
 
 Generation metrics now record average/champion hidden-node count, hidden-layer count and recurrent-connection count. The network visualization places evolved hidden nodes by feed-forward depth and draws recurrent memory links as dashed fuchsia arcs. Full checkpoints and analysis exports preserve the complete architecture/evolution configuration.
+
 
 A useful experiment sequence is **Deep 16→12 (feed-forward control) → Memory Lite → Memory Balanced**. Memory Discovery is useful after that if you want to ask whether recurrence is selected by evolution rather than supplied at generation 1. Fixed Memory Control is the cleanest way to separate “memory helps” from “structural growth helps”. Deep Memory should be treated as a later stress test rather than a default because it increases both evaluation cost and the search space.
 
@@ -259,7 +260,7 @@ The persistence controls now save **full NEAT evolutionary checkpoints**, not on
 - all 48 Chaser and 48 Runner genomes in the current generation;
 - innovation-number and split-node tracker state, so future structural mutations continue with correct historical markings;
 - persistent species ids, representatives, ages, best/EMA performance and stagnation history;
-- current champion genomes and generation metrics;
+- retained generalist champion genomes/validation metadata plus current generation metrics;
 - recent + behaviorally diverse Hall-of-Fame entries, including their descriptors and fixed-benchmark strength;
 - the frozen cross-generation benchmark reference bank and suite revision;
 - role Elo, cumulative tag/fall/jump/action telemetry, recent tag/survival intervals and last balance metric;
@@ -273,15 +274,18 @@ The full checkpoint JSON can become much larger than a champion-only file; **Exp
 
 ## Fixed cross-generation benchmark
 
-Each completed generation is now evaluated on a run-local benchmark suite that is completely outside evolutionary selection:
+Each completed generation is evaluated on a run-local frozen benchmark suite. It remains outside **population breeding selection**, but it now also serves a separate generalist-retention role:
 
 - 3 frozen Chaser references and 3 frozen Runner references are captured from the population at the beginning of the run/import;
 - each champion faces every opposite-role reference on the same permanent seeds;
 - each reference is tested once from the exact visual reset, once from a varied fresh reset, and once from a real shared-simulation mid-game snapshot;
 - this produces 9 fixed matches per role (18 total) after each generation;
-- benchmark matches do **not** change genome fitness, champion selection, Elo, Hall-of-Fame matchup telemetry, or population balance counters.
+- benchmark matches do **not** change genome breeding fitness, Elo, Hall-of-Fame matchup telemetry, or population balance counters;
+- the best held-out candidates are additionally compared to the retained visible champion on this same frozen suite;
+- a challenger must beat the incumbent generalist score by a configured margin before the visible/checkpoint champion is replaced;
+- Runner retention adds an explicit pace term and low-pace penalty so stationary survival policies cannot displace broadly mobile Runners.
 
-The diagnostics panel stores the benchmark score by generation, so unlike coevolutionary training fitness it is directly comparable from one generation to the next. The suite revision is reset when a new run/model import establishes a new frozen reference bank, and is also advanced when Sprint/Controlled Jump physics settings or pace/pursuit shaping values change because scores across different capability/reward configurations are not strictly comparable.
+The diagnostics panel stores both the generation benchmark and the retained generalist generation/score, so unlike coevolutionary training fitness the validation signal is directly comparable from one generation to the next. The suite revision is reset when a new run/model import establishes a new frozen reference bank, and is also advanced when Sprint/Controlled Jump physics settings or pace/pursuit shaping values change because scores across different capability/reward configurations are not strictly comparable.
 
 ## Behaviorally diverse Hall of Fame
 

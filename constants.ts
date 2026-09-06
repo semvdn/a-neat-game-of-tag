@@ -89,6 +89,11 @@ export const NEAT_BENCHMARK_START_MODES = 3; // exact visual, varied fresh, and 
 export const NEAT_CHAMPION_VALIDATION_CANDIDATES = 4;
 export const NEAT_CHAMPION_VALIDATION_CURRENT_OPPONENTS = 4;
 export const NEAT_CHAMPION_VALIDATION_HOF_OPPONENTS = 2;
+// Retained visible champions are chosen separately from evolutionary champions. Only the strongest
+// held-out candidates are re-run on the frozen benchmark, keeping the extra cost modest while
+// preventing a transient co-evolutionary matchup from replacing a broadly capable policy.
+export const NEAT_GENERALIST_VALIDATION_CANDIDATES = 2;
+export const NEAT_GENERALIST_REPLACEMENT_MARGIN = 1.5;
 export const NEAT_EPISODE_MAX_MS = 12000;
 
 // Gameplay-interest shaping. Runner progression is a capped minimum-pace objective rather than an

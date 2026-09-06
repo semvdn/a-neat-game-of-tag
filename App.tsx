@@ -425,8 +425,8 @@ export const App: React.FC = () => {
           // Hot-swap completed-generation champions into the persistent visible arena.
           // The bodies keep their positions, velocity, stamina, roles and game state.
           const generation = payload.generation || 0;
-          const chaserChampionGeneration = payload.lastChaserNeatMetrics?.generation ?? generation;
-          const evaderChampionGeneration = payload.lastEvaderNeatMetrics?.generation ?? generation;
+          const chaserChampionGeneration = payload.chaserChampionGeneration ?? payload.lastChaserNeatMetrics?.generation ?? generation;
+          const evaderChampionGeneration = payload.evaderChampionGeneration ?? payload.lastEvaderNeatMetrics?.generation ?? generation;
           if (payload.chaserChampionGenome && chaserAgent.current && chaserChampionGeneration !== installedChampionGenerationRef.current.chaser) {
             chaserAgent.current.setWeights(payload.chaserChampionGenome);
             chaserAgent.current.setGeneration(chaserChampionGeneration);
@@ -512,6 +512,8 @@ export const App: React.FC = () => {
               lastCrossGenerationBenchmark: benchmarkMetric || (benchmarkRevisionChanged ? null : prev.lastCrossGenerationBenchmark),
               benchmarkHistory: appendUnique(benchmarkRevisionChanged ? [] : prev.benchmarkHistory, benchmarkMetric),
               benchmarkSuiteRevision: incomingBenchmarkRevision,
+              chaserGeneralistChampion: payload.chaserGeneralistChampion !== undefined ? payload.chaserGeneralistChampion : (prev.chaserGeneralistChampion ?? null),
+              evaderGeneralistChampion: payload.evaderGeneralistChampion !== undefined ? payload.evaderGeneralistChampion : (prev.evaderGeneralistChampion ?? null),
               lastGenerationBalance: balanceMetric || prev.lastGenerationBalance,
               balanceHistory: appendUnique(prev.balanceHistory, balanceMetric),
               trainingSpeedX: typeof payload.trainingSpeedX === 'number' ? payload.trainingSpeedX : prev.trainingSpeedX,
@@ -1248,6 +1250,7 @@ export const App: React.FC = () => {
       eloLeaderboard: createLeaderboardEntries(INITIAL_ELO, INITIAL_ELO, 0, 0, 0, 0, 0, 0, 0),
       hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: 12, opponentsPerGenome: 1, chaserGenerations: [], evaderGenerations: [], chaserRecentSize: 0, evaderRecentSize: 0, chaserDiverseSize: 0, evaderDiverseSize: 0, chaserDiversity: 0, evaderDiversity: 0 },
       lastCrossGenerationBenchmark: null, benchmarkHistory: [], benchmarkSuiteRevision: 0,
+      chaserGeneralistChampion: null, evaderGeneralistChampion: null,
       lastGenerationBalance: null, balanceHistory: [], trainingSpeedX: 0, trainingEpisodesPerSecond: 0,
       networkArchitecture: sanitized,
     }));
@@ -1290,6 +1293,8 @@ export const App: React.FC = () => {
       lastCrossGenerationBenchmark: null,
       benchmarkHistory: [],
       benchmarkSuiteRevision: 0,
+      chaserGeneralistChampion: null,
+      evaderGeneralistChampion: null,
       lastGenerationBalance: null,
       balanceHistory: [],
       trainingSpeedX: 0,
@@ -1322,8 +1327,8 @@ export const App: React.FC = () => {
 
         chaserAgent.current?.setWeights(checkpoint.championChaser);
         evaderAgent.current?.setWeights(checkpoint.championEvader);
-        const chaserGeneration = checkpoint.lastChaserMetrics?.generation ?? checkpoint.championChaser?.generation ?? 0;
-        const evaderGeneration = checkpoint.lastEvaderMetrics?.generation ?? checkpoint.championEvader?.generation ?? 0;
+        const chaserGeneration = checkpoint.generalistChampions?.chaser?.generation ?? checkpoint.championChaser?.generation ?? checkpoint.lastChaserMetrics?.generation ?? 0;
+        const evaderGeneration = checkpoint.generalistChampions?.evader?.generation ?? checkpoint.championEvader?.generation ?? checkpoint.lastEvaderMetrics?.generation ?? 0;
         installedChampionGenerationRef.current = { chaser: chaserGeneration, evader: evaderGeneration };
         chaserAgent.current?.setGeneration(chaserGeneration);
         evaderAgent.current?.setGeneration(evaderGeneration);

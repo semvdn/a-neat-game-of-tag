@@ -6,7 +6,7 @@ import {
   type TrainingEpisodeResult,
   type TrainingStartMode,
 } from '../learning/trainingEpisode';
-import type { ActiveUpgradeState, BalanceTelemetry, BenchmarkRoleTelemetry, CrossGenerationBenchmarkTelemetry, HallOfFameTelemetry, TrainingFitnessConfig, TrainingGenerationAnalysisRecord, UpgradeConfig } from '../types';
+import type { ActiveUpgradeState, BalanceTelemetry, BenchmarkRoleTelemetry, CrossGenerationBenchmarkTelemetry, GeneralistChampionTelemetry, HallOfFameTelemetry, TrainingFitnessConfig, TrainingGenerationAnalysisRecord, UpgradeConfig } from '../types';
 import {
   INITIAL_ELO,
   SURVIVAL_TIME_HISTORY_LENGTH,
@@ -23,6 +23,8 @@ import {
   NEAT_CHAMPION_VALIDATION_CANDIDATES,
   NEAT_CHAMPION_VALIDATION_CURRENT_OPPONENTS,
   NEAT_CHAMPION_VALIDATION_HOF_OPPONENTS,
+  NEAT_GENERALIST_VALIDATION_CANDIDATES,
+  NEAT_GENERALIST_REPLACEMENT_MARGIN,
   NEAT_COMPATIBILITY_THRESHOLD,
   NEAT_TARGET_SPECIES,
   NEAT_CROSSOVER_RATE,
@@ -229,6 +231,10 @@ interface EvolutionCheckpoint {
     suiteRevision: number;
     lastResult: CrossGenerationBenchmarkTelemetry | null;
   };
+  generalistChampions?: {
+    chaser: GeneralistChampionTelemetry | null;
+    evader: GeneralistChampionTelemetry | null;
+  };
   telemetry: {
     totalTags: number;
     totalFalls: number;
@@ -258,6 +264,18 @@ interface BenchmarkReference {
 interface BenchmarkRoleEvaluation {
   telemetry: BenchmarkRoleTelemetry;
   descriptor: number[];
+}
+
+interface ValidatedChampionCandidate {
+  genome: NeatGenomeData;
+  rawFitness: number;
+  validationFitness: number;
+}
+
+interface RetainedGeneralistChampion {
+  genome: NeatGenomeData;
+  controller: LearningAgent;
+  telemetry: GeneralistChampionTelemetry;
 }
 
 let evaluationPhase: EvaluationPhase = 'chaser_population';
@@ -318,6 +336,8 @@ let benchmarkChaserReferences: BenchmarkReference[] = [];
 let benchmarkEvaderReferences: BenchmarkReference[] = [];
 let benchmarkSuiteRevision = 0;
 let lastCrossGenerationBenchmark: CrossGenerationBenchmarkTelemetry | null = null;
+let retainedChaserGeneralist: RetainedGeneralistChampion | null = null;
+let retainedEvaderGeneralist: RetainedGeneralistChampion | null = null;
 let chaserFitnessTotals = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
 let evaderFitnessTotals = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
 let chaserFitnessCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
@@ -610,6 +630,140 @@ function evaluateFixedBenchmark(genome: NeatGenomeData, role: 'chaser' | 'evader
   return { telemetry, descriptor };
 }
 
+function generalistValidationScore(role: 'chaser' | 'evader', telemetry: BenchmarkRoleTelemetry): number {
+  const falls = telemetry.ownFallsPerEpisode || 0;
+  if (role === 'chaser') {
+    // Mean benchmark fitness remains the primary signal. Close pursuit and safe terrain following
+    // break otherwise-similar candidates in favor of agents that create actual tag interactions.
+    const encounterCredit = 2 * Math.min(5, telemetry.closeEncountersPerEpisode || 0);
+    const pursuitCredit = 0.5 * Math.min(5, telemetry.pursuitBonusPerEpisode || 0);
+    return telemetry.meanFitness + encounterCredit + pursuitCredit - 2 * falls;
+  }
+
+  // Runner retention explicitly rejects the old stationary-survival local optimum. Pace is already
+  // part of fitness, but this validation-only term requires a broadly useful minimum locomotion
+  // level before a low-risk camper can displace a mobile incumbent.
+  const pace = Math.max(0, Math.min(1, telemetry.paceCompletion || 0));
+  const paceCredit = 45 * pace;
+  const immobilityPenalty = 25 * Math.max(0, 0.2 - pace) / 0.2;
+  return telemetry.meanFitness + paceCredit - immobilityPenalty - 2 * falls;
+}
+
+function retainedGeneralistForRole(role: 'chaser' | 'evader'): RetainedGeneralistChampion | null {
+  return role === 'chaser' ? retainedChaserGeneralist : retainedEvaderGeneralist;
+}
+
+function setRetainedGeneralist(role: 'chaser' | 'evader', retained: RetainedGeneralistChampion | null): void {
+  if (role === 'chaser') retainedChaserGeneralist = retained;
+  else retainedEvaderGeneralist = retained;
+}
+
+function cloneGeneralistTelemetry(value: GeneralistChampionTelemetry | null): GeneralistChampionTelemetry | null {
+  return value ? JSON.parse(JSON.stringify(value)) as GeneralistChampionTelemetry : null;
+}
+
+function revalidateRetainedGeneralist(role: 'chaser' | 'evader'): void {
+  const retained = retainedGeneralistForRole(role);
+  if (!retained || retained.telemetry.suiteRevision === benchmarkSuiteRevision) return;
+  const evaluation = evaluateFixedBenchmark(retained.genome, role);
+  retained.telemetry = {
+    ...retained.telemetry,
+    suiteRevision: benchmarkSuiteRevision,
+    score: generalistValidationScore(role, evaluation.telemetry),
+    benchmark: { ...evaluation.telemetry },
+  };
+}
+
+function revalidateRetainedGeneralists(): void {
+  revalidateRetainedGeneralist('chaser');
+  revalidateRetainedGeneralist('evader');
+}
+
+function clearRetainedGeneralists(): void {
+  retainedChaserGeneralist = null;
+  retainedEvaderGeneralist = null;
+}
+
+function restoreRetainedGeneralist(
+  role: 'chaser' | 'evader',
+  genome: NeatGenomeData,
+  saved: GeneralistChampionTelemetry | null | undefined
+): void {
+  const storedGenome = cloneGenome(genome, `${role}_generalist_restore_g${genome.generation}`);
+  const controller = new LearningAgent(role, storedGenome);
+  let telemetry = saved ? cloneGeneralistTelemetry(saved)! : null;
+  if (!telemetry || telemetry.suiteRevision !== benchmarkSuiteRevision) {
+    const evaluation = evaluateFixedBenchmark(storedGenome, role);
+    telemetry = {
+      role,
+      generation: saved?.generation ?? genome.generation,
+      selectedAtGeneration: saved?.selectedAtGeneration ?? genome.generation,
+      suiteRevision: benchmarkSuiteRevision,
+      score: generalistValidationScore(role, evaluation.telemetry),
+      benchmark: { ...evaluation.telemetry },
+    };
+  }
+  setRetainedGeneralist(role, { genome: storedGenome, controller, telemetry });
+  if (role === 'chaser') {
+    championChaser = new LearningAgent('chaser', storedGenome);
+    championChaser.setGeneration(telemetry.generation);
+  } else {
+    championEvader = new LearningAgent('evader', storedGenome);
+    championEvader.setGeneration(telemetry.generation);
+  }
+}
+
+function considerRetainedGeneralistCandidates(
+  role: 'chaser' | 'evader',
+  selectedAtGeneration: number,
+  candidates: NeatGenomeData[]
+): void {
+  ensureBenchmarkSuite();
+  revalidateRetainedGeneralist(role);
+  const incumbent = retainedGeneralistForRole(role);
+  const unique = new Map<string, NeatGenomeData>();
+  for (const candidate of candidates) unique.set(candidate.id, candidate);
+
+  let bestGenome: NeatGenomeData | null = null;
+  let bestEvaluation: BenchmarkRoleEvaluation | null = null;
+  let bestScore = -Infinity;
+  for (const genome of unique.values()) {
+    const evaluation = evaluateFixedBenchmark(genome, role);
+    const score = generalistValidationScore(role, evaluation.telemetry);
+    if (score > bestScore) {
+      bestGenome = genome;
+      bestEvaluation = evaluation;
+      bestScore = score;
+    }
+  }
+
+  if (!bestGenome || !bestEvaluation) return;
+  if (incumbent && bestScore <= incumbent.telemetry.score + NEAT_GENERALIST_REPLACEMENT_MARGIN) return;
+
+  const storedGenome = cloneGenome(bestGenome, `${role}_generalist_g${bestGenome.generation}`);
+  storedGenome.fitness = bestGenome.fitness;
+  const retained: RetainedGeneralistChampion = {
+    genome: storedGenome,
+    controller: new LearningAgent(role, storedGenome),
+    telemetry: {
+      role,
+      generation: bestGenome.generation,
+      selectedAtGeneration,
+      suiteRevision: benchmarkSuiteRevision,
+      score: bestScore,
+      benchmark: { ...bestEvaluation.telemetry },
+    },
+  };
+  setRetainedGeneralist(role, retained);
+  if (role === 'chaser') {
+    championChaser = new LearningAgent('chaser', storedGenome);
+    championChaser.setGeneration(bestGenome.generation);
+  } else {
+    championEvader = new LearningAgent('evader', storedGenome);
+    championEvader.setGeneration(bestGenome.generation);
+  }
+}
+
 function runCrossGenerationBenchmark(
   generation: number,
   chaserGenome: NeatGenomeData,
@@ -819,6 +973,10 @@ function recordGenerationAnalysis(generation: number): void {
     benchmark: lastCrossGenerationBenchmark
       ? JSON.parse(JSON.stringify(lastCrossGenerationBenchmark)) as CrossGenerationBenchmarkTelemetry
       : null,
+    generalistChampions: {
+      chaser: cloneGeneralistTelemetry(retainedChaserGeneralist?.telemetry || null),
+      runner: cloneGeneralistTelemetry(retainedEvaderGeneralist?.telemetry || null),
+    },
     hallOfFame: currentHallOfFameTelemetry(),
     chaserElo,
     runnerElo: evaderElo,
@@ -871,6 +1029,10 @@ function buildEvolutionCheckpoint(): EvolutionCheckpoint {
         ? JSON.parse(JSON.stringify(lastCrossGenerationBenchmark)) as CrossGenerationBenchmarkTelemetry
         : null,
     },
+    generalistChampions: {
+      chaser: cloneGeneralistTelemetry(retainedChaserGeneralist?.telemetry || null),
+      evader: cloneGeneralistTelemetry(retainedEvaderGeneralist?.telemetry || null),
+    },
     telemetry: {
       totalTags,
       totalFalls,
@@ -905,6 +1067,7 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
   }
 
   networkArchitecture = sanitizeNetworkArchitectureSuite(checkpoint.networkArchitecture || DEFAULT_NETWORK_ARCHITECTURE_SUITE);
+  clearRetainedGeneralists();
   chaserPopulation = createFreshPopulation('chaser');
   evaderPopulation = createFreshPopulation('evader');
   chaserPopulation.restoreCheckpoint(checkpoint.chaserPopulation);
@@ -947,6 +1110,8 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
     lastCrossGenerationBenchmark = null;
     refreshHallOfFameBenchmarkMetadata();
   }
+  restoreRetainedGeneralist('chaser', checkpoint.championChaser, checkpoint.generalistChampions?.chaser);
+  restoreRetainedGeneralist('evader', checkpoint.championEvader, checkpoint.generalistChampions?.evader);
 
   const telemetry = checkpoint.telemetry || ({} as EvolutionCheckpoint['telemetry']);
   totalTags = Number(telemetry.totalTags) || 0;
@@ -1066,7 +1231,7 @@ function commonValidationHallPanel(
  * main common panel. The winner gets an infinitesimal fitness promotion so NEAT's normal evolve()
  * preserves that validated genome as the generation champion without otherwise reshaping selection.
  */
-function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number): void {
+function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number): ValidatedChampionCandidate[] {
   const population = role === 'chaser' ? chaserPopulation : evaderPopulation;
   const controllers = role === 'chaser' ? chaserControllers : evaderControllers;
   const opponentControllers = role === 'chaser' ? evaderControllers : chaserControllers;
@@ -1098,11 +1263,20 @@ function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number)
     .map((genome, index) => ({ index, rawFitness: genome.fitness ?? -Infinity }))
     .sort((a, b) => b.rawFitness - a.rawFitness)
     .slice(0, Math.min(NEAT_CHAMPION_VALIDATION_CANDIDATES, population.genomes.length));
-  if (candidates.length === 0 || (heldOutIndices.length === 0 && heldOutHall.length === 0)) return;
+  if (candidates.length === 0) return [];
+
+  // If no held-out panel exists yet, preserve the raw ordering and still return candidates so the
+  // fixed generalist benchmark can begin retention immediately on a fresh run.
+  if (heldOutIndices.length === 0 && heldOutHall.length === 0) {
+    return candidates.map(candidate => ({
+      genome: cloneGenome(population.genomes[candidate.index]),
+      rawFitness: candidate.rawFitness,
+      validationFitness: candidate.rawFitness,
+    }));
+  }
 
   const upgrades = activeUpgradeState();
-  let winner = candidates[0];
-  let winnerValidation = -Infinity;
+  const validated: Array<{ index: number; rawFitness: number; validationFitness: number }> = [];
 
   for (const candidate of candidates) {
     let total = 0;
@@ -1123,8 +1297,8 @@ function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number)
             upgrades,
             startMode: heldOutStartMode(matchIndex),
             runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
-    runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
-    chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+            runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
+            chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
           })
         : runTrainingEpisode(opponentControllers[opponentIndex], controller, seed, {
             trackChaserActions: false,
@@ -1133,8 +1307,8 @@ function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number)
             upgrades,
             startMode: heldOutStartMode(matchIndex),
             runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
-    runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
-    chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+            runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
+            chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
           });
       total += role === 'chaser' ? result.chaserFitness : result.evaderFitness;
       matches++;
@@ -1154,8 +1328,8 @@ function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number)
             upgrades,
             startMode: heldOutStartMode(matchIndex + heldOutIndices.length),
             runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
-    runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
-    chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+            runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
+            chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
           })
         : runTrainingEpisode(entry.controller, controller, seed, {
             trackChaserActions: false,
@@ -1164,27 +1338,31 @@ function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number)
             upgrades,
             startMode: heldOutStartMode(matchIndex + heldOutIndices.length),
             runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
-    runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
-    chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+            runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
+            chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
           });
       total += role === 'chaser' ? result.chaserFitness : result.evaderFitness;
       matches++;
     });
 
-    const validationFitness = total / Math.max(1, matches);
-    if (
-      validationFitness > winnerValidation ||
-      (validationFitness === winnerValidation && candidate.rawFitness > winner.rawFitness)
-    ) {
-      winner = candidate;
-      winnerValidation = validationFitness;
-    }
+    validated.push({
+      index: candidate.index,
+      rawFitness: candidate.rawFitness,
+      validationFitness: total / Math.max(1, matches),
+    });
   }
 
+  validated.sort((a, b) => b.validationFitness - a.validationFitness || b.rawFitness - a.rawFitness);
+  const winner = validated[0];
   const maxRawFitness = Math.max(...population.genomes.map(g => g.fitness ?? -Infinity));
   population.genomes[winner.index].fitness = maxRawFitness + 1e-6;
-}
 
+  return validated.map(candidate => ({
+    genome: cloneGenome(population.genomes[candidate.index]),
+    rawFitness: candidate.rawFitness,
+    validationFitness: candidate.validationFitness,
+  }));
+}
 
 function invalidateParallelGeneration() {
   evaluationEpoch++;
@@ -1864,11 +2042,12 @@ function finishGeneration() {
 
   // Main fitness uses common opponent panels. Before accepting a champion, re-test only the
   // strongest few against held-out current opponents and historical strategies.
-  promoteValidatedChampion('chaser', evaluatedGeneration);
-  promoteValidatedChampion('evader', evaluatedGeneration);
+  const chaserValidated = promoteValidatedChampion('chaser', evaluatedGeneration);
+  const evaderValidated = promoteValidatedChampion('evader', evaluatedGeneration);
 
-  // Freeze the benchmark bank before evolution changes the population. Benchmark matches are
-  // telemetry/archive descriptors only: they never alter fitness or selection.
+  // Freeze the benchmark bank before evolution changes the population. The generation benchmark
+  // remains diagnostic, while a separate retained-generalist pass decides which policies are shown
+  // and persisted as the visible champions. Population breeding is still based on training fitness.
   ensureBenchmarkSuite();
   const chaserResult = chaserPopulation.evolve();
   const evaderResult = evaderPopulation.evolve();
@@ -1877,10 +2056,15 @@ function finishGeneration() {
   const benchmark = runCrossGenerationBenchmark(evaluatedGeneration, chaserResult.champion, evaderResult.champion);
   archiveChampion(chaserHallOfFame, chaserResult.champion, 'chaser', benchmark.chaser);
   archiveChampion(evaderHallOfFame, evaderResult.champion, 'evader', benchmark.evader);
-  championChaser = new LearningAgent('chaser', chaserResult.champion);
-  championEvader = new LearningAgent('evader', evaderResult.champion);
-  championChaser.setGeneration(chaserResult.metrics.generation);
-  championEvader.setGeneration(evaderResult.metrics.generation);
+
+  const chaserGeneralistCandidates = chaserValidated
+    .slice(0, NEAT_GENERALIST_VALIDATION_CANDIDATES)
+    .map(candidate => candidate.genome);
+  const evaderGeneralistCandidates = evaderValidated
+    .slice(0, NEAT_GENERALIST_VALIDATION_CANDIDATES)
+    .map(candidate => candidate.genome);
+  considerRetainedGeneralistCandidates('chaser', evaluatedGeneration, chaserGeneralistCandidates);
+  considerRetainedGeneralistCandidates('evader', evaluatedGeneration, evaderGeneralistCandidates);
 
   recordGenerationAnalysis(evaluatedGeneration);
   resetEvaluationAccumulators();
@@ -2040,6 +2224,10 @@ function buildAnalysisExport() {
       benchmark: lastCrossGenerationBenchmark
         ? JSON.parse(JSON.stringify(lastCrossGenerationBenchmark)) as CrossGenerationBenchmarkTelemetry
         : null,
+      generalistChampions: {
+        chaser: cloneGeneralistTelemetry(retainedChaserGeneralist?.telemetry || null),
+        runner: cloneGeneralistTelemetry(retainedEvaderGeneralist?.telemetry || null),
+      },
       hallOfFame: currentHallOfFameTelemetry(),
       chaserElo,
       runnerElo: evaderElo,
@@ -2101,6 +2289,10 @@ function emitTelemetry(force = false) {
       lastEvaderNeatMetrics: lastEvaderMetrics,
       chaserChampionGenome: championChaser.getWeights(),
       evaderChampionGenome: championEvader.getWeights(),
+      chaserChampionGeneration: retainedChaserGeneralist?.telemetry.generation ?? championChaser.getGeneration(),
+      evaderChampionGeneration: retainedEvaderGeneralist?.telemetry.generation ?? championEvader.getGeneration(),
+      chaserGeneralistChampion: cloneGeneralistTelemetry(retainedChaserGeneralist?.telemetry || null),
+      evaderGeneralistChampion: cloneGeneralistTelemetry(retainedEvaderGeneralist?.telemetry || null),
       actionCountsChaser,
       actionCountsEvader,
       eloLeaderboard: leaderboard,
@@ -2129,6 +2321,7 @@ function runHeadlessBatch() {
 
 function seedPopulations(chaserWeights?: AgentWeights, evaderWeights?: AgentWeights, archiveSeed = false) {
   clearHallOfFame();
+  clearRetainedGeneralists();
   analysisHistory.length = 0;
   lastGenerationBalance = null;
   if (chaserWeights?.nodes && chaserWeights?.connections) {
@@ -2147,6 +2340,8 @@ function seedPopulations(chaserWeights?: AgentWeights, evaderWeights?: AgentWeig
   if (archiveSeed && evaderWeights?.nodes && evaderWeights?.connections) {
     archiveChampion(evaderHallOfFame, evaderWeights as NeatGenomeData, 'evader');
   }
+  if (chaserWeights?.nodes && chaserWeights?.connections) considerRetainedGeneralistCandidates('chaser', chaserPopulation.generation, [chaserWeights as NeatGenomeData]);
+  if (evaderWeights?.nodes && evaderWeights?.connections) considerRetainedGeneralistCandidates('evader', evaderPopulation.generation, [evaderWeights as NeatGenomeData]);
   resetEvaluationAccumulators();
   invalidateParallelGeneration();
   captureSafeCheckpoint();
@@ -2158,6 +2353,7 @@ function resetEntireEvolutionRun(): void {
   refreshControllers();
   championChaser = new LearningAgent('chaser', chaserPopulation.genomes[0]);
   championEvader = new LearningAgent('evader', evaderPopulation.genomes[0]);
+  clearRetainedGeneralists();
   lastChaserMetrics = null;
   lastEvaderMetrics = null;
   seededFromStart = true;
@@ -2204,6 +2400,7 @@ self.onmessage = (event: MessageEvent) => {
         refreshControllers();
         championChaser = new LearningAgent('chaser', chaserPopulation.genomes[0]);
         championEvader = new LearningAgent('evader', evaderPopulation.genomes[0]);
+        clearRetainedGeneralists();
         resetBenchmarkSuite();
         resetEvaluationAccumulators();
         invalidateParallelGeneration();
@@ -2253,6 +2450,8 @@ self.onmessage = (event: MessageEvent) => {
         invalidateParallelGeneration();
         benchmarkSuiteRevision++;
         lastCrossGenerationBenchmark = null;
+        refreshHallOfFameBenchmarkMetadata();
+        revalidateRetainedGeneralists();
         captureSafeCheckpoint();
       }
       emitTelemetry(true);
@@ -2274,6 +2473,7 @@ self.onmessage = (event: MessageEvent) => {
         benchmarkSuiteRevision++;
         lastCrossGenerationBenchmark = null;
         refreshHallOfFameBenchmarkMetadata();
+        revalidateRetainedGeneralists();
         captureSafeCheckpoint();
       }
       emitTelemetry(true);

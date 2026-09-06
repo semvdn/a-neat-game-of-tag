@@ -230,6 +230,20 @@ export interface BenchmarkRoleTelemetry {
   closeEncountersPerEpisode?: number;
 }
 
+
+export interface GeneralistChampionTelemetry {
+  role: 'chaser' | 'evader';
+  /** Generation in which this retained policy originally competed. */
+  generation: number;
+  /** Generation at which it most recently became the retained visible/generalist champion. */
+  selectedAtGeneration: number;
+  /** Frozen benchmark suite revision used for this score. */
+  suiteRevision: number;
+  /** Generalization score used only for retention/display, never population selection. */
+  score: number;
+  benchmark: BenchmarkRoleTelemetry;
+}
+
 export interface CrossGenerationBenchmarkTelemetry {
   generation: number;
   suiteRevision: number;
@@ -276,6 +290,8 @@ export interface DiagnosticsState {
   lastCrossGenerationBenchmark?: CrossGenerationBenchmarkTelemetry | null;
   benchmarkHistory?: CrossGenerationBenchmarkTelemetry[];
   benchmarkSuiteRevision?: number;
+  chaserGeneralistChampion?: GeneralistChampionTelemetry | null;
+  evaderGeneralistChampion?: GeneralistChampionTelemetry | null;
   lastGenerationBalance?: BalanceTelemetry | null;
   balanceHistory?: BalanceTelemetry[];
   trainingSpeedX?: number;
@@ -299,6 +315,7 @@ export interface TrainingGenerationAnalysisRecord {
   runnerMetrics: NeatGenerationMetrics | null;
   balance: BalanceTelemetry | null;
   benchmark: CrossGenerationBenchmarkTelemetry | null;
+  generalistChampions?: { chaser: GeneralistChampionTelemetry | null; runner: GeneralistChampionTelemetry | null };
   hallOfFame: HallOfFameTelemetry;
   chaserElo: number;
   runnerElo: number;
