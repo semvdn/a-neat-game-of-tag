@@ -111,9 +111,10 @@ export class LearningAgent {
       moveRight: number;
       jump: number;
       sprint: number;
-    }
+    },
+    contextId = 0
   ): typeof out {
-    const outputs = this.network.activateFast(state);
+    const outputs = this.network.activateFast(state, contextId);
     // Factorized controls: positive output activation independently drives each control.
     // Left/right may be held while jump is active, which makes ordinary platforming evolvable.
     const moveLeft = Math.max(0, Math.min(1, outputs[0] ?? 0));
@@ -137,7 +138,7 @@ export class LearningAgent {
     return out;
   }
 
-  chooseAction(state: ArrayLike<number>): {
+  chooseAction(state: ArrayLike<number>, contextId = 0): {
     action: string;
     actionIndex: number;
     actionStrength: number;
@@ -154,7 +155,11 @@ export class LearningAgent {
       moveRight: 0,
       jump: 0,
       sprint: 0,
-    });
+    }, contextId);
+  }
+
+  public resetState(contextId?: number): void {
+    this.network.resetState(contextId);
   }
 
 }

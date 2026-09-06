@@ -1,1 +1,1 @@
-Add configurable NEAT network architecture suite
+Add evolvable depth, width and recurrent architecture controls

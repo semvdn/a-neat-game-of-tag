@@ -7,6 +7,8 @@ export interface NodeGene {
   id: number;
   type: NodeGeneType;
   bias: number;
+  /** Feed-forward depth in [0,1]. Inputs=0, outputs=1; hidden nodes are strictly between. */
+  depth?: number;
 }
 
 export interface ConnectionGene {
@@ -15,6 +17,8 @@ export interface ConnectionGene {
   outNode: number;
   weight: number;
   enabled: boolean;
+  /** Recurrent links read the source node's previous-step value and are excluded from the DAG. */
+  recurrent?: boolean;
 }
 
 export interface NeatGenomeData {
@@ -73,8 +77,14 @@ export interface NeatGenerationMetrics {
   averageSpeciesAge: number;
   averageNodes: number;
   averageConnections: number;
+  averageHiddenNodes: number;
+  averageHiddenLayers: number;
+  averageRecurrentConnections: number;
   championNodes: number;
   championConnections: number;
+  championHiddenNodes: number;
+  championHiddenLayers: number;
+  championRecurrentConnections: number;
   compatibilityThreshold: number;
   timestamp: number;
 }
@@ -83,9 +93,17 @@ export type NetworkArchitecturePreset = 'minimal' | 'compact' | 'deep' | 'wide' 
 
 export interface NetworkArchitectureConfig {
   preset: NetworkArchitecturePreset;
-  /** Feed-forward hidden layer widths, from input side to output side. Empty means canonical minimal NEAT. */
+  /** Generation-1 feed-forward hidden layer widths, from input side to output side. */
   hiddenLayers: number[];
-  /** Deterministic fraction of candidate connections instantiated inside each configured layer edge. */
+  /** Allow mutation to introduce additional feed-forward depth. */
+  evolveHiddenLayers: boolean;
+  /** Hard cap on distinct hidden feed-forward depths, including the starting layers. */
+  maxHiddenLayers: number;
+  /** Allow mutation to add hidden nodes within existing layers. */
+  evolveHiddenNodes: boolean;
+  /** Hard cap on total hidden nodes, including all starting hidden nodes. */
+  maxHiddenNodes: number;
+  /** Deterministic fraction of candidate feed-forward connections instantiated initially. */
   connectionDensity: number;
   /** Add direct input -> output skip links even when hidden layers exist. */
   inputOutputSkip: boolean;
@@ -93,9 +111,20 @@ export interface NetworkArchitectureConfig {
   hiddenLayerSkips: boolean;
   /** Scale of uniformly sampled initial weights. */
   initialWeightScale: number;
-  /** Structural mutation rates can be tuned alongside starting depth for controlled architecture experiments. */
+  /** Mutation probability for adding one hidden node inside an existing layer. */
   addNodeRate: number;
+  /** Mutation probability for adding a new feed-forward hidden layer by splitting an edge. */
+  addLayerRate: number;
+  /** Mutation probability for adding one ordinary feed-forward connection. */
   addConnectionRate: number;
+  /** Number of recurrent previous-step connections instantiated in generation 1. */
+  initialRecurrentConnections: number;
+  /** Allow NEAT to add recurrent connections after generation 1. */
+  evolveRecurrentConnections: boolean;
+  /** Hard cap on enabled+disabled recurrent connection genes in a genome. */
+  maxRecurrentConnections: number;
+  /** Mutation probability for adding one recurrent connection. */
+  addRecurrentConnectionRate: number;
 }
 
 export interface NetworkArchitectureSuiteConfig {
@@ -106,20 +135,28 @@ export interface NetworkArchitectureSuiteConfig {
 
 export const NETWORK_ARCHITECTURE_PRESETS: Record<Exclude<NetworkArchitecturePreset, 'custom'>, NetworkArchitectureConfig> = {
   minimal: {
-    preset: 'minimal', hiddenLayers: [], connectionDensity: 1, inputOutputSkip: true, hiddenLayerSkips: false,
-    initialWeightScale: 1.5, addNodeRate: 0.03, addConnectionRate: 0.08,
+    preset: 'minimal', hiddenLayers: [], evolveHiddenLayers: true, maxHiddenLayers: 4, evolveHiddenNodes: true, maxHiddenNodes: 64,
+    connectionDensity: 1, inputOutputSkip: true, hiddenLayerSkips: false, initialWeightScale: 1.5,
+    addNodeRate: 0.03, addLayerRate: 0.012, addConnectionRate: 0.08,
+    initialRecurrentConnections: 0, evolveRecurrentConnections: false, maxRecurrentConnections: 0, addRecurrentConnectionRate: 0,
   },
   compact: {
-    preset: 'compact', hiddenLayers: [12], connectionDensity: 0.75, inputOutputSkip: true, hiddenLayerSkips: false,
-    initialWeightScale: 1.25, addNodeRate: 0.025, addConnectionRate: 0.06,
+    preset: 'compact', hiddenLayers: [12], evolveHiddenLayers: true, maxHiddenLayers: 4, evolveHiddenNodes: true, maxHiddenNodes: 72,
+    connectionDensity: 0.75, inputOutputSkip: true, hiddenLayerSkips: false, initialWeightScale: 1.25,
+    addNodeRate: 0.025, addLayerRate: 0.01, addConnectionRate: 0.06,
+    initialRecurrentConnections: 0, evolveRecurrentConnections: false, maxRecurrentConnections: 0, addRecurrentConnectionRate: 0,
   },
   deep: {
-    preset: 'deep', hiddenLayers: [16, 12], connectionDensity: 0.65, inputOutputSkip: true, hiddenLayerSkips: false,
-    initialWeightScale: 1.15, addNodeRate: 0.02, addConnectionRate: 0.05,
+    preset: 'deep', hiddenLayers: [16, 12], evolveHiddenLayers: true, maxHiddenLayers: 5, evolveHiddenNodes: true, maxHiddenNodes: 96,
+    connectionDensity: 0.65, inputOutputSkip: true, hiddenLayerSkips: false, initialWeightScale: 1.15,
+    addNodeRate: 0.02, addLayerRate: 0.008, addConnectionRate: 0.05,
+    initialRecurrentConnections: 0, evolveRecurrentConnections: false, maxRecurrentConnections: 0, addRecurrentConnectionRate: 0,
   },
   wide: {
-    preset: 'wide', hiddenLayers: [24, 16], connectionDensity: 0.55, inputOutputSkip: true, hiddenLayerSkips: true,
-    initialWeightScale: 1.0, addNodeRate: 0.018, addConnectionRate: 0.045,
+    preset: 'wide', hiddenLayers: [24, 16], evolveHiddenLayers: true, maxHiddenLayers: 5, evolveHiddenNodes: true, maxHiddenNodes: 128,
+    connectionDensity: 0.55, inputOutputSkip: true, hiddenLayerSkips: true, initialWeightScale: 1.0,
+    addNodeRate: 0.018, addLayerRate: 0.007, addConnectionRate: 0.045,
+    initialRecurrentConnections: 0, evolveRecurrentConnections: false, maxRecurrentConnections: 0, addRecurrentConnectionRate: 0,
   },
 };
 
@@ -134,20 +171,42 @@ export function sanitizeNetworkArchitectureConfig(value?: Partial<NetworkArchite
     ? value.preset as NetworkArchitecturePreset
     : 'custom';
   const widths = Array.isArray(value?.hiddenLayers) ? value!.hiddenLayers! : [];
-  const hiddenLayers = widths.slice(0, 3).map(width => Math.max(1, Math.min(48, Math.round(Number(width) || 1))));
+  const hiddenLayers = widths.slice(0, 6).map(width => Math.max(1, Math.min(64, Math.round(Number(width) || 1))));
+  const initialHiddenNodes = hiddenLayers.reduce((a, b) => a + b, 0);
+  const requestedMaxLayers = Math.round(Number(value?.maxHiddenLayers));
+  const requestedMaxNodes = Math.round(Number(value?.maxHiddenNodes));
   const density = Number(value?.connectionDensity);
   const scale = Number(value?.initialWeightScale);
   const addNode = Number(value?.addNodeRate);
+  const addLayer = Number(value?.addLayerRate);
   const addConnection = Number(value?.addConnectionRate);
+  const initialRecurrent = Math.round(Number(value?.initialRecurrentConnections));
+  const requestedMaxRecurrent = Math.round(Number(value?.maxRecurrentConnections));
+  const addRecurrent = Number(value?.addRecurrentConnectionRate);
+  const maxHiddenLayers = Math.max(hiddenLayers.length, Number.isFinite(requestedMaxLayers) ? Math.min(8, Math.max(0, requestedMaxLayers)) : Math.max(hiddenLayers.length, 4));
+  const maxHiddenNodes = Math.max(initialHiddenNodes, Number.isFinite(requestedMaxNodes) ? Math.min(384, Math.max(0, requestedMaxNodes)) : Math.max(initialHiddenNodes, 96));
+  const initialStatefulNodes = initialHiddenNodes + ACTION_SPACE.length;
+  const initialRecurrentCandidateCount = initialStatefulNodes * initialStatefulNodes;
+  const recurrentInitial = Number.isFinite(initialRecurrent) ? Math.min(256, initialRecurrentCandidateCount, Math.max(0, initialRecurrent)) : 0;
+  const maxRecurrentConnections = Math.max(recurrentInitial, Number.isFinite(requestedMaxRecurrent) ? Math.min(512, Math.max(0, requestedMaxRecurrent)) : recurrentInitial);
   return {
     preset,
     hiddenLayers,
+    evolveHiddenLayers: value?.evolveHiddenLayers !== false,
+    maxHiddenLayers,
+    evolveHiddenNodes: value?.evolveHiddenNodes !== false,
+    maxHiddenNodes,
     connectionDensity: Number.isFinite(density) ? Math.max(0.1, Math.min(1, density)) : 1,
     inputOutputSkip: value?.inputOutputSkip !== false,
     hiddenLayerSkips: value?.hiddenLayerSkips === true,
     initialWeightScale: Number.isFinite(scale) ? Math.max(0.1, Math.min(3, scale)) : 1.5,
     addNodeRate: Number.isFinite(addNode) ? Math.max(0, Math.min(0.2, addNode)) : 0.03,
+    addLayerRate: Number.isFinite(addLayer) ? Math.max(0, Math.min(0.1, addLayer)) : 0.01,
     addConnectionRate: Number.isFinite(addConnection) ? Math.max(0, Math.min(0.3, addConnection)) : 0.08,
+    initialRecurrentConnections: recurrentInitial,
+    evolveRecurrentConnections: value?.evolveRecurrentConnections === true,
+    maxRecurrentConnections,
+    addRecurrentConnectionRate: Number.isFinite(addRecurrent) ? Math.max(0, Math.min(0.2, addRecurrent)) : 0.02,
   };
 }
 
@@ -170,7 +229,9 @@ export interface NeatConfig {
   weightPerturbRate: number;
   weightPerturbScale: number;
   addNodeRate: number;
+  addLayerRate: number;
   addConnectionRate: number;
+  addRecurrentConnectionRate: number;
   toggleConnectionRate: number;
   interspeciesMatingRate: number;
   tournamentSize: number;
@@ -196,7 +257,9 @@ export const DEFAULT_NEAT_CONFIG: NeatConfig = {
   weightPerturbRate: 0.9,
   weightPerturbScale: 0.5,
   addNodeRate: 0.03,
+  addLayerRate: 0.01,
   addConnectionRate: 0.08,
+  addRecurrentConnectionRate: 0.02,
   toggleConnectionRate: 0.01,
   interspeciesMatingRate: 0.02,
   tournamentSize: 3,
@@ -224,13 +287,17 @@ export class InnovationTracker {
     this.nextNodeId = initialNodeCount;
   }
 
-  public getInnovation(inNode: number, outNode: number): number {
-    const key = `${inNode}->${outNode}`;
+  public getInnovation(inNode: number, outNode: number, recurrent = false): number {
+    const key = recurrent ? `R:${inNode}->${outNode}` : `${inNode}->${outNode}`;
     const existing = this.edgeInnovations.get(key);
     if (existing !== undefined) return existing;
     const innovation = this.nextInnovation++;
     this.edgeInnovations.set(key, innovation);
     return innovation;
+  }
+
+  public allocateNode(): number {
+    return this.nextNodeId++;
   }
 
   public getNodeForSplit(connectionInnovation: number): number {
@@ -265,7 +332,7 @@ export class InnovationTracker {
       this.nextNodeId = Math.max(this.nextNodeId, node.id + 1);
     }
     for (const conn of genome.connections) {
-      const key = `${conn.inNode}->${conn.outNode}`;
+      const key = conn.recurrent ? `R:${conn.inNode}->${conn.outNode}` : `${conn.inNode}->${conn.outNode}`;
       this.edgeInnovations.set(key, conn.innovation);
       this.nextInnovation = Math.max(this.nextInnovation, conn.innovation + 1);
     }
@@ -313,6 +380,99 @@ function connectLayerPair(
   }
 }
 
+function addInitialRecurrentConnections(
+  connections: ConnectionGene[],
+  tracker: InnovationTracker,
+  nodes: NodeGene[],
+  count: number,
+  weightScale: number
+) {
+  if (count <= 0) return;
+  const stateful = nodes.filter(n => n.type !== 'input');
+  const candidates: Array<{ from: NodeGene; to: NodeGene; score: number }> = [];
+  for (const from of stateful) {
+    for (const to of stateful) {
+      let h = Math.imul(from.id + 17, 0x45d9f3b) ^ Math.imul(to.id + 31, 0x119de1f3);
+      h ^= h >>> 16;
+      candidates.push({ from, to, score: h >>> 0 });
+    }
+  }
+  candidates.sort((a, b) => a.score - b.score || a.from.id - b.from.id || a.to.id - b.to.id);
+  const take = Math.min(count, candidates.length);
+  for (let i = 0; i < take; i++) {
+    const { from, to } = candidates[i];
+    connections.push({
+      innovation: tracker.getInnovation(from.id, to.id, true),
+      inNode: from.id,
+      outNode: to.id,
+      weight: randomWeight(weightScale),
+      enabled: true,
+      recurrent: true,
+    });
+  }
+}
+
+function nodeDepth(node: NodeGene): number {
+  if (node.type === 'input') return 0;
+  if (node.type === 'output') return 1;
+  return Number.isFinite(node.depth) ? Math.max(1e-6, Math.min(1 - 1e-6, node.depth!)) : 0.5;
+}
+
+function ensureGenomeDepths(genome: NeatGenomeData): void {
+  if (genome.nodes.every(n => n.type !== 'hidden' || Number.isFinite(n.depth))) return;
+  const incoming = new Map<number, number[]>();
+  for (const conn of genome.connections) {
+    if (!conn.enabled || conn.recurrent) continue;
+    const arr = incoming.get(conn.outNode) || [];
+    arr.push(conn.inNode);
+    incoming.set(conn.outNode, arr);
+  }
+  const rank = new Map<number, number>();
+  for (const node of genome.nodes) if (node.type === 'input') rank.set(node.id, 0);
+  let changed = true;
+  for (let pass = 0; pass < genome.nodes.length && changed; pass++) {
+    changed = false;
+    for (const node of genome.nodes) {
+      if (node.type === 'input') continue;
+      const preds = incoming.get(node.id) || [];
+      let best = 0;
+      let ready = preds.length === 0;
+      for (const pred of preds) {
+        const pr = rank.get(pred);
+        if (pr === undefined) { ready = false; continue; }
+        ready = true;
+        best = Math.max(best, pr + 1);
+      }
+      if (ready && rank.get(node.id) !== best) { rank.set(node.id, best); changed = true; }
+    }
+  }
+  let maxHiddenRank = 1;
+  for (const node of genome.nodes) if (node.type === 'hidden') maxHiddenRank = Math.max(maxHiddenRank, rank.get(node.id) || 1);
+  for (const node of genome.nodes) {
+    if (node.type === 'input') node.depth = 0;
+    else if (node.type === 'output') node.depth = 1;
+    else if (!Number.isFinite(node.depth)) node.depth = Math.max(1e-6, Math.min(1 - 1e-6, (rank.get(node.id) || 1) / (maxHiddenRank + 1)));
+  }
+}
+
+function hiddenLayerDepths(genome: NeatGenomeData): number[] {
+  const depths = new Set<number>();
+  for (const node of genome.nodes) if (node.type === 'hidden') depths.add(Number(nodeDepth(node).toFixed(9)));
+  return [...depths].sort((a, b) => a - b);
+}
+
+function hiddenNodeCount(genome: NeatGenomeData): number {
+  let count = 0;
+  for (const node of genome.nodes) if (node.type === 'hidden') count++;
+  return count;
+}
+
+function recurrentConnectionCount(genome: NeatGenomeData): number {
+  let count = 0;
+  for (const conn of genome.connections) if (conn.recurrent) count++;
+  return count;
+}
+
 export function initialNodeCountForArchitecture(
   architecture: NetworkArchitectureConfig,
   inputCount = STATE_VECTOR_SIZE,
@@ -334,20 +494,22 @@ export function createGenomeWithArchitecture(
   const nodes: NodeGene[] = [];
   const inputIds: number[] = [];
   const outputIds: number[] = [];
-  for (let i = 0; i < inputCount; i++) { nodes.push({ id: i, type: 'input', bias: 0 }); inputIds.push(i); }
+  for (let i = 0; i < inputCount; i++) { nodes.push({ id: i, type: 'input', bias: 0, depth: 0 }); inputIds.push(i); }
   for (let o = 0; o < outputCount; o++) {
     const nodeId = inputCount + o;
-    nodes.push({ id: nodeId, type: 'output', bias: randomWeight(arch.initialWeightScale) * 0.1 });
+    nodes.push({ id: nodeId, type: 'output', bias: randomWeight(arch.initialWeightScale) * 0.1, depth: 1 });
     outputIds.push(nodeId);
   }
 
   let nextNodeId = inputCount + outputCount;
   const hiddenLayerIds: number[][] = [];
-  for (const width of arch.hiddenLayers) {
+  for (let layerIndex = 0; layerIndex < arch.hiddenLayers.length; layerIndex++) {
+    const width = arch.hiddenLayers[layerIndex];
+    const depth = (layerIndex + 1) / (arch.hiddenLayers.length + 1);
     const layer: number[] = [];
     for (let i = 0; i < width; i++) {
       const nodeId = nextNodeId++;
-      nodes.push({ id: nodeId, type: 'hidden', bias: randomWeight(arch.initialWeightScale) * 0.1 });
+      nodes.push({ id: nodeId, type: 'hidden', bias: randomWeight(arch.initialWeightScale) * 0.1, depth });
       layer.push(nodeId);
     }
     hiddenLayerIds.push(layer);
@@ -371,6 +533,7 @@ export function createGenomeWithArchitecture(
       }
     }
   }
+  addInitialRecurrentConnections(connections, tracker, nodes, arch.initialRecurrentConnections, arch.initialWeightScale);
   return { id, role, generation, nodes, connections, fitness: 0 };
 }
 
@@ -407,13 +570,20 @@ export class NeatNetwork {
   private readonly biases: Float64Array;
   private readonly incomingSources: number[][];
   private readonly incomingWeights: number[][];
+  private readonly recurrentSources: number[][];
+  private readonly recurrentWeights: number[][];
   private readonly values: Float64Array;
   private readonly outputScratch: number[];
+  private readonly recurrentContexts = new Map<number, Float64Array>();
+  private readonly hasRecurrent: boolean;
 
   constructor(public readonly genome: NeatGenomeData) {
+    ensureGenomeDepths(genome);
     const nodeById = new Map(genome.nodes.map((node, index) => [node.id, { node, index }]));
     const enabled = genome.connections.filter(c => c.enabled && nodeById.has(c.inNode) && nodeById.has(c.outNode));
-    const orderedIds = topologicalOrder(genome.nodes, enabled);
+    const feedForward = enabled.filter(c => !c.recurrent);
+    const recurrent = enabled.filter(c => c.recurrent);
+    const orderedIds = topologicalOrder(genome.nodes, feedForward);
 
     this.inputSlots = genome.nodes
       .filter(n => n.type === 'input')
@@ -430,25 +600,46 @@ export class NeatNetwork {
     this.biases = new Float64Array(genome.nodes.length);
     this.incomingSources = Array.from({ length: genome.nodes.length }, () => [] as number[]);
     this.incomingWeights = Array.from({ length: genome.nodes.length }, () => [] as number[]);
+    this.recurrentSources = Array.from({ length: genome.nodes.length }, () => [] as number[]);
+    this.recurrentWeights = Array.from({ length: genome.nodes.length }, () => [] as number[]);
     this.values = new Float64Array(genome.nodes.length);
     this.outputScratch = new Array(this.outputSlots.length).fill(0);
+    this.hasRecurrent = recurrent.length > 0;
 
     for (let i = 0; i < genome.nodes.length; i++) this.biases[i] = genome.nodes[i].bias;
-    for (const conn of enabled) {
+    for (const conn of feedForward) {
       const source = nodeById.get(conn.inNode)!.index;
       const target = nodeById.get(conn.outNode)!.index;
       this.incomingSources[target].push(source);
       this.incomingWeights[target].push(conn.weight);
     }
+    for (const conn of recurrent) {
+      const source = nodeById.get(conn.inNode)!.index;
+      const target = nodeById.get(conn.outNode)!.index;
+      this.recurrentSources[target].push(source);
+      this.recurrentWeights[target].push(conn.weight);
+    }
   }
 
-  /** Fast, allocation-free activation. The returned array is reused by this network. */
-  public activateFast(inputs: ArrayLike<number>): readonly number[] {
+  public resetState(contextId?: number): void {
+    if (contextId === undefined) {
+      for (const state of this.recurrentContexts.values()) state.fill(0);
+    } else {
+      const state = this.recurrentContexts.get(contextId);
+      if (state) state.fill(0);
+    }
+  }
+
+  /** Fast activation. Recurrent links read the previous activation of the same physical-agent context. */
+  public activateFast(inputs: ArrayLike<number>, contextId = 0): readonly number[] {
     if (inputs.length !== this.inputSlots.length) {
       throw new Error(`NEAT network expected ${this.inputSlots.length} inputs, received ${inputs.length}`);
     }
 
     const values = this.values;
+    const previous = this.hasRecurrent
+      ? (this.recurrentContexts.get(contextId) || new Float64Array(values.length))
+      : null;
     for (let i = 0; i < this.inputSlots.length; i++) {
       const value = inputs[i];
       values[this.inputSlots[i]] = Number.isFinite(value) ? value : 0;
@@ -460,17 +651,26 @@ export class NeatNetwork {
       const sources = this.incomingSources[slot];
       const weights = this.incomingWeights[slot];
       for (let i = 0; i < sources.length; i++) sum += values[sources[i]] * weights[i];
+      if (previous) {
+        const recurrentSources = this.recurrentSources[slot];
+        const recurrentWeights = this.recurrentWeights[slot];
+        for (let i = 0; i < recurrentSources.length; i++) sum += previous[recurrentSources[i]] * recurrentWeights[i];
+      }
       const clamped = sum < -20 ? -20 : sum > 20 ? 20 : sum;
       values[slot] = 2 / (1 + Math.exp(-4.9 * clamped)) - 1;
     }
 
+    if (previous) {
+      previous.set(values);
+      this.recurrentContexts.set(contextId, previous);
+    }
     for (let i = 0; i < this.outputSlots.length; i++) this.outputScratch[i] = values[this.outputSlots[i]] || 0;
     return this.outputScratch;
   }
 
   /** Compatibility API for visual/debug code that may retain the returned values. */
-  public activate(inputs: number[]): number[] {
-    return Array.from(this.activateFast(inputs));
+  public activate(inputs: number[], contextId = 0): number[] {
+    return Array.from(this.activateFast(inputs, contextId));
   }
 }
 
@@ -478,6 +678,7 @@ function topologicalOrder(nodes: NodeGene[], connections: ConnectionGene[]): num
   const indegree = new Map<number, number>(nodes.map(n => [n.id, 0]));
   const outgoing = new Map<number, number[]>();
   for (const conn of connections) {
+    if (conn.recurrent) continue;
     indegree.set(conn.outNode, (indegree.get(conn.outNode) || 0) + 1);
     const arr = outgoing.get(conn.inNode) || [];
     arr.push(conn.outNode);
@@ -499,15 +700,14 @@ function topologicalOrder(nodes: NodeGene[], connections: ConnectionGene[]): num
     }
   }
 
-  // Mutations explicitly prevent cycles. If imported data is cyclic, fail loudly instead of silently changing semantics.
-  if (result.length !== nodes.length) throw new Error('Cannot compile NEAT genome: recurrent/cyclic connection detected');
+  if (result.length !== nodes.length) throw new Error('Cannot compile NEAT genome: cyclic feed-forward connection detected');
   return result;
 }
 
 function pathExists(genome: NeatGenomeData, start: number, target: number): boolean {
   const outgoing = new Map<number, number[]>();
   for (const conn of genome.connections) {
-    if (!conn.enabled) continue;
+    if (!conn.enabled || conn.recurrent) continue;
     const arr = outgoing.get(conn.inNode) || [];
     arr.push(conn.outNode);
     outgoing.set(conn.inNode, arr);
@@ -525,15 +725,20 @@ function pathExists(genome: NeatGenomeData, start: number, target: number): bool
 }
 
 export function mutateGenome(genome: NeatGenomeData, tracker: InnovationTracker, config: NeatConfig): void {
+  ensureGenomeDepths(genome);
+  const arch = sanitizeNetworkArchitectureConfig(config.initialArchitecture);
   if (Math.random() < config.weightMutationRate) mutateWeights(genome, config);
   if (Math.random() < config.addConnectionRate) addConnectionMutation(genome, tracker);
-  if (Math.random() < config.addNodeRate) addNodeMutation(genome, tracker);
+  if (arch.evolveHiddenNodes && Math.random() < config.addNodeRate) addNodeWithinLayerMutation(genome, tracker, arch.maxHiddenNodes);
+  if (arch.evolveHiddenLayers && Math.random() < config.addLayerRate) addLayerMutation(genome, tracker, arch.maxHiddenLayers, arch.maxHiddenNodes);
+  if (arch.evolveRecurrentConnections && Math.random() < config.addRecurrentConnectionRate) {
+    addRecurrentConnectionMutation(genome, tracker, arch.maxRecurrentConnections);
+  }
   if (Math.random() < config.toggleConnectionRate && genome.connections.length > 0) {
     const conn = genome.connections[Math.floor(Math.random() * genome.connections.length)];
     if (conn.enabled) {
       conn.enabled = false;
-    } else if (!pathExists(genome, conn.outNode, conn.inNode)) {
-      // Re-enabling a historical gene must not turn the feed-forward phenotype recurrent.
+    } else if (conn.recurrent || !pathExists(genome, conn.outNode, conn.inNode)) {
       conn.enabled = true;
     }
   }
@@ -556,12 +761,12 @@ function addConnectionMutation(genome: NeatGenomeData, tracker: InnovationTracke
   const targets = genome.nodes.filter(n => n.type !== 'input');
   if (sources.length === 0 || targets.length === 0) return false;
 
-  for (let attempt = 0; attempt < 40; attempt++) {
+  for (let attempt = 0; attempt < 60; attempt++) {
     const from = sources[Math.floor(Math.random() * sources.length)];
     const to = targets[Math.floor(Math.random() * targets.length)];
     if (from.id === to.id) continue;
-    if (genome.connections.some(c => c.inNode === from.id && c.outNode === to.id)) continue;
-    // Adding from -> to is legal only if to cannot already reach from.
+    if (nodeDepth(from) >= nodeDepth(to)) continue;
+    if (genome.connections.some(c => !c.recurrent && c.inNode === from.id && c.outNode === to.id)) continue;
     if (pathExists(genome, to.id, from.id)) continue;
 
     genome.connections.push({
@@ -570,35 +775,74 @@ function addConnectionMutation(genome: NeatGenomeData, tracker: InnovationTracke
       outNode: to.id,
       weight: randomWeight(),
       enabled: true,
+      recurrent: false,
     });
     return true;
   }
   return false;
 }
 
-function addNodeMutation(genome: NeatGenomeData, tracker: InnovationTracker): boolean {
-  const candidates = genome.connections.filter(c => c.enabled);
+function addNodeWithinLayerMutation(genome: NeatGenomeData, tracker: InnovationTracker, maxHiddenNodes: number): boolean {
+  if (hiddenNodeCount(genome) >= maxHiddenNodes) return false;
+  const depths = hiddenLayerDepths(genome);
+  if (depths.length === 0) return false;
+  const depth = depths[Math.floor(Math.random() * depths.length)];
+  const earlier = genome.nodes.filter(n => nodeDepth(n) < depth - 1e-9);
+  const later = genome.nodes.filter(n => nodeDepth(n) > depth + 1e-9 && n.type !== 'input');
+  if (earlier.length === 0 || later.length === 0) return false;
+  const newNodeId = tracker.allocateNode();
+  genome.nodes.push({ id: newNodeId, type: 'hidden', bias: 0, depth });
+
+  const incoming = earlier[Math.floor(Math.random() * earlier.length)];
+  const outgoing = later[Math.floor(Math.random() * later.length)];
+  genome.connections.push({ innovation: tracker.getInnovation(incoming.id, newNodeId), inNode: incoming.id, outNode: newNodeId, weight: randomWeight(), enabled: true, recurrent: false });
+  genome.connections.push({ innovation: tracker.getInnovation(newNodeId, outgoing.id), inNode: newNodeId, outNode: outgoing.id, weight: randomWeight(), enabled: true, recurrent: false });
+  return true;
+}
+
+function addLayerMutation(genome: NeatGenomeData, tracker: InnovationTracker, maxHiddenLayers: number, maxHiddenNodes: number): boolean {
+  if (hiddenLayerDepths(genome).length >= maxHiddenLayers || hiddenNodeCount(genome) >= maxHiddenNodes) return false;
+  const existingDepths = new Set(hiddenLayerDepths(genome).map(d => d.toFixed(9)));
+  const candidates = genome.connections.filter(c => {
+    if (!c.enabled || c.recurrent) return false;
+    const from = genome.nodes.find(n => n.id === c.inNode);
+    const to = genome.nodes.find(n => n.id === c.outNode);
+    if (!from || !to) return false;
+    const midpoint = (nodeDepth(from) + nodeDepth(to)) / 2;
+    return midpoint > 1e-6 && midpoint < 1 - 1e-6 && !existingDepths.has(midpoint.toFixed(9));
+  });
   if (candidates.length === 0) return false;
   const split = candidates[Math.floor(Math.random() * candidates.length)];
+  const from = genome.nodes.find(n => n.id === split.inNode)!;
+  const to = genome.nodes.find(n => n.id === split.outNode)!;
+  const depth = (nodeDepth(from) + nodeDepth(to)) / 2;
   split.enabled = false;
-
   const newNodeId = tracker.getNodeForSplit(split.innovation);
-  if (!genome.nodes.some(n => n.id === newNodeId)) genome.nodes.push({ id: newNodeId, type: 'hidden', bias: 0 });
-  genome.connections.push({
-    innovation: tracker.getInnovation(split.inNode, newNodeId),
-    inNode: split.inNode,
-    outNode: newNodeId,
-    weight: 1,
-    enabled: true,
-  });
-  genome.connections.push({
-    innovation: tracker.getInnovation(newNodeId, split.outNode),
-    inNode: newNodeId,
-    outNode: split.outNode,
-    weight: split.weight,
-    enabled: true,
-  });
+  if (!genome.nodes.some(n => n.id === newNodeId)) genome.nodes.push({ id: newNodeId, type: 'hidden', bias: 0, depth });
+  genome.connections.push({ innovation: tracker.getInnovation(split.inNode, newNodeId), inNode: split.inNode, outNode: newNodeId, weight: 1, enabled: true, recurrent: false });
+  genome.connections.push({ innovation: tracker.getInnovation(newNodeId, split.outNode), inNode: newNodeId, outNode: split.outNode, weight: split.weight, enabled: true, recurrent: false });
   return true;
+}
+
+function addRecurrentConnectionMutation(genome: NeatGenomeData, tracker: InnovationTracker, maxRecurrentConnections: number): boolean {
+  if (maxRecurrentConnections <= 0 || recurrentConnectionCount(genome) >= maxRecurrentConnections) return false;
+  const stateful = genome.nodes.filter(n => n.type !== 'input');
+  if (stateful.length === 0) return false;
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const from = stateful[Math.floor(Math.random() * stateful.length)];
+    const to = stateful[Math.floor(Math.random() * stateful.length)];
+    if (genome.connections.some(c => c.recurrent && c.inNode === from.id && c.outNode === to.id)) continue;
+    genome.connections.push({
+      innovation: tracker.getInnovation(from.id, to.id, true),
+      inNode: from.id,
+      outNode: to.id,
+      weight: randomWeight(),
+      enabled: true,
+      recurrent: true,
+    });
+    return true;
+  }
+  return false;
 }
 
 export function compatibilityDistance(a: NeatGenomeData, b: NeatGenomeData, config: NeatConfig): number {
@@ -687,7 +931,7 @@ export function crossover(a: NeatGenomeData, b: NeatGenomeData, childId: string,
   const safeConnections: ConnectionGene[] = [];
   for (const raw of childConnections.sort((x, y) => x.innovation - y.innovation)) {
     const gene = { ...raw };
-    if (gene.enabled) {
+    if (gene.enabled && !gene.recurrent) {
       const partial: NeatGenomeData = {
         id: childId,
         role: fitter.role,
@@ -1058,8 +1302,14 @@ export class NeatPopulation {
       averageSpeciesAge: speciesAges.length ? speciesAges.reduce((a, b) => a + b, 0) / speciesAges.length : 0,
       averageNodes: this.genomes.reduce((s, g) => s + g.nodes.length, 0) / this.genomes.length,
       averageConnections: this.genomes.reduce((s, g) => s + g.connections.filter(c => c.enabled).length, 0) / this.genomes.length,
+      averageHiddenNodes: this.genomes.reduce((s, g) => s + hiddenNodeCount(g), 0) / this.genomes.length,
+      averageHiddenLayers: this.genomes.reduce((s, g) => s + hiddenLayerDepths(g).length, 0) / this.genomes.length,
+      averageRecurrentConnections: this.genomes.reduce((s, g) => s + recurrentConnectionCount(g), 0) / this.genomes.length,
       championNodes: champion.nodes.length,
       championConnections: champion.connections.filter(c => c.enabled).length,
+      championHiddenNodes: hiddenNodeCount(champion),
+      championHiddenLayers: hiddenLayerDepths(champion).length,
+      championRecurrentConnections: recurrentConnectionCount(champion),
       compatibilityThreshold: this.compatibilityThreshold,
       timestamp: Date.now(),
     };

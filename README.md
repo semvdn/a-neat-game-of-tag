@@ -123,25 +123,28 @@ The rolling procedural generator now begins introducing route-choice structures 
 Both routes are deliberately reachable and reconnect quickly. This gives the Runner a route choice while allowing the Chaser to follow directly or attempt an interception, instead of permanently separating the players. Branch generation uses the same deterministic RNG in visual and headless simulation, preserves the platform array's x-order, and branch landings are tracked separately in diagnostics. Upper/lower branches are subtly differentiated visually so route choices are readable during champion play.
 
 
-## Configurable network architecture experiments
+## Configurable and evolvable network architecture experiments
 
-The Diagnostics suite now includes an **Architecture** tab for controlled experiments with deeper starting networks. Architecture changes are staged in a draft and only take effect after pressing **Apply architecture & restart**, which intentionally starts fresh Chaser/Runner populations at generation 1 so results from incompatible topologies are not mixed.
+The Diagnostics suite includes an **Architecture** tab where architecture is split into three separate ideas: the **generation-1 starting architecture**, whether each structural dimension is allowed to **evolve**, and a **hard cap** that evolution cannot exceed. Changes remain staged until **Apply architecture & restart** is pressed, which intentionally starts fresh populations at generation 1.
 
-The suite supports four starting presets plus custom configurations:
+The built-in Minimal, Compact, Deep 16→12 and Wide 24→16 presets remain available, and Custom now supports up to **6 starting hidden layers** with up to **64 nodes per starting layer**. For each Chaser/Runner role the user can independently configure:
 
-- **Minimal NEAT** — canonical 25 inputs → 4 factorized outputs with no seeded hidden layer.
-- **Compact 12** — one 12-node hidden layer.
-- **Deep 16→12** — two hidden layers and the recommended first deeper-network experiment.
-- **Wide 24→16** — wider two-layer seed with hidden-layer skip links.
-- **Custom** — 0–3 hidden layers, each 1–48 nodes.
+- starting hidden-layer count and every starting layer width;
+- whether **hidden-layer count may evolve**, its maximum depth (up to 8), and add-layer mutation rate;
+- whether **hidden-node count may evolve**, its total hidden-node cap (up to 384), and add-node mutation rate;
+- starting recurrent-memory connection count;
+- whether **recurrent connection count may evolve**, its hard cap (up to 512), and add-recurrent mutation rate;
+- initial feed-forward connection density, input→output skips, hidden-layer skips, weight scale, and ordinary add-connection mutation rate.
 
-For each role the user can configure hidden depth/width, deterministic initial connection density (10–100%), direct input→output skip links, non-adjacent hidden-layer skip links, initial weight scale, add-node mutation rate, and add-connection mutation rate. Chaser and Runner architectures are linked by default but can be unlinked for asymmetric experiments.
+Layer and node evolution are distinct. A **new-layer mutation** splits a feed-forward edge at a new intermediate depth, increasing network depth by one (subject to both layer and node caps). A **new-node mutation** adds capacity inside an already-existing hidden depth without making the network deeper. This makes experiments such as “fixed 2-layer depth but evolvable width” or “evolvable depth but capped at 4 layers” possible.
 
-Every genome in a fresh population receives the same deterministic starting connection topology for the selected architecture; only weights/biases differ. This prevents connection-density experiments from accidentally comparing different random wiring diagrams inside the same generation. NEAT remains fully active afterward and can add nodes/connections beyond the seeded layers.
+Recurrent links are genuine one-step memory connections rather than feed-forward cycles. They may connect hidden/output state back to hidden/output state, including self-connections. Each physical game agent receives an **independent recurrent state context**, even though multiple bodies share the same role policy genome, and recurrent state is reset cleanly between evaluation episodes and when a body changes roles. Feed-forward topology therefore remains a DAG while recurrence reads the previous simulation step.
 
-Applied architecture settings are persisted locally, included in full evolutionary checkpoints, emitted in worker telemetry, and written into every generation of the analysis export. This makes it possible to compare benchmark/tag/interaction performance against actual starting depth and topology growth. Existing checkpoints without architecture metadata migrate as Minimal NEAT.
+All structural caps are enforced inside mutation itself. Disabled recurrent genes still count toward the recurrent gene cap, preventing long runs from accumulating unlimited historical recurrent genes. Starting recurrent topology is deterministic across the population just like starting feed-forward topology, so architecture comparisons do not accidentally compare different random wiring diagrams.
 
-Custom networks are intentionally bounded to three hidden layers of 48 nodes each because much larger dense seeds can reduce training throughput dramatically without necessarily improving behavior.
+Generation metrics now record average/champion hidden-node count, hidden-layer count and recurrent-connection count. The network visualization places evolved hidden nodes by feed-forward depth and draws recurrent memory links as dashed fuchsia arcs. Full checkpoints and analysis exports preserve the complete architecture/evolution configuration.
+
+The presets intentionally start with recurrence **off**. Recurrent search substantially enlarges the evolutionary space, so a sensible first memory experiment is a Deep 16→12 network with perhaps 4–8 starting recurrent links, recurrent evolution enabled, and a cap around 16–24 rather than immediately allowing hundreds of memory connections.
 
 ## Persistent long-term species management
 

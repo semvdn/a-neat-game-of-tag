@@ -63,7 +63,9 @@ function populationConfig(role: 'chaser' | 'evader') {
   return {
     ...baseNeatConfig,
     addNodeRate: architecture.addNodeRate,
+    addLayerRate: architecture.addLayerRate,
     addConnectionRate: architecture.addConnectionRate,
+    addRecurrentConnectionRate: architecture.addRecurrentConnectionRate,
     initialArchitecture: { ...architecture, hiddenLayers: [...architecture.hiddenLayers] },
   };
 }

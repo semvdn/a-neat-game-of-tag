@@ -900,13 +900,15 @@ export const App: React.FC = () => {
           const stateVector = getAgentStateVector(agent, newState, viewportSize);
           const isChaser = agent.status === AgentStatus.It;
           const role: 'chaser' | 'evader' = isChaser ? 'chaser' : 'evader';
+          const previousRole = agent.role;
           agent.role = role;
           agent.elo = isChaser ? chaserElo.current : evaderElo.current;
           agent.modelId = isChaser ? 'current_chaser' : 'current_evader';
 
           const model = isChaser ? chaserAgent.current : evaderAgent.current;
           if (!model) return;
-          const decision = model.chooseAction(stateVector);
+          if (previousRole && previousRole !== role) model.resetState(agent.id);
+          const decision = model.chooseAction(stateVector, agent.id);
           agentActions[agent.id] = {
             action: decision.action,
             moveLeft: decision.moveLeft,
@@ -1167,6 +1169,8 @@ export const App: React.FC = () => {
 
 
   const handleResetChampionGame = useCallback(() => {
+    chaserAgent.current?.resetState();
+    evaderAgent.current?.resetState();
     recentSurvivalTimes.current = [];
     recentTimesToTag.current = [];
     visualTagsRef.current = 0;

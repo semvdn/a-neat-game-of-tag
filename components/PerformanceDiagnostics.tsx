@@ -133,16 +133,26 @@ const NetworkGraph: React.FC<{ genome?: NeatGenomeData | null }> = ({ genome }) 
   const layout = useMemo(() => {
     if (!genome) return null;
     const inputs = genome.nodes.filter(n => n.type === 'input').sort((a, b) => a.id - b.id);
-    const hidden = genome.nodes.filter(n => n.type === 'hidden').sort((a, b) => a.id - b.id);
+    const hidden = genome.nodes.filter(n => n.type === 'hidden').sort((a, b) => (a.depth ?? 0.5) - (b.depth ?? 0.5) || a.id - b.id);
     const outputs = genome.nodes.filter(n => n.type === 'output').sort((a, b) => a.id - b.id);
     const pos = new Map<number, { x: number; y: number }>();
     const place = (nodes: typeof genome.nodes, x: number) => nodes.forEach((n, i) => {
       pos.set(n.id, { x, y: 18 + ((i + 0.5) / Math.max(1, nodes.length)) * 304 });
     });
     place(inputs, 26);
-    place(hidden, 180);
     place(outputs, 334);
-    return { pos, inputs, hidden, outputs };
+    const depthGroups = new Map<string, typeof genome.nodes>();
+    for (const node of hidden) {
+      const key = (node.depth ?? 0.5).toFixed(6);
+      const group = depthGroups.get(key) || [];
+      group.push(node);
+      depthGroups.set(key, group);
+    }
+    for (const [key, nodes] of depthGroups) {
+      const depth = Number(key);
+      place(nodes, 26 + depth * 308);
+    }
+    return { pos, inputs, hidden, outputs, hiddenLayers: depthGroups.size };
   }, [genome]);
 
   if (!genome || !layout) {
@@ -150,26 +160,26 @@ const NetworkGraph: React.FC<{ genome?: NeatGenomeData | null }> = ({ genome }) 
   }
 
   const enabled = genome.connections.filter(c => c.enabled);
+  const recurrent = enabled.filter(c => c.recurrent);
+  const feedForward = enabled.filter(c => !c.recurrent);
   return (
     <div className="rounded-xl border border-gray-800 bg-black/40 p-3">
       <svg viewBox="0 0 360 340" className="w-full h-[340px]">
-        {enabled.map(c => {
+        {feedForward.map(c => {
           const a = layout.pos.get(c.inNode);
           const b = layout.pos.get(c.outNode);
           if (!a || !b) return null;
           const weight = Math.min(4, Math.max(0.4, Math.abs(c.weight)));
-          return (
-            <line
-              key={c.innovation}
-              x1={a.x}
-              y1={a.y}
-              x2={b.x}
-              y2={b.y}
-              stroke="currentColor"
-              className={c.weight >= 0 ? 'text-emerald-400/20' : 'text-rose-400/20'}
-              strokeWidth={weight}
-            />
-          );
+          return <line key={c.innovation} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="currentColor" className={c.weight >= 0 ? 'text-emerald-400/20' : 'text-rose-400/20'} strokeWidth={weight} />;
+        })}
+        {recurrent.map(c => {
+          const a = layout.pos.get(c.inNode);
+          const b = layout.pos.get(c.outNode);
+          if (!a || !b) return null;
+          const bend = Math.max(10, Math.abs(b.x - a.x) * 0.25 + 12);
+          const midX = (a.x + b.x) / 2;
+          const midY = Math.max(8, Math.min(332, Math.min(a.y, b.y) - bend));
+          return <path key={`r-${c.innovation}`} d={`M ${a.x} ${a.y} Q ${midX} ${midY} ${b.x} ${b.y}`} fill="none" stroke="currentColor" className="text-fuchsia-300/35" strokeWidth={Math.min(3, Math.max(0.5, Math.abs(c.weight)))} strokeDasharray="4 3" />;
         })}
         {genome.nodes.map(n => {
           const p = layout.pos.get(n.id)!;
@@ -177,12 +187,13 @@ const NetworkGraph: React.FC<{ genome?: NeatGenomeData | null }> = ({ genome }) 
           return <circle key={n.id} cx={p.x} cy={p.y} r={n.type === 'hidden' ? 5 : 3.5} fill="currentColor" className={cls} />;
         })}
         <text x="8" y="12" className="fill-gray-500 text-[8px]">{STATE_VECTOR_SIZE} INPUTS</text>
-        <text x="155" y="12" className="fill-gray-500 text-[8px]">HIDDEN</text>
+        <text x="140" y="12" className="fill-gray-500 text-[8px]">{layout.hiddenLayers} HIDDEN LAYERS</text>
         <text x="314" y="12" className="fill-gray-500 text-[8px]">4 OUTPUTS</text>
       </svg>
-      <div className="grid grid-cols-3 gap-2 text-xs text-gray-400 text-center">
+      <div className="grid grid-cols-4 gap-2 text-xs text-gray-400 text-center">
         <div><span className="text-white font-mono">{genome.nodes.length}</span> nodes</div>
-        <div><span className="text-white font-mono">{enabled.length}</span> enabled links</div>
+        <div><span className="text-white font-mono">{feedForward.length}</span> feed-forward</div>
+        <div><span className="text-fuchsia-300 font-mono">{recurrent.length}</span> recurrent</div>
         <div><span className="text-white font-mono">{genome.connections.length - enabled.length}</span> disabled</div>
       </div>
     </div>
@@ -205,14 +216,15 @@ const FitnessSummary: React.FC<{ title: string; metrics?: NeatGenerationMetrics 
       <div><div className="text-gray-500">Oldest species</div><div className="font-mono text-lg text-white">{metrics?.oldestSpeciesAge != null ? `${metrics.oldestSpeciesAge} gen` : '—'}</div></div>
       <div><div className="text-gray-500">Mean species age</div><div className="font-mono text-lg text-white">{metrics?.averageSpeciesAge != null ? `${metrics.averageSpeciesAge.toFixed(1)} gen` : '—'}</div></div>
       <div><div className="text-gray-500">Compatibility δ</div><div className="font-mono text-lg text-white">{fmt(metrics?.compatibilityThreshold)}</div></div>
-      <div><div className="text-gray-500">Champion topology</div><div className="font-mono text-lg text-white">{metrics ? `${metrics.championNodes}n / ${metrics.championConnections}l` : '—'}</div></div>
+      <div><div className="text-gray-500">Champion topology</div><div className="font-mono text-lg text-white">{metrics ? `${metrics.championHiddenLayers ?? '—'}L · ${metrics.championHiddenNodes ?? '—'}H · ${metrics.championRecurrentConnections ?? 0}R` : '—'}</div></div>
     </div>
   </div>
 );
 
 const architectureEstimate = (config: NetworkArchitectureConfig) => {
   const layers = [STATE_VECTOR_SIZE, ...config.hiddenLayers, ACTION_SPACE.length];
-  const nodes = layers.reduce((a, b) => a + b, 0);
+  const hiddenNodes = config.hiddenLayers.reduce((a, b) => a + b, 0);
+  const nodes = STATE_VECTOR_SIZE + ACTION_SPACE.length + hiddenNodes;
   let candidates = 0;
   for (let i = 0; i < layers.length - 1; i++) candidates += layers[i] * layers[i + 1];
   if (config.hiddenLayers.length > 0 && config.inputOutputSkip) candidates += STATE_VECTOR_SIZE * ACTION_SPACE.length;
@@ -221,7 +233,11 @@ const architectureEstimate = (config: NetworkArchitectureConfig) => {
       for (let j = i + 2; j < config.hiddenLayers.length; j++) candidates += config.hiddenLayers[i] * config.hiddenLayers[j];
     }
   }
-  return { nodes, connections: Math.max(ACTION_SPACE.length, Math.round(candidates * config.connectionDensity)) };
+  return {
+    nodes,
+    hiddenNodes,
+    connections: Math.max(ACTION_SPACE.length, Math.round(candidates * config.connectionDensity)) + config.initialRecurrentConnections,
+  };
 };
 
 const ArchitectureRoleEditor: React.FC<{
@@ -241,57 +257,86 @@ const ArchitectureRoleEditor: React.FC<{
     const next = [...config.hiddenLayers];
     while (next.length < count) next.push(next.length === 0 ? 16 : Math.max(8, Math.round(next[next.length - 1] * 0.75)));
     next.length = count;
-    update({ hiddenLayers: next });
+    update({
+      hiddenLayers: next,
+      maxHiddenLayers: Math.max(config.maxHiddenLayers, count),
+      maxHiddenNodes: Math.max(config.maxHiddenNodes, next.reduce((a, b) => a + b, 0)),
+    });
   };
   const setLayerWidth = (index: number, width: number) => {
     const next = [...config.hiddenLayers];
-    next[index] = Math.max(1, Math.min(48, Math.round(width || 1)));
-    update({ hiddenLayers: next });
+    next[index] = Math.max(1, Math.min(64, Math.round(width || 1)));
+    update({ hiddenLayers: next, maxHiddenNodes: Math.max(config.maxHiddenNodes, next.reduce((a, b) => a + b, 0)) });
   };
+  const roleColor = role === 'chaser' ? 'text-red-200' : 'text-cyan-200';
+
   return (
     <div className={`rounded-xl border p-4 ${role === 'chaser' ? 'border-red-500/20 bg-red-950/10' : 'border-cyan-500/20 bg-cyan-950/10'} ${disabled ? 'opacity-55' : ''}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h4 className={`font-semibold ${role === 'chaser' ? 'text-red-200' : 'text-cyan-200'}`}>{role === 'chaser' ? 'Chaser' : 'Runner'} network</h4>
-          <p className="text-[10px] text-gray-500">Estimated generation-1 topology: {estimate.nodes} nodes · ~{estimate.connections} enabled links</p>
+          <h4 className={`font-semibold ${roleColor}`}>{role === 'chaser' ? 'Chaser' : 'Runner'} network</h4>
+          <p className="text-[10px] text-gray-500">Generation 1: {estimate.nodes} nodes · ~{estimate.connections} links · {config.initialRecurrentConnections} recurrent</p>
         </div>
         <select disabled={disabled} value={config.preset} onChange={e => selectPreset(e.target.value as NetworkArchitecturePreset)} className="rounded border border-gray-700 bg-gray-950 px-2 py-1.5 text-xs text-gray-200 disabled:opacity-50">
-          <option value="minimal">Minimal NEAT</option><option value="compact">Compact 12</option><option value="deep">Deep 16→12 · recommended</option><option value="wide">Wide 24→16</option><option value="custom">Custom</option>
+          <option value="minimal">Minimal NEAT</option><option value="compact">Compact 12</option><option value="deep">Deep 16→12</option><option value="wide">Wide 24→16</option><option value="custom">Custom</option>
         </select>
       </div>
 
-      <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <label className="text-xs text-gray-400">Hidden layers
-          <select disabled={disabled} value={config.hiddenLayers.length} onChange={e => setLayerCount(Number(e.target.value))} className="mt-1 w-full rounded border border-gray-700 bg-gray-950 px-2 py-2 text-gray-200">
-            {[0,1,2,3].map(n => <option key={n} value={n}>{n === 0 ? '0 · minimal' : n}</option>)}
-          </select>
-        </label>
-        <label className="text-xs text-gray-400">Connection density <span className="float-right font-mono text-violet-300">{Math.round(config.connectionDensity * 100)}%</span>
-          <input disabled={disabled} type="range" min={0.1} max={1} step={0.05} value={config.connectionDensity} onChange={e => update({ connectionDensity: Number(e.target.value) })} className="mt-2 w-full" />
-        </label>
-        <label className="text-xs text-gray-400">Initial weight scale <span className="float-right font-mono text-violet-300">±{config.initialWeightScale.toFixed(2)}</span>
-          <input disabled={disabled} type="range" min={0.1} max={3} step={0.05} value={config.initialWeightScale} onChange={e => update({ initialWeightScale: Number(e.target.value) })} className="mt-2 w-full" />
-        </label>
+      <div className="mt-4 rounded-lg border border-gray-800 bg-black/20 p-3">
+        <div className="flex items-center justify-between gap-3"><div><div className="text-xs font-semibold text-white">Hidden layers</div><div className="text-[10px] text-gray-500">Choose starting depth, whether depth can evolve, and its hard ceiling.</div></div><span className="font-mono text-xs text-violet-300">{config.hiddenLayers.length} → max {config.maxHiddenLayers}</span></div>
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          <label className="text-xs text-gray-400">Starting hidden layers
+            <select disabled={disabled} value={config.hiddenLayers.length} onChange={e => setLayerCount(Number(e.target.value))} className="mt-1 w-full rounded border border-gray-700 bg-gray-950 px-2 py-2 text-gray-200">
+              {[0,1,2,3,4,5,6].map(n => <option key={n} value={n}>{n === 0 ? '0 · minimal' : n}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center justify-between gap-3 rounded border border-gray-800 px-3 py-2 text-xs text-gray-400"><span>Evolve layer count</span><input disabled={disabled} type="checkbox" checked={config.evolveHiddenLayers} onChange={e => update({ evolveHiddenLayers: e.target.checked })} /></label>
+          <label className="text-xs text-gray-400">Maximum hidden layers
+            <input disabled={disabled || !config.evolveHiddenLayers} type="number" min={config.hiddenLayers.length} max={8} value={config.maxHiddenLayers} onChange={e => update({ maxHiddenLayers: Math.max(config.hiddenLayers.length, Number(e.target.value) || config.hiddenLayers.length) })} className="mt-1 w-full rounded border border-gray-700 bg-gray-950 px-2 py-2 font-mono text-gray-200 disabled:opacity-50" />
+          </label>
+        </div>
+        {config.evolveHiddenLayers && <label className="mt-3 block text-xs text-gray-400">Add-layer mutation <span className="float-right font-mono text-amber-300">{(config.addLayerRate * 100).toFixed(1)}%</span><input disabled={disabled} type="range" min={0} max={0.1} step={0.002} value={config.addLayerRate} onChange={e => update({ addLayerRate: Number(e.target.value) })} className="mt-2 w-full" /></label>}
       </div>
 
-      {config.hiddenLayers.length > 0 && <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
-        {config.hiddenLayers.map((width, index) => <label key={index} className="text-[10px] text-gray-500">Layer {index + 1} width
-          <input disabled={disabled} type="number" min={1} max={48} value={width} onChange={e => setLayerWidth(index, Number(e.target.value))} className="mt-1 w-full rounded border border-gray-700 bg-gray-950 px-2 py-1.5 font-mono text-xs text-gray-200" />
-        </label>)}
-      </div>}
-
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <label className="flex items-center justify-between gap-3 rounded border border-gray-800 bg-black/20 px-3 py-2 text-xs text-gray-400"><span>Input → output skip links</span><input disabled={disabled} type="checkbox" checked={config.inputOutputSkip} onChange={e => update({ inputOutputSkip: e.target.checked })} /></label>
-        <label className="flex items-center justify-between gap-3 rounded border border-gray-800 bg-black/20 px-3 py-2 text-xs text-gray-400"><span>Hidden-layer skip links</span><input disabled={disabled || config.hiddenLayers.length < 2} type="checkbox" checked={config.hiddenLayerSkips} onChange={e => update({ hiddenLayerSkips: e.target.checked })} /></label>
+      <div className="mt-3 rounded-lg border border-gray-800 bg-black/20 p-3">
+        <div className="flex items-center justify-between gap-3"><div><div className="text-xs font-semibold text-white">Hidden nodes</div><div className="text-[10px] text-gray-500">Layer widths define the starting node count; evolution may add nodes inside existing layers up to the cap.</div></div><span className="font-mono text-xs text-violet-300">{estimate.hiddenNodes} → max {config.maxHiddenNodes}</span></div>
+        {config.hiddenLayers.length > 0 ? <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+          {config.hiddenLayers.map((width, index) => <label key={index} className="text-[10px] text-gray-500">Layer {index + 1} nodes<input disabled={disabled} type="number" min={1} max={64} value={width} onChange={e => setLayerWidth(index, Number(e.target.value))} className="mt-1 w-full rounded border border-gray-700 bg-gray-950 px-2 py-1.5 font-mono text-xs text-gray-200" /></label>)}
+        </div> : <p className="mt-2 text-[10px] text-gray-600">No starting hidden nodes. If layer evolution is enabled, NEAT can create the first hidden layer later.</p>}
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <label className="flex items-center justify-between gap-3 rounded border border-gray-800 px-3 py-2 text-xs text-gray-400"><span>Evolve hidden node count</span><input disabled={disabled} type="checkbox" checked={config.evolveHiddenNodes} onChange={e => update({ evolveHiddenNodes: e.target.checked })} /></label>
+          <label className="text-xs text-gray-400">Maximum hidden nodes
+            <input disabled={disabled || !config.evolveHiddenNodes} type="number" min={estimate.hiddenNodes} max={384} value={config.maxHiddenNodes} onChange={e => update({ maxHiddenNodes: Math.max(estimate.hiddenNodes, Number(e.target.value) || estimate.hiddenNodes) })} className="mt-1 w-full rounded border border-gray-700 bg-gray-950 px-2 py-2 font-mono text-gray-200 disabled:opacity-50" />
+          </label>
+        </div>
+        {config.evolveHiddenNodes && <label className="mt-3 block text-xs text-gray-400">Add-node mutation <span className="float-right font-mono text-amber-300">{(config.addNodeRate * 100).toFixed(1)}%</span><input disabled={disabled} type="range" min={0} max={0.2} step={0.005} value={config.addNodeRate} onChange={e => update({ addNodeRate: Number(e.target.value) })} className="mt-2 w-full" /></label>}
       </div>
 
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <label className="text-xs text-gray-400">Add-node mutation <span className="float-right font-mono text-amber-300">{(config.addNodeRate * 100).toFixed(1)}%</span>
-          <input disabled={disabled} type="range" min={0} max={0.2} step={0.005} value={config.addNodeRate} onChange={e => update({ addNodeRate: Number(e.target.value) })} className="mt-2 w-full" />
-        </label>
-        <label className="text-xs text-gray-400">Add-connection mutation <span className="float-right font-mono text-amber-300">{(config.addConnectionRate * 100).toFixed(1)}%</span>
-          <input disabled={disabled} type="range" min={0} max={0.3} step={0.005} value={config.addConnectionRate} onChange={e => update({ addConnectionRate: Number(e.target.value) })} className="mt-2 w-full" />
-        </label>
+      <div className="mt-3 rounded-lg border border-fuchsia-500/20 bg-fuchsia-950/10 p-3">
+        <div className="flex items-center justify-between gap-3"><div><div className="text-xs font-semibold text-fuchsia-200">Recurrent memory connections</div><div className="text-[10px] text-gray-500">One-step delayed links give each physical agent its own memory state. Self-links and backward links are allowed.</div></div><span className="font-mono text-xs text-fuchsia-300">{config.initialRecurrentConnections} → max {config.maxRecurrentConnections}</span></div>
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          <label className="text-xs text-gray-400">Starting recurrent links
+            <input disabled={disabled} type="number" min={0} max={256} value={config.initialRecurrentConnections} onChange={e => { const n = Math.max(0, Math.min(256, Number(e.target.value) || 0)); update({ initialRecurrentConnections: n, maxRecurrentConnections: Math.max(config.maxRecurrentConnections, n) }); }} className="mt-1 w-full rounded border border-gray-700 bg-gray-950 px-2 py-2 font-mono text-gray-200" />
+          </label>
+          <label className="flex items-center justify-between gap-3 rounded border border-gray-800 px-3 py-2 text-xs text-gray-400"><span>Evolve recurrent count</span><input disabled={disabled} type="checkbox" checked={config.evolveRecurrentConnections} onChange={e => update({ evolveRecurrentConnections: e.target.checked })} /></label>
+          <label className="text-xs text-gray-400">Maximum recurrent links
+            <input disabled={disabled || !config.evolveRecurrentConnections} type="number" min={config.initialRecurrentConnections} max={512} value={config.maxRecurrentConnections} onChange={e => update({ maxRecurrentConnections: Math.max(config.initialRecurrentConnections, Number(e.target.value) || config.initialRecurrentConnections) })} className="mt-1 w-full rounded border border-gray-700 bg-gray-950 px-2 py-2 font-mono text-gray-200 disabled:opacity-50" />
+          </label>
+        </div>
+        {config.evolveRecurrentConnections && <label className="mt-3 block text-xs text-gray-400">Add-recurrent mutation <span className="float-right font-mono text-fuchsia-300">{(config.addRecurrentConnectionRate * 100).toFixed(1)}%</span><input disabled={disabled} type="range" min={0} max={0.2} step={0.002} value={config.addRecurrentConnectionRate} onChange={e => update({ addRecurrentConnectionRate: Number(e.target.value) })} className="mt-2 w-full" /></label>}
+      </div>
+
+      <div className="mt-3 rounded-lg border border-gray-800 bg-black/20 p-3">
+        <div className="text-xs font-semibold text-white">Feed-forward wiring</div>
+        <div className="mt-3 grid gap-4 md:grid-cols-3">
+          <label className="text-xs text-gray-400">Initial connection density <span className="float-right font-mono text-violet-300">{Math.round(config.connectionDensity * 100)}%</span><input disabled={disabled} type="range" min={0.1} max={1} step={0.05} value={config.connectionDensity} onChange={e => update({ connectionDensity: Number(e.target.value) })} className="mt-2 w-full" /></label>
+          <label className="text-xs text-gray-400">Initial weight scale <span className="float-right font-mono text-violet-300">±{config.initialWeightScale.toFixed(2)}</span><input disabled={disabled} type="range" min={0.1} max={3} step={0.05} value={config.initialWeightScale} onChange={e => update({ initialWeightScale: Number(e.target.value) })} className="mt-2 w-full" /></label>
+          <label className="text-xs text-gray-400">Add feed-forward connection <span className="float-right font-mono text-amber-300">{(config.addConnectionRate * 100).toFixed(1)}%</span><input disabled={disabled} type="range" min={0} max={0.3} step={0.005} value={config.addConnectionRate} onChange={e => update({ addConnectionRate: Number(e.target.value) })} className="mt-2 w-full" /></label>
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <label className="flex items-center justify-between gap-3 rounded border border-gray-800 px-3 py-2 text-xs text-gray-400"><span>Input → output skip links</span><input disabled={disabled} type="checkbox" checked={config.inputOutputSkip} onChange={e => update({ inputOutputSkip: e.target.checked })} /></label>
+          <label className="flex items-center justify-between gap-3 rounded border border-gray-800 px-3 py-2 text-xs text-gray-400"><span>Hidden-layer skip links</span><input disabled={disabled || config.hiddenLayers.length < 2} type="checkbox" checked={config.hiddenLayerSkips} onChange={e => update({ hiddenLayerSkips: e.target.checked })} /></label>
+        </div>
       </div>
     </div>
   );
@@ -578,7 +623,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               </div>
               <FitnessSummary title={`${role === 'chaser' ? 'Chaser' : 'Evader'} champion`} metrics={selectedMetrics} />
               <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4 text-xs text-gray-400 leading-relaxed">
-                Green links are positive weights; red links are negative. The Architecture tab controls the generation-1 topology. NEAT then continues adding hidden nodes and acyclic connections at the configured structural mutation rates.
+                Green/red links are feed-forward weights; recurrent links are one-step delayed memory edges. The Architecture tab controls starting size plus independent evolution switches and hard caps for layers, nodes and recurrent connections.
               </div>
             </div>
             <NetworkGraph genome={selectedGenome} />
@@ -591,7 +636,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="max-w-3xl">
                   <div className="flex items-center gap-2"><Brain className="h-4 w-4 text-violet-300" /><h3 className="font-semibold text-white">Network architecture experiment suite</h3></div>
-                  <p className="mt-1 text-xs leading-relaxed text-gray-500">Configure the generation-1 feed-forward topology and how aggressively NEAT grows it afterward. Applying a new architecture intentionally starts both populations at generation 1 so benchmark comparisons are clean. The settings are stored in full checkpoints and analysis exports.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-gray-500">Configure generation-1 depth/width/memory and independently decide whether hidden layers, hidden nodes, and recurrent connections may evolve afterward. Applying a new architecture intentionally starts both populations at generation 1 so benchmark comparisons are clean. The settings are stored in full checkpoints and analysis exports.</p>
                 </div>
                 <label className="flex items-center gap-2 rounded border border-gray-700 bg-black/20 px-3 py-2 text-xs text-gray-300"><input type="checkbox" checked={architectureDraft.linkedRoles} onChange={e => setArchitectureDraft(prev => ({ ...prev, linkedRoles: e.target.checked, runner: e.target.checked ? { ...prev.chaser, hiddenLayers: [...prev.chaser.hiddenLayers] } : prev.runner }))} />Use same architecture for both roles</label>
               </div>

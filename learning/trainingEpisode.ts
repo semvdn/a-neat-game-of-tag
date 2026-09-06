@@ -640,6 +640,8 @@ export function runTrainingEpisode(
   const viewportSize = options.viewportSize || { width: WORLD_REF_WIDTH, height: WORLD_REF_HEIGHT };
   const trackChaserActions = options.trackChaserActions !== false;
   const trackEvaderActions = options.trackEvaderActions !== false;
+  chaser.resetState();
+  evader.resetState();
   const rng = mulberry32(seed >>> 0);
   const episodeStart = createEpisodeState(seed, rng, viewportSize, options.startMode || 'mixed');
   const gameState = episodeStart.gameState;
@@ -672,6 +674,7 @@ export function runTrainingEpisode(
   // grounded, or bank airborne progress on a successful landing. Falling/respawn teleports never
   // receive credit. Per-body progress is averaged across the two runner slots.
   const runnerRoleActive = new Array<boolean>(gameState.agents.length).fill(false);
+  const controllerRoleByBody = gameState.agents.map(agent => agent.status === AgentStatus.It ? 'chaser' as const : 'evader' as const);
   const runnerSafeRightX = new Array<number>(gameState.agents.length).fill(-Infinity);
   const runnerSafeRightExpansionByBody = new Array<number>(gameState.agents.length).fill(0);
   let runnerFrontierLeftX = Infinity;
@@ -791,9 +794,14 @@ export function runTrainingEpisode(
         runnerRoleActive[i] = true;
       }
 
+      const controllerRole = isChaserRole ? 'chaser' as const : 'evader' as const;
       const controller = isChaserRole ? chaser : evader;
+      if (controllerRoleByBody[i] !== controllerRole) {
+        controller.resetState(agent.id);
+        controllerRoleByBody[i] = controllerRole;
+      }
       const state = writeAgentStateVector(agent, gameState, viewportSize, stateBuffers[i]);
-      const decision = controller.chooseActionInto(state, decisions[i]);
+      const decision = controller.chooseActionInto(state, decisions[i], agent.id);
 
       let activeControls = 0;
       const horizontalDrive = decision.moveRight - decision.moveLeft;
