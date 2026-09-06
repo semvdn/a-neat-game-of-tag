@@ -160,6 +160,8 @@ All structural caps are enforced inside mutation itself. Disabled recurrent gene
 
 Generation metrics now record average/champion hidden-node count, hidden-layer count and recurrent-connection count. The network visualization places evolved hidden nodes by feed-forward depth and draws recurrent memory links as dashed fuchsia arcs. Full checkpoints and analysis exports preserve the complete architecture/evolution configuration.
 
+To prevent structural drift from turning every long run into a cap-sized network, reproduction now uses **near-tie parsimony**: when genomes fall inside a narrow performance band, parent selection prefers fewer recurrent links, then fewer hidden nodes, then fewer enabled connections. Raw fitness remains primary and species allocation is unchanged. Mutation also has a small weak-connection pruning path and automatically removes hidden nodes that become disconnected, so complexity can move downward as well as upward.
+
 
 A useful experiment sequence is **Deep 16→12 (feed-forward control) → Memory Lite → Memory Balanced**. Memory Discovery is useful after that if you want to ask whether recurrence is selected by evolution rather than supplied at generation 1. Fixed Memory Control is the cleanest way to separate “memory helps” from “structural growth helps”. Deep Memory should be treated as a later stress test rather than a default because it increases both evaluation cost and the search space.
 

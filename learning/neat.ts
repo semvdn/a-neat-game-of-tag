@@ -320,6 +320,10 @@ export interface NeatConfig {
   addLayerRate: number;
   addConnectionRate: number;
   addRecurrentConnectionRate: number;
+  /** Probability of physically removing one weak enabled connection after structural mutation. */
+  pruneConnectionRate: number;
+  /** Relative fitness band within which simpler genomes win parent-selection ties. */
+  parsimonyTieFraction: number;
   toggleConnectionRate: number;
   interspeciesMatingRate: number;
   tournamentSize: number;
@@ -348,6 +352,8 @@ export const DEFAULT_NEAT_CONFIG: NeatConfig = {
   addLayerRate: 0.01,
   addConnectionRate: 0.08,
   addRecurrentConnectionRate: 0.02,
+  pruneConnectionRate: 0.02,
+  parsimonyTieFraction: 0.015,
   toggleConnectionRate: 0.01,
   interspeciesMatingRate: 0.02,
   tournamentSize: 3,
@@ -822,6 +828,8 @@ export function mutateGenome(genome: NeatGenomeData, tracker: InnovationTracker,
   if (arch.evolveRecurrentConnections && Math.random() < config.addRecurrentConnectionRate) {
     addRecurrentConnectionMutation(genome, tracker, arch.maxRecurrentConnections);
   }
+  if (Math.random() < config.pruneConnectionRate) pruneWeakConnectionMutation(genome);
+  pruneDeadHiddenNodes(genome);
   if (Math.random() < config.toggleConnectionRate && genome.connections.length > 0) {
     const conn = genome.connections[Math.floor(Math.random() * genome.connections.length)];
     if (conn.enabled) {
@@ -830,6 +838,72 @@ export function mutateGenome(genome: NeatGenomeData, tracker: InnovationTracker,
       conn.enabled = true;
     }
   }
+}
+
+function pruneWeakConnectionMutation(genome: NeatGenomeData): boolean {
+  const enabled = genome.connections.filter(conn => conn.enabled);
+  if (enabled.length <= ACTION_SPACE.length) return false;
+
+  // Prefer the weakest quarter by absolute weight. Recurrent edges receive a slight pruning bias
+  // because they are more expressive and were the fastest-growing form of complexity in long runs.
+  const ranked = enabled
+    .map(conn => ({ conn, score: Math.abs(conn.weight) * (conn.recurrent ? 0.8 : 1) }))
+    .sort((a, b) => a.score - b.score);
+  const pool = ranked.slice(0, Math.max(1, Math.ceil(ranked.length * 0.25)));
+  const target = pool[Math.floor(Math.random() * pool.length)]?.conn;
+  if (!target) return false;
+  const index = genome.connections.indexOf(target);
+  if (index < 0) return false;
+  genome.connections.splice(index, 1);
+  return true;
+}
+
+function pruneDeadHiddenNodes(genome: NeatGenomeData): void {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const enabled = genome.connections.filter(conn => conn.enabled);
+    const removable = genome.nodes.filter(node => node.type === 'hidden' && (
+      !enabled.some(conn => conn.outNode === node.id) ||
+      !enabled.some(conn => conn.inNode === node.id)
+    ));
+    if (removable.length === 0) break;
+    const ids = new Set(removable.map(node => node.id));
+    genome.nodes = genome.nodes.filter(node => !ids.has(node.id));
+    genome.connections = genome.connections.filter(conn => !ids.has(conn.inNode) && !ids.has(conn.outNode));
+    changed = true;
+  }
+}
+
+function genomeComplexityTuple(genome: NeatGenomeData): [number, number, number, number] {
+  const recurrent = recurrentConnectionCount(genome);
+  const hidden = hiddenNodeCount(genome);
+  const enabledConnections = genome.connections.reduce((sum, conn) => sum + (conn.enabled ? 1 : 0), 0);
+  const layers = hiddenLayerDepths(genome).length;
+  return [recurrent, hidden, enabledConnections, layers];
+}
+
+function compareGenomeComplexity(a: NeatGenomeData, b: NeatGenomeData): number {
+  const ac = genomeComplexityTuple(a);
+  const bc = genomeComplexityTuple(b);
+  for (let i = 0; i < ac.length; i++) {
+    if (ac[i] !== bc[i]) return ac[i] - bc[i];
+  }
+  return a.id.localeCompare(b.id);
+}
+
+function createParsimonyComparator(genomes: NeatGenomeData[], tieFraction: number): (a: NeatGenomeData, b: NeatGenomeData) => number {
+  const fitnesses = genomes.map(genome => genome.fitness ?? 0);
+  const scale = Math.max(1, ...fitnesses.map(value => Math.abs(value)));
+  const band = Math.max(0.25, scale * Math.max(0, tieFraction));
+  const bucket = (genome: NeatGenomeData) => Math.round((genome.fitness ?? 0) / band);
+  return (a, b) => {
+    const bucketDelta = bucket(b) - bucket(a);
+    if (bucketDelta !== 0) return bucketDelta;
+    const complexityDelta = compareGenomeComplexity(a, b);
+    if (complexityDelta !== 0) return complexityDelta;
+    return (b.fitness ?? 0) - (a.fitness ?? 0);
+  };
 }
 
 function mutateWeights(genome: NeatGenomeData, config: NeatConfig) {
@@ -1109,11 +1183,15 @@ function allocateSpeciesOffspring(
   return allocation;
 }
 
-function tournament(members: NeatGenomeData[], size: number): NeatGenomeData {
+function tournament(
+  members: NeatGenomeData[],
+  size: number,
+  compare: (a: NeatGenomeData, b: NeatGenomeData) => number
+): NeatGenomeData {
   let best = members[Math.floor(Math.random() * members.length)];
   for (let i = 1; i < size; i++) {
     const candidate = members[Math.floor(Math.random() * members.length)];
-    if ((candidate.fitness ?? -Infinity) > (best.fitness ?? -Infinity)) best = candidate;
+    if (compare(candidate, best) < 0) best = candidate;
   }
   return best;
 }
@@ -1374,6 +1452,7 @@ export class NeatPopulation {
     }
 
     const fitnesses = this.genomes.map(g => g.fitness ?? 0);
+    const parsimonyCompare = createParsimonyComparator(this.genomes, this.config.parsimonyTieFraction);
     const speciesAges = species.map(s => s.age);
     const metrics: NeatGenerationMetrics = {
       role: this.role,
@@ -1423,7 +1502,7 @@ export class NeatPopulation {
       const quota = offspring.get(speciesLineage.id) ?? 0;
       if (quota <= 0) continue;
 
-      const rankedMembers = [...speciesLineage.members].sort((a, b) => (b.fitness ?? 0) - (a.fitness ?? 0));
+      const rankedMembers = [...speciesLineage.members].sort(parsimonyCompare);
       const survivalCount = Math.max(1, Math.ceil(rankedMembers.length * Math.max(0.05, Math.min(1, this.config.speciesSurvivalThreshold))));
       const parentPool = rankedMembers.slice(0, survivalCount);
       let produced = 0;
@@ -1441,7 +1520,7 @@ export class NeatPopulation {
       }
 
       while (produced < quota && next.length < this.config.populationSize) {
-        const parentA = tournament(parentPool, this.config.tournamentSize);
+        const parentA = tournament(parentPool, this.config.tournamentSize, parsimonyCompare);
         let child: NeatGenomeData;
 
         if (Math.random() < this.config.crossoverRate) {
@@ -1449,11 +1528,11 @@ export class NeatPopulation {
           if (Math.random() < this.config.interspeciesMatingRate && reproductiveSpecies.length > 1) {
             const alternatives = reproductiveSpecies.filter(s => s.id !== speciesLineage.id);
             const otherSpecies = roulette(alternatives, speciesScore);
-            const otherRanked = [...otherSpecies.members].sort((a, b) => (b.fitness ?? 0) - (a.fitness ?? 0));
+            const otherRanked = [...otherSpecies.members].sort(parsimonyCompare);
             const otherSurvivalCount = Math.max(1, Math.ceil(otherRanked.length * Math.max(0.05, Math.min(1, this.config.speciesSurvivalThreshold))));
-            parentB = tournament(otherRanked.slice(0, otherSurvivalCount), this.config.tournamentSize);
+            parentB = tournament(otherRanked.slice(0, otherSurvivalCount), this.config.tournamentSize, parsimonyCompare);
           } else {
-            parentB = tournament(parentPool, this.config.tournamentSize);
+            parentB = tournament(parentPool, this.config.tournamentSize, parsimonyCompare);
           }
           child = crossover(parentA, parentB, `${this.role}_g${nextGeneration}_${next.length}`, nextGeneration);
         } else {
