@@ -3,6 +3,7 @@ import type { DiagnosticsState } from '../types';
 import type { StoredCheckpointSummary } from '../services/checkpointStore';
 import { NETWORK_ARCHITECTURE_PRESETS, NETWORK_ARCHITECTURE_PRESET_INFO, NETWORK_ARCHITECTURE_SUITE_PRESETS, sanitizeNetworkArchitectureSuite, type NeatGenerationMetrics, type NeatGenomeData, type NetworkArchitectureConfig, type NetworkArchitecturePreset, type NetworkArchitectureSuiteConfig, type NetworkArchitectureSuitePreset } from '../learning/neat';
 import { ACTION_SPACE, STATE_VECTOR_SIZE } from '../constants';
+import { STATE_VECTOR_LABELS } from '../learning/state';
 import {
   Activity,
   X,
@@ -143,7 +144,15 @@ const LineChart: React.FC<{
   );
 };
 
+const ACTION_OUTPUT_LABELS: Record<string, string> = {
+  move_left: 'Left movement drive',
+  move_right: 'Right movement drive',
+  jump: 'Jump control',
+  sprint: 'Sprint control',
+};
+
 const NetworkGraph: React.FC<{ genome?: NeatGenomeData | null }> = ({ genome }) => {
+  const [hoveredNodeId, setHoveredNodeId] = useState<number | null>(null);
   const layout = useMemo(() => {
     if (!genome) return null;
     const inputs = genome.nodes.filter(n => n.type === 'input').sort((a, b) => a.id - b.id);
@@ -166,7 +175,9 @@ const NetworkGraph: React.FC<{ genome?: NeatGenomeData | null }> = ({ genome }) 
       const depth = Number(key);
       place(nodes, 26 + depth * 308);
     }
-    return { pos, inputs, hidden, outputs, hiddenLayers: depthGroups.size };
+    const inputIndexById = new Map(inputs.map((node, index) => [node.id, index]));
+    const outputIndexById = new Map(outputs.map((node, index) => [node.id, index]));
+    return { pos, inputs, hidden, outputs, hiddenLayers: depthGroups.size, inputIndexById, outputIndexById };
   }, [genome]);
 
   if (!genome || !layout) {
@@ -176,6 +187,19 @@ const NetworkGraph: React.FC<{ genome?: NeatGenomeData | null }> = ({ genome }) 
   const enabled = genome.connections.filter(c => c.enabled);
   const recurrent = enabled.filter(c => c.recurrent);
   const feedForward = enabled.filter(c => !c.recurrent);
+  const nodeLabel = (node: NeatGenomeData['nodes'][number]) => {
+    if (node.type === 'input') {
+      const index = layout.inputIndexById.get(node.id) ?? node.id;
+      return `Input ${index} · ${STATE_VECTOR_LABELS[index] || 'Unknown sense'}`;
+    }
+    if (node.type === 'output') {
+      const index = layout.outputIndexById.get(node.id) ?? 0;
+      const action = ACTION_SPACE[index] || `output_${index}`;
+      return `Output ${index} · ${ACTION_OUTPUT_LABELS[action] || action}`;
+    }
+    return `Hidden node ${node.id} · depth ${(node.depth ?? 0.5).toFixed(3)}`;
+  };
+  const hoveredNode = hoveredNodeId == null ? null : genome.nodes.find(node => node.id === hoveredNodeId) || null;
   return (
     <div className="rounded-xl border border-gray-800 bg-black/40 p-3">
       <svg viewBox="0 0 360 340" className="w-full h-[340px]">
@@ -198,12 +222,21 @@ const NetworkGraph: React.FC<{ genome?: NeatGenomeData | null }> = ({ genome }) 
         {genome.nodes.map(n => {
           const p = layout.pos.get(n.id)!;
           const cls = n.type === 'input' ? 'text-gray-400' : n.type === 'output' ? 'text-amber-300' : 'text-violet-300';
-          return <circle key={n.id} cx={p.x} cy={p.y} r={n.type === 'hidden' ? 5 : 3.5} fill="currentColor" className={cls} />;
+          const interactive = n.type === 'input' || n.type === 'output';
+          return (
+            <g key={n.id} onMouseEnter={() => interactive && setHoveredNodeId(n.id)} onMouseLeave={() => interactive && setHoveredNodeId(current => current === n.id ? null : current)} className={interactive ? 'cursor-help' : undefined}>
+              {interactive && <circle cx={p.x} cy={p.y} r={9} fill="transparent"><title>{nodeLabel(n)}</title></circle>}
+              <circle cx={p.x} cy={p.y} r={n.type === 'hidden' ? 5 : hoveredNodeId === n.id ? 5 : 3.5} fill="currentColor" className={cls}><title>{nodeLabel(n)}</title></circle>
+            </g>
+          );
         })}
         <text x="8" y="12" className="fill-gray-500 text-[8px]">{STATE_VECTOR_SIZE} INPUTS</text>
         <text x="140" y="12" className="fill-gray-500 text-[8px]">{layout.hiddenLayers} HIDDEN LAYERS</text>
         <text x="314" y="12" className="fill-gray-500 text-[8px]">4 OUTPUTS</text>
       </svg>
+      <div className={`mb-3 rounded-lg border px-3 py-2 text-xs ${hoveredNode ? 'border-violet-500/30 bg-violet-950/15 text-violet-100' : 'border-gray-800 bg-black/20 text-gray-500'}`}>
+        {hoveredNode ? nodeLabel(hoveredNode) : 'Hover an input or output node to see the exact sense or action it represents.'}
+      </div>
       <div className="grid grid-cols-4 gap-2 text-xs text-gray-400 text-center">
         <div><span className="text-white font-mono">{genome.nodes.length}</span> nodes</div>
         <div><span className="text-white font-mono">{feedForward.length}</span> feed-forward</div>

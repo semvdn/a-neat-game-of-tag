@@ -15,6 +15,35 @@ import {
 
 export type StateVectorBuffer = number[] | Float64Array;
 
+
+export const STATE_VECTOR_LABELS = [
+  'Self horizontal velocity',
+  'Self vertical velocity',
+  'Energy / stamina',
+  'Grounded state',
+  'Self tag cooldown',
+  'Distance to left camera boundary',
+  'Distance to right camera boundary',
+  'Target / threat tag cooldown',
+  'Distance to left platform ledge',
+  'Distance to right platform ledge',
+  'Next platform horizontal offset',
+  'Next platform vertical offset',
+  'Next platform width',
+  'Second-ahead platform horizontal offset',
+  'Second-ahead platform vertical offset',
+  'Second-ahead platform width',
+  'Previous platform horizontal offset',
+  'Previous platform vertical offset',
+  'Previous platform width',
+  'Target / threat horizontal offset',
+  'Target / threat vertical offset',
+  'Target / threat horizontal velocity',
+  'Target / threat vertical velocity',
+  'Closest Runner teammate horizontal offset',
+  'Closest Runner teammate vertical offset',
+] as const;
+
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 
 function cooldownScaleFor(subject: AgentState): number {
