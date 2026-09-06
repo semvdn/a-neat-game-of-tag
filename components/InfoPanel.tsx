@@ -4,7 +4,7 @@ import React from 'react';
 import type { AgentState, RewardBreakdown, TrainingFitnessConfig, UpgradeConfig, UpgradeMode, UpgradeRule, SprintUpgradeRule, SprintRoleAdvanced } from '../types';
 import { AgentStatus } from '../types';
 import { Radar, Shield, Swords, Zap, ArrowUp, SlidersHorizontal } from 'lucide-react';
-import { MAX_SPEED, SPRINT_MAX_SPEED, SPRINT_ENERGY_COST_PER_SEC, MAX_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT } from '../constants';
+import { MAX_SPEED, SPRINT_MAX_SPEED, SPRINT_ENERGY_COST_PER_SEC, MIN_RUNNER_PACE_TARGET_PX, MAX_RUNNER_PACE_TARGET_PX, MAX_RUNNER_PACE_REWARD_PER_WINDOW, MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM } from '../constants';
 
 interface InfoPanelProps {
   agents: AgentState[];
@@ -412,7 +412,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
         />
         <UpgradeControl
           title="Controlled Jump"
-          description="The independent Jump output controls 45–100% of the original jump impulse and stamina cost while horizontal drive can remain active at the same time."
+          description="The independent Jump output controls 45–100% of the jump impulse while horizontal drive remains active. After a jump, the output must release below the low threshold before another jump can fire."
           icon={<ArrowUp className="w-4 h-4" />}
           rule={upgradeConfig.controlledJump}
           active={controlledJumpUpgradeActive}
@@ -423,37 +423,30 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
       <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/10 p-3">
         <div className="flex items-start justify-between gap-2">
           <div>
-            <h3 className="text-xs font-bold text-cyan-200">Runner exploration incentive</h3>
+            <h3 className="text-xs font-bold text-cyan-200">Gameplay pace shaping</h3>
             <p className="mt-0.5 text-[10px] leading-relaxed text-gray-500">
-              Runner-only fitness for SAFE rightward progression. Grounded running banks immediately; airborne distance is banked only after a successful landing. Falls and respawn teleports earn nothing. Progress is tracked per body and averaged across the two Runner slots.
+              Runners earn a capped reward for meeting a modest safe-right pace every 2 seconds. Going faster than the target earns nothing extra, leaving room to dodge, reverse, wait for terrain, and choose routes. Chasers get a small capped reward for safely reaching platforms already used by a Runner.
             </p>
           </div>
-          <span className="shrink-0 rounded bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
-            +{trainingFitnessConfig.runnerExplorationRewardPerViewport.toFixed(1)}/safe view
-          </span>
         </div>
-        <div className="mt-3 flex items-center gap-2">
-          <input
-            type="range"
-            min={0}
-            max={MAX_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT}
-            step={1}
-            value={trainingFitnessConfig.runnerExplorationRewardPerViewport}
-            onChange={e => onUpdateTrainingFitnessConfig({ runnerExplorationRewardPerViewport: Number(e.target.value) })}
-            className="min-w-0 flex-1"
-          />
-          <input
-            type="number"
-            min={0}
-            max={MAX_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT}
-            step={1}
-            value={trainingFitnessConfig.runnerExplorationRewardPerViewport}
-            onChange={e => onUpdateTrainingFitnessConfig({ runnerExplorationRewardPerViewport: Number(e.target.value) })}
-            className="w-16 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-right font-mono text-[10px] text-gray-200"
-          />
+
+        <div className="mt-3 space-y-3">
+          <div>
+            <div className="mb-1 flex items-center justify-between text-[10px]"><span className="text-gray-400">Runner pace target / 2s</span><span className="font-mono text-cyan-300">{trainingFitnessConfig.runnerPaceTargetPxPerWindow.toFixed(0)} px</span></div>
+            <input type="range" min={MIN_RUNNER_PACE_TARGET_PX} max={MAX_RUNNER_PACE_TARGET_PX} step={10} value={trainingFitnessConfig.runnerPaceTargetPxPerWindow} onChange={e => onUpdateTrainingFitnessConfig({ runnerPaceTargetPxPerWindow: Number(e.target.value) })} className="w-full" />
+          </div>
+          <div>
+            <div className="mb-1 flex items-center justify-between text-[10px]"><span className="text-gray-400">Runner max reward / window</span><span className="font-mono text-cyan-300">+{trainingFitnessConfig.runnerPaceRewardPerWindow.toFixed(1)}</span></div>
+            <input type="range" min={0} max={MAX_RUNNER_PACE_REWARD_PER_WINDOW} step={1} value={trainingFitnessConfig.runnerPaceRewardPerWindow} onChange={e => onUpdateTrainingFitnessConfig({ runnerPaceRewardPerWindow: Number(e.target.value) })} className="w-full" />
+          </div>
+          <div>
+            <div className="mb-1 flex items-center justify-between text-[10px]"><span className="text-gray-400">Chaser follow reward / platform</span><span className="font-mono text-amber-300">+{trainingFitnessConfig.chaserPursuitRewardPerPlatform.toFixed(1)}</span></div>
+            <input type="range" min={0} max={MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM} step={0.5} value={trainingFitnessConfig.chaserPursuitRewardPerPlatform} onChange={e => onUpdateTrainingFitnessConfig({ chaserPursuitRewardPerPlatform: Number(e.target.value) })} className="w-full" />
+          </div>
         </div>
+
         <p className="mt-2 text-[9px] leading-relaxed text-gray-600">
-          One logical viewport = 1200 px. Tags and personal falls remain ±20 event terms; the default +50/safe view deliberately makes successful level progression strong enough to beat the old stationary-jumping local optimum. Changing this setting restarts the current evaluation generation on a new benchmark revision.
+          Default pace is 260 px per 2 seconds with +15 maximum reward. The Chaser follow reward is capped at +5 per 2-second window, so actual tags remain much more valuable. Changing any shaping value restarts the current evaluation generation on a new benchmark revision.
         </p>
       </div>
 
@@ -510,7 +503,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
                         <span className="truncate max-w-[150px]" title={agent.lastAction}>
                           {agent.lastAction}
                           {(agent.sprintIntensity || 0) > 0.05 ? ` · sprint ${Math.round((agent.sprintIntensity || 0) * 100)}%` : ''}
-                          {(agent.jumpPower || 0) > 0 ? ` · jump ${Math.round((agent.jumpPower || 0) * 100)}%` : ''}
+                          {(agent.jumpPower || 0) > 0 ? ` · jump ${Math.round((agent.jumpPower || 0) * 100)}%` : ''}{agent.jumpArmed === false ? ' · jump locked' : ''}
                         </span>
                     </div>
                     <div

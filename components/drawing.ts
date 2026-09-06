@@ -308,7 +308,12 @@ export const drawAgentSenses = (
 };
 
 export const drawPlatform = (ctx: CanvasRenderingContext2D, platform: PlatformState) => {
-  ctx.fillStyle = '#4a5568'; // gray-700
+  // Branch routes are subtly differentiated so route choices are readable without turning the
+  // environment into a UI overlay. The merge returns to the normal visual language.
+  if (platform.structureType === 'branch-upper') ctx.fillStyle = '#52667a';
+  else if (platform.structureType === 'branch-lower') ctx.fillStyle = '#465b68';
+  else if (platform.structureType === 'merge') ctx.fillStyle = '#56616d';
+  else ctx.fillStyle = '#4a5568';
   ctx.fillRect(platform.position.x, platform.position.y, platform.width, platform.height);
   ctx.fillStyle = '#2d3748'; // gray-800
   ctx.fillRect(platform.position.x, platform.position.y + platform.height - 4, platform.width, 4);

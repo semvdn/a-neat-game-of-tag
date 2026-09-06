@@ -36,8 +36,13 @@ import {
   MAX_SPEED,
   SPRINT_MAX_SPEED,
   SPRINT_ENERGY_COST_PER_SEC,
-  DEFAULT_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT,
-  MAX_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT,
+  DEFAULT_RUNNER_PACE_TARGET_PX,
+  MIN_RUNNER_PACE_TARGET_PX,
+  MAX_RUNNER_PACE_TARGET_PX,
+  DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW,
+  MAX_RUNNER_PACE_REWARD_PER_WINDOW,
+  DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM,
+  MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM,
 } from '../constants';
 
 const neatConfig = {
@@ -76,16 +81,26 @@ const DEFAULT_UPGRADE_CONFIG: UpgradeConfig = {
 };
 let upgradeConfig: UpgradeConfig = DEFAULT_UPGRADE_CONFIG;
 const DEFAULT_TRAINING_FITNESS_CONFIG: TrainingFitnessConfig = {
-  runnerExplorationRewardPerViewport: DEFAULT_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT,
+  runnerPaceTargetPxPerWindow: DEFAULT_RUNNER_PACE_TARGET_PX,
+  runnerPaceRewardPerWindow: DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW,
+  chaserPursuitRewardPerPlatform: DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM,
 };
 let trainingFitnessConfig: TrainingFitnessConfig = { ...DEFAULT_TRAINING_FITNESS_CONFIG };
 
 function sanitizeTrainingFitnessConfig(value?: Partial<TrainingFitnessConfig>): TrainingFitnessConfig {
-  const raw = Number(value?.runnerExplorationRewardPerViewport);
+  const target = Number(value?.runnerPaceTargetPxPerWindow);
+  const paceReward = Number(value?.runnerPaceRewardPerWindow);
+  const pursuit = Number(value?.chaserPursuitRewardPerPlatform);
   return {
-    runnerExplorationRewardPerViewport: Number.isFinite(raw)
-      ? Math.max(0, Math.min(MAX_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT, raw))
-      : DEFAULT_TRAINING_FITNESS_CONFIG.runnerExplorationRewardPerViewport,
+    runnerPaceTargetPxPerWindow: Number.isFinite(target)
+      ? Math.max(MIN_RUNNER_PACE_TARGET_PX, Math.min(MAX_RUNNER_PACE_TARGET_PX, target))
+      : DEFAULT_TRAINING_FITNESS_CONFIG.runnerPaceTargetPxPerWindow,
+    runnerPaceRewardPerWindow: Number.isFinite(paceReward)
+      ? Math.max(0, Math.min(MAX_RUNNER_PACE_REWARD_PER_WINDOW, paceReward))
+      : DEFAULT_TRAINING_FITNESS_CONFIG.runnerPaceRewardPerWindow,
+    chaserPursuitRewardPerPlatform: Number.isFinite(pursuit)
+      ? Math.max(0, Math.min(MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM, pursuit))
+      : DEFAULT_TRAINING_FITNESS_CONFIG.chaserPursuitRewardPerPlatform,
   };
 }
 
@@ -181,6 +196,7 @@ interface EvolutionCheckpoint {
   trainingFitnessConfig?: TrainingFitnessConfig;
   /** Fitness semantics marker for compatibility with checkpoints created before right-only exploration. */
   explorationRewardMode?: 'safe-per-runner-right-frontier';
+  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1';
   actionSchema?: 'factorized-controls-v1';
   chaserElo: number;
   evaderElo: number;
@@ -299,6 +315,23 @@ let generationRunnerLeftFrontierExpansionPx = 0;
 let generationRunnerRawRightFrontierExpansionPx = 0;
 let generationRunnerRightFrontierExpansionPx = 0;
 let generationRunnerExplorationBonus = 0;
+let generationRunnerPaceBonus = 0;
+let generationRunnerPaceCompletion = 0;
+let generationRunnerPaceWindowsSatisfied = 0;
+let generationRunnerPaceWindowsTotal = 0;
+let generationChaserPursuitBonus = 0;
+let generationChaserPursuitLandings = 0;
+let generationRunnerPlatformLandings = 0;
+let generationChaserPlatformLandings = 0;
+let generationRunnerBranchLandings = 0;
+let generationChaserBranchLandings = 0;
+let generationCloseEncounters = 0;
+let generationSuccessfulEvades = 0;
+let generationMeanNearestRunnerDistance = 0;
+let generationTimeWithin100Pct = 0;
+let generationTimeWithin200Pct = 0;
+let generationTimeWithin400Pct = 0;
+let generationTagsSoonAfterRunnerFall = 0;
 let generationRunnerMaxFrontierExpansionPx = 0;
 let generationActionCountsChaser = new Array<number>(ACTION_SPACE.length).fill(0);
 let generationActionCountsEvader = new Array<number>(ACTION_SPACE.length).fill(0);
@@ -363,6 +396,23 @@ interface EpisodeStats {
   runnerRawRightFrontierExpansionPx: number;
   runnerRightFrontierExpansionPx: number;
   runnerExplorationFitnessBonus: number;
+  runnerPaceFitnessBonus: number;
+  runnerPaceCompletion: number;
+  runnerPaceWindowsSatisfied: number;
+  runnerPaceWindowsTotal: number;
+  chaserPursuitFitnessBonus: number;
+  chaserPursuitLandings: number;
+  runnerPlatformLandings: number;
+  chaserPlatformLandings: number;
+  runnerBranchLandings: number;
+  chaserBranchLandings: number;
+  closeEncounters: number;
+  successfulEvades: number;
+  meanNearestRunnerDistancePx: number;
+  timeWithin100Ms: number;
+  timeWithin200Ms: number;
+  timeWithin400Ms: number;
+  tagsSoonAfterRunnerFall: number;
   runnerMaxFrontierExpansionPx: number;
 }
 
@@ -379,7 +429,9 @@ function runEpisode(
     viewportSize,
     upgrades: activeUpgradeState(),
     startMode,
-    runnerExplorationRewardPerViewport: trainingFitnessConfig.runnerExplorationRewardPerViewport,
+    runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
+    runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
+    chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
   });
 
   totalTags += result.tags;
@@ -457,6 +509,9 @@ function evaluateFixedBenchmark(genome: NeatGenomeData, role: 'chaser' | 'evader
   let tags = 0;
   let ownFalls = 0;
   let explorationViewports = 0;
+  let paceCompletion = 0;
+  let pursuitBonus = 0;
+  let closeEncounters = 0;
   let decisionCount = 0;
   let idleCount = 0;
   let matches = 0;
@@ -472,7 +527,9 @@ function evaluateFixedBenchmark(genome: NeatGenomeData, role: 'chaser' | 'evader
             viewportSize,
             upgrades,
             startMode: benchmarkStartMode(modeIndex),
-            runnerExplorationRewardPerViewport: trainingFitnessConfig.runnerExplorationRewardPerViewport,
+            runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
+    runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
+    chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
           })
         : runTrainingEpisode(reference.controller, candidate, seed, {
             trackChaserActions: false,
@@ -480,13 +537,21 @@ function evaluateFixedBenchmark(genome: NeatGenomeData, role: 'chaser' | 'evader
             viewportSize,
             upgrades,
             startMode: benchmarkStartMode(modeIndex),
-            runnerExplorationRewardPerViewport: trainingFitnessConfig.runnerExplorationRewardPerViewport,
+            runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
+    runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
+    chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
           });
 
       fitnessTotal += role === 'chaser' ? result.chaserFitness : result.evaderFitness;
       tags += result.tags;
       ownFalls += role === 'chaser' ? result.chaserFalls : result.evaderFalls;
-      if (role === 'evader') explorationViewports += result.runnerFrontierExpansionViewports;
+      if (role === 'evader') {
+        explorationViewports += result.runnerFrontierExpansionViewports;
+        paceCompletion += result.runnerPaceCompletion;
+      } else {
+        pursuitBonus += result.chaserPursuitFitnessBonus;
+      }
+      closeEncounters += result.closeEncounters;
       const sourceCounts = role === 'chaser' ? result.chaserActionCounts : result.evaderActionCounts;
       for (let i = 0; i < ACTION_SPACE.length; i++) actionCounts[i] += sourceCounts[i] || 0;
       decisionCount += role === 'chaser' ? result.chaserDecisionCount : result.evaderDecisionCount;
@@ -507,6 +572,9 @@ function evaluateFixedBenchmark(genome: NeatGenomeData, role: 'chaser' | 'evader
     sprintActionShare: upgrades.sprint ? controlActiveShare(actionCounts, 'sprint', decisionCount) : 0,
     idleActionShare: idleCount / Math.max(1, decisionCount),
     explorationViewportsPerEpisode: role === 'evader' ? explorationViewports / Math.max(1, matches) : 0,
+    paceCompletion: role === 'evader' ? paceCompletion / Math.max(1, matches) : 0,
+    pursuitBonusPerEpisode: role === 'chaser' ? pursuitBonus / Math.max(1, matches) : 0,
+    closeEncountersPerEpisode: closeEncounters / Math.max(1, matches),
   };
 
   // Outcome rates are smoothly compressed so repeated events do not dominate the action-style
@@ -518,7 +586,7 @@ function evaluateFixedBenchmark(genome: NeatGenomeData, role: 'chaser' | 'evader
     telemetry.jumpActionShare,
     telemetry.sprintActionShare,
     telemetry.idleActionShare,
-    role === 'evader' ? Math.tanh((telemetry.explorationViewportsPerEpisode || 0) / 2) : 0,
+    role === 'evader' ? (telemetry.paceCompletion || 0) : Math.tanh((telemetry.pursuitBonusPerEpisode || 0) / 5),
   ];
   return { telemetry, descriptor };
 }
@@ -760,6 +828,7 @@ function buildEvolutionCheckpoint(): EvolutionCheckpoint {
     upgradeConfig: sanitizeUpgradeConfig(upgradeConfig),
     trainingFitnessConfig: sanitizeTrainingFitnessConfig(trainingFitnessConfig),
     explorationRewardMode: 'safe-per-runner-right-frontier',
+    gameplayObjectiveVersion: 'pace-pursuit-branches-v1',
     actionSchema: 'factorized-controls-v1',
     chaserElo,
     evaderElo,
@@ -823,6 +892,7 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
   upgradeConfig = sanitizeUpgradeConfig(checkpoint.upgradeConfig);
   const migratedExplorationFitness = !checkpoint.trainingFitnessConfig;
   const migratedExplorationRewardMode = checkpoint.explorationRewardMode !== 'safe-per-runner-right-frontier';
+  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'pace-pursuit-branches-v1';
   trainingFitnessConfig = sanitizeTrainingFitnessConfig(checkpoint.trainingFitnessConfig);
   chaserElo = Number.isFinite(checkpoint.chaserElo) ? checkpoint.chaserElo : INITIAL_ELO;
   evaderElo = Number.isFinite(checkpoint.evaderElo) ? checkpoint.evaderElo : INITIAL_ELO;
@@ -848,7 +918,7 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
   ensureBenchmarkSuite();
   const hasLegacyHallDescriptor = [...chaserHallOfFame.recent, ...chaserHallOfFame.diverse, ...evaderHallOfFame.recent, ...evaderHallOfFame.diverse]
     .some(entry => entry.descriptor.length < 6);
-  if (migratedExplorationFitness || migratedExplorationRewardMode || hasLegacyHallDescriptor) {
+  if (migratedExplorationFitness || migratedExplorationRewardMode || migratedGameplayObjective || hasLegacyHallDescriptor) {
     benchmarkSuiteRevision++;
     lastCrossGenerationBenchmark = null;
     refreshHallOfFameBenchmarkMetadata();
@@ -1028,7 +1098,9 @@ function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number)
             viewportSize,
             upgrades,
             startMode: heldOutStartMode(matchIndex),
-            runnerExplorationRewardPerViewport: trainingFitnessConfig.runnerExplorationRewardPerViewport,
+            runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
+    runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
+    chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
           })
         : runTrainingEpisode(opponentControllers[opponentIndex], controller, seed, {
             trackChaserActions: false,
@@ -1036,7 +1108,9 @@ function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number)
             viewportSize,
             upgrades,
             startMode: heldOutStartMode(matchIndex),
-            runnerExplorationRewardPerViewport: trainingFitnessConfig.runnerExplorationRewardPerViewport,
+            runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
+    runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
+    chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
           });
       total += role === 'chaser' ? result.chaserFitness : result.evaderFitness;
       matches++;
@@ -1055,7 +1129,9 @@ function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number)
             viewportSize,
             upgrades,
             startMode: heldOutStartMode(matchIndex + heldOutIndices.length),
-            runnerExplorationRewardPerViewport: trainingFitnessConfig.runnerExplorationRewardPerViewport,
+            runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
+    runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
+    chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
           })
         : runTrainingEpisode(entry.controller, controller, seed, {
             trackChaserActions: false,
@@ -1063,7 +1139,9 @@ function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number)
             viewportSize,
             upgrades,
             startMode: heldOutStartMode(matchIndex + heldOutIndices.length),
-            runnerExplorationRewardPerViewport: trainingFitnessConfig.runnerExplorationRewardPerViewport,
+            runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
+    runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
+    chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
           });
       total += role === 'chaser' ? result.chaserFitness : result.evaderFitness;
       matches++;
@@ -1233,6 +1311,23 @@ function recordPopulationBalance(result: EpisodeStats) {
   generationRunnerRawRightFrontierExpansionPx += result.runnerRawRightFrontierExpansionPx;
   generationRunnerRightFrontierExpansionPx += result.runnerRightFrontierExpansionPx;
   generationRunnerExplorationBonus += result.runnerExplorationFitnessBonus;
+  generationRunnerPaceBonus += result.runnerPaceFitnessBonus;
+  generationRunnerPaceCompletion += result.runnerPaceCompletion;
+  generationRunnerPaceWindowsSatisfied += result.runnerPaceWindowsSatisfied;
+  generationRunnerPaceWindowsTotal += result.runnerPaceWindowsTotal;
+  generationChaserPursuitBonus += result.chaserPursuitFitnessBonus;
+  generationChaserPursuitLandings += result.chaserPursuitLandings;
+  generationRunnerPlatformLandings += result.runnerPlatformLandings;
+  generationChaserPlatformLandings += result.chaserPlatformLandings;
+  generationRunnerBranchLandings += result.runnerBranchLandings;
+  generationChaserBranchLandings += result.chaserBranchLandings;
+  generationCloseEncounters += result.closeEncounters;
+  generationSuccessfulEvades += result.successfulEvades;
+  generationMeanNearestRunnerDistance += result.meanNearestRunnerDistancePx;
+  generationTimeWithin100Pct += result.timeWithin100Ms / Math.max(1, result.elapsedMs);
+  generationTimeWithin200Pct += result.timeWithin200Ms / Math.max(1, result.elapsedMs);
+  generationTimeWithin400Pct += result.timeWithin400Ms / Math.max(1, result.elapsedMs);
+  generationTagsSoonAfterRunnerFall += result.tagsSoonAfterRunnerFall;
   generationRunnerMaxFrontierExpansionPx = Math.max(generationRunnerMaxFrontierExpansionPx, result.runnerMaxFrontierExpansionPx);
   for (let i = 0; i < ACTION_SPACE.length; i++) {
     generationActionCountsChaser[i] += result.chaserActionCounts[i] || 0;
@@ -1519,6 +1614,23 @@ function resetEvaluationAccumulators() {
   generationRunnerRawRightFrontierExpansionPx = 0;
   generationRunnerRightFrontierExpansionPx = 0;
   generationRunnerExplorationBonus = 0;
+  generationRunnerPaceBonus = 0;
+  generationRunnerPaceCompletion = 0;
+  generationRunnerPaceWindowsSatisfied = 0;
+  generationRunnerPaceWindowsTotal = 0;
+  generationChaserPursuitBonus = 0;
+  generationChaserPursuitLandings = 0;
+  generationRunnerPlatformLandings = 0;
+  generationChaserPlatformLandings = 0;
+  generationRunnerBranchLandings = 0;
+  generationChaserBranchLandings = 0;
+  generationCloseEncounters = 0;
+  generationSuccessfulEvades = 0;
+  generationMeanNearestRunnerDistance = 0;
+  generationTimeWithin100Pct = 0;
+  generationTimeWithin200Pct = 0;
+  generationTimeWithin400Pct = 0;
+  generationTagsSoonAfterRunnerFall = 0;
   generationRunnerMaxFrontierExpansionPx = 0;
   generationActionCountsChaser = new Array<number>(ACTION_SPACE.length).fill(0);
   generationActionCountsEvader = new Array<number>(ACTION_SPACE.length).fill(0);
@@ -1700,6 +1812,22 @@ function finishGeneration() {
     runnerRawRightFrontierExpansionViewportsPerEpisode: generationRunnerRawRightFrontierExpansionPx / Math.max(1, generationPopulationMatches * viewportSize.width),
     runnerRightFrontierExpansionViewportsPerEpisode: generationRunnerRightFrontierExpansionPx / Math.max(1, generationPopulationMatches * viewportSize.width),
     runnerExplorationBonusPerEpisode: generationRunnerExplorationBonus / Math.max(1, generationPopulationMatches),
+    runnerPaceCompletion: generationRunnerPaceCompletion / Math.max(1, generationPopulationMatches),
+    runnerPaceWindowsSatisfiedPerEpisode: generationRunnerPaceWindowsSatisfied / Math.max(1, generationPopulationMatches),
+    runnerPaceBonusPerEpisode: generationRunnerPaceBonus / Math.max(1, generationPopulationMatches),
+    chaserPursuitBonusPerEpisode: generationChaserPursuitBonus / Math.max(1, generationPopulationMatches),
+    chaserPursuitLandingsPerEpisode: generationChaserPursuitLandings / Math.max(1, generationPopulationMatches),
+    runnerPlatformLandingsPerEpisode: generationRunnerPlatformLandings / Math.max(1, generationPopulationMatches),
+    chaserPlatformLandingsPerEpisode: generationChaserPlatformLandings / Math.max(1, generationPopulationMatches),
+    runnerBranchLandingsPerEpisode: generationRunnerBranchLandings / Math.max(1, generationPopulationMatches),
+    chaserBranchLandingsPerEpisode: generationChaserBranchLandings / Math.max(1, generationPopulationMatches),
+    closeEncountersPerEpisode: generationCloseEncounters / Math.max(1, generationPopulationMatches),
+    successfulEvadesPerEpisode: generationSuccessfulEvades / Math.max(1, generationPopulationMatches),
+    meanNearestRunnerDistancePx: generationMeanNearestRunnerDistance / Math.max(1, generationPopulationMatches),
+    timeWithin100Pct: generationTimeWithin100Pct / Math.max(1, generationPopulationMatches),
+    timeWithin200Pct: generationTimeWithin200Pct / Math.max(1, generationPopulationMatches),
+    timeWithin400Pct: generationTimeWithin400Pct / Math.max(1, generationPopulationMatches),
+    tagsSoonAfterRunnerFallPerEpisode: generationTagsSoonAfterRunnerFall / Math.max(1, generationPopulationMatches),
     runnerMaxFrontierExpansionPx: generationRunnerMaxFrontierExpansionPx,
   };
 
@@ -1803,7 +1931,9 @@ function buildAnalysisExport() {
       viewportSize,
       upgrades,
       startMode,
-      runnerExplorationRewardPerViewport: trainingFitnessConfig.runnerExplorationRewardPerViewport,
+      runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
+    runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
+    chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
       recordTrace: true,
       traceIntervalMs: 250,
     });
@@ -1824,6 +1954,23 @@ function buildAnalysisExport() {
         runnerRightFrontierExpansionPx: result.runnerRightFrontierExpansionPx,
         runnerMaxSafeRightProgressPx: result.runnerMaxFrontierExpansionPx,
         runnerExplorationFitnessBonus: result.runnerExplorationFitnessBonus,
+        runnerPaceFitnessBonus: result.runnerPaceFitnessBonus,
+        runnerPaceCompletion: result.runnerPaceCompletion,
+        runnerPaceWindowsSatisfied: result.runnerPaceWindowsSatisfied,
+        runnerPaceWindowsTotal: result.runnerPaceWindowsTotal,
+        chaserPursuitFitnessBonus: result.chaserPursuitFitnessBonus,
+        chaserPursuitLandings: result.chaserPursuitLandings,
+        runnerPlatformLandings: result.runnerPlatformLandings,
+        chaserPlatformLandings: result.chaserPlatformLandings,
+        runnerBranchLandings: result.runnerBranchLandings,
+        chaserBranchLandings: result.chaserBranchLandings,
+        closeEncounters: result.closeEncounters,
+        successfulEvades: result.successfulEvades,
+        meanNearestRunnerDistancePx: result.meanNearestRunnerDistancePx,
+        timeWithin100Ms: result.timeWithin100Ms,
+        timeWithin200Ms: result.timeWithin200Ms,
+        timeWithin400Ms: result.timeWithin400Ms,
+        tagsSoonAfterRunnerFall: result.tagsSoonAfterRunnerFall,
         chaserActionCounts: result.chaserActionCounts,
         runnerActionCounts: result.evaderActionCounts,
         chaserDecisionCount: result.chaserDecisionCount,
@@ -1837,18 +1984,20 @@ function buildAnalysisExport() {
 
   return {
     format: 'neat-tag-training-analysis',
-    version: 2,
+    version: 3,
     generatedAt: Date.now(),
     generation: Math.max(lastChaserMetrics?.generation || 0, lastEvaderMetrics?.generation || 0),
     stateVectorSize: STATE_VECTOR_SIZE,
     actionSpace: [...ACTION_SPACE],
     actionSchema: 'factorized-controls-v1',
+    gameplayObjectiveVersion: 'pace-pursuit-branches-v1',
     viewportSize: { ...viewportSize },
     fitness: {
-      chaser: '100 + 20 * (tags - chaserFalls)',
-      runner: '100 + 20 * (-tags - runnerFalls) + safePerRunnerRightViewports * runnerExplorationRewardPerViewport',
+      chaser: '100 + 20 * (tags - chaserFalls) + capped runner-visited-platform pursuit shaping',
+      runner: '100 + 20 * (-tags - runnerFalls) + capped 2-second pace-window reward',
       config: { ...trainingFitnessConfig },
-      explorationDefinition: 'Per-body SAFE rightward progress only: grounded running banks immediately; airborne progress banks only on successful landing; falls/respawns never earn credit. Progress is averaged across the two runner slots.',
+      paceDefinition: 'Every 2 seconds, SAFE rightward progress across both Runner slots is averaged and converted to a 0..1 completion fraction. Reward saturates at the configured target; extra speed earns nothing.',
+      pursuitDefinition: 'The Chaser earns a small capped reward only for first safe landings on platforms a Runner has already occupied. Tags remain the dominant Chaser reward.',
     },
     upgrades: sanitizeUpgradeConfig(upgradeConfig),
     benchmarkSuiteRevision,
@@ -2029,7 +2178,10 @@ self.onmessage = (event: MessageEvent) => {
 
     case 'SET_TRAINING_FITNESS_CONFIG': {
       const next = sanitizeTrainingFitnessConfig(payload?.trainingFitnessConfig);
-      const changed = next.runnerExplorationRewardPerViewport !== trainingFitnessConfig.runnerExplorationRewardPerViewport;
+      const changed =
+        next.runnerPaceTargetPxPerWindow !== trainingFitnessConfig.runnerPaceTargetPxPerWindow ||
+        next.runnerPaceRewardPerWindow !== trainingFitnessConfig.runnerPaceRewardPerWindow ||
+        next.chaserPursuitRewardPerPlatform !== trainingFitnessConfig.chaserPursuitRewardPerPlatform;
       trainingFitnessConfig = next;
       if (changed) {
         // Do not mix two reward scales inside one generation or benchmark revision.

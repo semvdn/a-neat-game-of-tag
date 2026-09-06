@@ -323,7 +323,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-10 gap-3">
               <MetricCard label="Generation" value={generation} hint="one full population evaluation" />
               <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} hint="tags − own falls; no exploration shaping" />
-              <MetricCard label="Runner best" value={fmt(evaderMetrics?.bestFitness)} hint="−tags − own falls + safe rightward progression" />
+              <MetricCard label="Runner best" value={fmt(evaderMetrics?.bestFitness)} hint="−tags − own falls + capped pace-window reward" />
               <MetricCard label="Species C / R" value={`${chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.speciesCount ?? '—'}`} hint={`reproducing ${chaserMetrics?.reproductiveSpeciesCount ?? chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.reproductiveSpeciesCount ?? evaderMetrics?.speciesCount ?? '—'}`} />
               <MetricCard label="Tag rate" value={balance ? `${(balance.tagRate * 100).toFixed(1)}%` : '—'} hint="contact tags only" />
               <MetricCard label="Runner clean survival" value={balance ? `${(balance.survivalRate * 100).toFixed(1)}%` : '—'} hint="no tag and no runner fall" />
@@ -346,7 +346,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
 
             <div className="grid md:grid-cols-3 gap-3">
               <MetricCard label="Fixed benchmark C" value={benchmark ? fmt(benchmark.chaser.meanFitness) : '—'} hint={benchmark ? `${benchmark.chaser.matches} permanent reference matches` : 'telemetry only; never used for selection'} />
-              <MetricCard label="Fixed benchmark R" value={benchmark ? fmt(benchmark.evader.meanFitness) : '—'} hint={benchmark ? `${benchmark.evader.matches} matches · ${(benchmark.evader.explorationViewportsPerEpisode ?? 0).toFixed(2)} safe views/ep` : 'telemetry only; never used for selection'} />
+              <MetricCard label="Fixed benchmark R" value={benchmark ? fmt(benchmark.evader.meanFitness) : '—'} hint={benchmark ? `${benchmark.evader.matches} matches · ${((benchmark.evader.paceCompletion ?? 0) * 100).toFixed(0)}% pace` : 'telemetry only; never used for selection'} />
               <MetricCard label="Benchmark suite" value={benchmark ? `v${benchmark.suiteRevision}` : `v${diagnostics.benchmarkSuiteRevision ?? 0}`} hint="same frozen opponents, seeds and start modes across generations" />
             </div>
 
@@ -358,10 +358,24 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="grid md:grid-cols-4 gap-3">
-              <MetricCard label="Runner safe-right / episode" value={balance?.runnerFrontierExpansionViewportsPerEpisode != null ? `${balance.runnerFrontierExpansionViewportsPerEpisode.toFixed(2)} view` : '—'} hint={balance?.runnerFrontierExpansionPxPerEpisode != null ? `${balance.runnerFrontierExpansionPxPerEpisode.toFixed(0)} px banked after safe traversal` : 'current-population matches'} />
-              <MetricCard label="Exploration bonus / episode" value={balance?.runnerExplorationBonusPerEpisode != null ? `+${balance.runnerExplorationBonusPerEpisode.toFixed(2)}` : '—'} hint="runner fitness only" />
-              <MetricCard label="Best safe progress / body" value={balance?.runnerMaxFrontierExpansionPx != null ? `${balance.runnerMaxFrontierExpansionPx.toFixed(0)} px` : '—'} hint="largest per-body safe rightward progression in a scored match" />
-              <MetricCard label="Exploration strength" value={`+${(diagnostics.trainingFitnessConfig?.runnerExplorationRewardPerViewport ?? 0).toFixed(1)}/view`} hint="manual runner shaping setting" />
+              <MetricCard label="Runner pace completion" value={balance?.runnerPaceCompletion != null ? `${(balance.runnerPaceCompletion * 100).toFixed(1)}%` : '—'} hint={`${diagnostics.trainingFitnessConfig?.runnerPaceTargetPxPerWindow ?? 0}px target every 2s`} />
+              <MetricCard label="Runner pace bonus / ep" value={balance?.runnerPaceBonusPerEpisode != null ? `+${balance.runnerPaceBonusPerEpisode.toFixed(2)}` : '—'} hint={`capped at +${diagnostics.trainingFitnessConfig?.runnerPaceRewardPerWindow ?? 0} per window`} />
+              <MetricCard label="Chaser pursuit bonus / ep" value={balance?.chaserPursuitBonusPerEpisode != null ? `+${balance.chaserPursuitBonusPerEpisode.toFixed(2)}` : '—'} hint="runner-visited platforms; capped +5 / 2s" />
+              <MetricCard label="Safe right / episode" value={balance?.runnerFrontierExpansionViewportsPerEpisode != null ? `${balance.runnerFrontierExpansionViewportsPerEpisode.toFixed(2)} view` : '—'} hint="diagnostic distance only; no longer linear fitness" />
+            </div>
+
+            <div className="grid md:grid-cols-4 gap-3">
+              <MetricCard label="Close encounters / ep" value={balance?.closeEncountersPerEpisode != null ? balance.closeEncountersPerEpisode.toFixed(2) : '—'} hint="nearest Runner enters ≤180px" />
+              <MetricCard label="Successful evades / ep" value={balance?.successfulEvadesPerEpisode != null ? balance.successfulEvadesPerEpisode.toFixed(2) : '—'} hint="encounter opens back beyond 380px without a tag" />
+              <MetricCard label="Mean chase distance" value={balance?.meanNearestRunnerDistancePx != null ? `${balance.meanNearestRunnerDistancePx.toFixed(0)} px` : '—'} hint={balance?.timeWithin400Pct != null ? `${(balance.timeWithin400Pct * 100).toFixed(0)}% of time within 400px` : 'nearest Runner'} />
+              <MetricCard label="Tags after Runner fall" value={balance?.tagsSoonAfterRunnerFallPerEpisode != null ? balance.tagsSoonAfterRunnerFallPerEpisode.toFixed(2) : '—'} hint="tags within 2s of a Runner fall/respawn" />
+            </div>
+
+            <div className="grid md:grid-cols-4 gap-3">
+              <MetricCard label="Runner landings / ep" value={balance?.runnerPlatformLandingsPerEpisode != null ? balance.runnerPlatformLandingsPerEpisode.toFixed(2) : '—'} hint={balance?.runnerBranchLandingsPerEpisode != null ? `${balance.runnerBranchLandingsPerEpisode.toFixed(2)} on branch routes` : 'new-platform landings'} />
+              <MetricCard label="Chaser landings / ep" value={balance?.chaserPlatformLandingsPerEpisode != null ? balance.chaserPlatformLandingsPerEpisode.toFixed(2) : '—'} hint={balance?.chaserBranchLandingsPerEpisode != null ? `${balance.chaserBranchLandingsPerEpisode.toFixed(2)} on branch routes` : 'new-platform landings'} />
+              <MetricCard label="Pursuit landings / ep" value={balance?.chaserPursuitLandingsPerEpisode != null ? balance.chaserPursuitLandingsPerEpisode.toFixed(2) : '—'} hint="first landing on Runner-used terrain" />
+              <MetricCard label="Pace windows met / ep" value={balance?.runnerPaceWindowsSatisfiedPerEpisode != null ? balance.runnerPaceWindowsSatisfiedPerEpisode.toFixed(2) : '—'} hint="6 possible in a 12s episode" />
             </div>
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
@@ -373,7 +387,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                 ]}
                 emptyLabel="Complete at least two generations to compare champions on the permanent benchmark suite."
               />
-              <p className="mt-2 text-xs text-gray-500">Each champion is tested against the same frozen run-start reference bank, the same permanent seeds, and the same visual/varied/mid-game scenario mix. These matches do not affect fitness, champion selection, Elo, or population telemetry. The suite revision changes when a new run/import is seeded, enabled physics abilities change, or the exploration fitness strength is retuned.</p>
+              <p className="mt-2 text-xs text-gray-500">Each champion is tested against the same frozen run-start reference bank, the same permanent seeds, and the same visual/varied/mid-game scenario mix. These matches do not affect fitness, champion selection, Elo, or population telemetry. The suite revision changes when a new run/import is seeded, enabled physics abilities change, or pace/pursuit shaping is retuned.</p>
             </div>
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
@@ -394,17 +408,26 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/10 p-4">
-              <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-cyan-300" /><h3 className="font-semibold text-white">Runner exploration by generation</h3></div>
+              <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-cyan-300" /><h3 className="font-semibold text-white">Runner pace & safe progression by generation</h3></div>
               <LineChart
                 series={[
-                  { label: 'Safe right (fitness)', values: balanceHistory.map(m => m.runnerRightFrontierExpansionViewportsPerEpisode ?? 0) },
-                  { label: 'Raw right envelope', values: balanceHistory.map(m => m.runnerRawRightFrontierExpansionViewportsPerEpisode ?? 0) },
-                  { label: 'Raw left envelope', values: balanceHistory.map(m => m.runnerLeftFrontierExpansionViewportsPerEpisode ?? 0) },
-                  { label: 'Exploration bonus', values: balanceHistory.map(m => m.runnerExplorationBonusPerEpisode ?? 0) },
+                  { label: 'Pace completion %', values: balanceHistory.map(m => (m.runnerPaceCompletion ?? 0) * 100) },
+                  { label: 'Full windows met %', values: balanceHistory.map(m => ((m.runnerPaceWindowsSatisfiedPerEpisode ?? 0) / 6) * 100) },
                 ]}
-                emptyLabel="Complete generations to populate exploration diagnostics."
+                emptyLabel="Complete generations to populate pace diagnostics."
               />
-              <p className="mt-2 text-xs text-gray-500">Safe right progression is the fitness-bearing signal: grounded motion banks immediately and airborne motion banks only on a successful landing. Raw left/right envelopes remain diagnostic so failed or unbanked movement is still visible without being rewarded.</p>
+              <p className="mt-2 text-xs text-gray-500">Both lines are normalized percentages. The pace reward saturates inside each 2-second window, so 100% means the minimum movement target is being met—not that the Runner should keep accelerating.</p>
+            </div>
+
+            <div className="rounded-xl border border-amber-500/20 bg-amber-950/10 p-4">
+              <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-amber-300" /><h3 className="font-semibold text-white">Chase interaction by generation</h3></div>
+              <LineChart series={[
+                { label: 'Close encounters / ep', values: balanceHistory.map(m => m.closeEncountersPerEpisode ?? 0) },
+                { label: 'Successful evades / ep', values: balanceHistory.map(m => m.successfulEvadesPerEpisode ?? 0) },
+                { label: 'Tags after Runner fall / ep', values: balanceHistory.map(m => m.tagsSoonAfterRunnerFallPerEpisode ?? 0) },
+                { label: 'Chaser pursuit bonus / ep', values: balanceHistory.map(m => m.chaserPursuitBonusPerEpisode ?? 0) },
+              ]} emptyLabel="Complete generations to populate interaction diagnostics." />
+              <p className="mt-2 text-xs text-gray-500">This separates actual pursuit/escape interactions from catches caused mainly by a Runner missing a platform and respawning.</p>
             </div>
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
@@ -420,7 +443,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> persistent NEAT species now carry lineage age and progress across generations, with conservative stagnation pruning and protected young/top lineages. The compact 25-input policy now has factorized left-drive, right-drive, jump and sprint outputs, so horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities. Every genome is evaluated against common opponent panels plus Hall of Fame champions. Recent champions are retained alongside a strength-aware behaviorally diverse historical archive, while a separate fixed benchmark tracks real cross-generation progress without influencing selection. The runner also receives a tunable SAFE per-body rightward progression incentive: grounded travel and successful landings bank progress, while failed jumps, falls and respawn teleports do not. The worker pool preloads genomes and batches episodes for lower messaging overhead.
+              <strong className="text-violet-200">Training architecture:</strong> persistent NEAT species now carry lineage age and progress across generations, with conservative stagnation pruning and protected young/top lineages. The compact 25-input policy now has factorized left-drive, right-drive, jump and sprint outputs, so horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities. Every genome is evaluated against common opponent panels plus Hall of Fame champions. Recent champions are retained alongside a strength-aware behaviorally diverse historical archive, while a separate fixed benchmark tracks real cross-generation progress without influencing selection. Runner shaping is now a capped 2-second pace requirement rather than an unbounded distance reward, and Chaser shaping gives a small capped signal for safely following Runner-used terrain. Jump requires a release before it can fire again, and later procedural terrain can branch into upper/lower routes that reconnect. The worker pool preloads genomes and batches episodes for lower messaging overhead.
             </div>
           </div>
         )}

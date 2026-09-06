@@ -25,8 +25,15 @@ import {
   WORLD_REF_WIDTH,
   ACTION_SPACE,
   STATE_VECTOR_SIZE,
-  DEFAULT_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT,
   POLICY_CONTROL_ACTIVE_THRESHOLD,
+  RUNNER_PACE_WINDOW_MS,
+  DEFAULT_RUNNER_PACE_TARGET_PX,
+  DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW,
+  DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM,
+  CHASER_PURSUIT_REWARD_CAP_PER_WINDOW,
+  CLOSE_ENCOUNTER_ENTER_PX,
+  CLOSE_ENCOUNTER_EXIT_PX,
+  TAG_AFTER_RUNNER_FALL_WINDOW_MS,
 } from '../constants';
 
 const DT = 16.67;
@@ -65,8 +72,27 @@ export interface TrainingEpisodeResult {
   runnerRawRightFrontierExpansionPx: number;
   /** SAFE fitness-bearing rightward progression (averaged across the two runner slots). */
   runnerRightFrontierExpansionPx: number;
-  /** Fitness contribution from runner frontier expansion. Chaser fitness never receives this bonus. */
+  /** Legacy diagnostic alias: safe rightward distance remains recorded but is no longer linear fitness. */
   runnerExplorationFitnessBonus: number;
+  /** Capped minimum-pace fitness accumulated over 2-second windows. */
+  runnerPaceFitnessBonus: number;
+  runnerPaceCompletion: number;
+  runnerPaceWindowsSatisfied: number;
+  runnerPaceWindowsTotal: number;
+  /** Small capped Chaser shaping for safely following Runner-visited platforms. */
+  chaserPursuitFitnessBonus: number;
+  chaserPursuitLandings: number;
+  runnerPlatformLandings: number;
+  chaserPlatformLandings: number;
+  runnerBranchLandings: number;
+  chaserBranchLandings: number;
+  closeEncounters: number;
+  successfulEvades: number;
+  meanNearestRunnerDistancePx: number;
+  timeWithin100Ms: number;
+  timeWithin200Ms: number;
+  timeWithin400Ms: number;
+  tagsSoonAfterRunnerFall: number;
   /** Largest per-body SAFE rightward progression achieved during this scored episode. */
   runnerMaxFrontierExpansionPx: number;
   /** Optional compact behavior trace for user-requested diagnostic probes. */
@@ -88,8 +114,10 @@ export interface TrainingEpisodeTraceAgent {
   moveRight: number;
   jump: number;
   sprint: number;
+  jumpReady: boolean;
   grounded: boolean;
   platformId: number | null;
+  platformStructure?: PlatformState['structureType'];
 }
 
 export interface TrainingEpisodeTraceSample {
@@ -98,6 +126,10 @@ export interface TrainingEpisodeTraceSample {
   runnerFrontierLeftX: number;
   runnerFrontierRightX: number;
   runnerFrontierExpansionPx: number;
+  runnerPaceFitnessBonus: number;
+  chaserPursuitFitnessBonus: number;
+  closeEncounters: number;
+  successfulEvades: number;
   tags: number;
   chaserFalls: number;
   runnerFalls: number;
@@ -115,8 +147,9 @@ export interface TrainingEpisodeOptions {
   upgrades?: ActiveUpgradeState;
   /** visual = exact champion reset; varied = randomized fresh reset; midgame = deterministic real-game pre-roll snapshot; mixed = stochastic blend. */
   startMode?: TrainingStartMode;
-  /** Runner exploration reward in fitness points per logical viewport of SAFE per-runner rightward progression. */
-  runnerExplorationRewardPerViewport?: number;
+  runnerPaceTargetPxPerWindow?: number;
+  runnerPaceRewardPerWindow?: number;
+  chaserPursuitRewardPerPlatform?: number;
   /** Diagnostic-only trace recording; disabled during normal evolutionary evaluation. */
   recordTrace?: boolean;
   traceIntervalMs?: number;
@@ -596,7 +629,7 @@ function createEpisodeState(
  * - start role/spacing is varied across seeds, with the exact visual reset retained as an anchor;
  * - rendering, sounds, trails and explanatory reward telemetry are omitted.
  *
- * Fitness remains sparse: tags are competitive, falls are self-penalties, and runners receive a non-farmable bonus only when they expand the horizontal world frontier.
+ * Fitness remains sparse: tags are competitive, falls are self-penalties, Runner progress is capped by pace windows, and Chaser traversal shaping is small and capped.
  */
 export function runTrainingEpisode(
   chaser: LearningAgent,
@@ -657,15 +690,55 @@ export function runTrainingEpisode(
   if (!Number.isFinite(runnerFrontierLeftX)) runnerFrontierLeftX = viewportSize.width * 0.5;
   if (!Number.isFinite(runnerFrontierRightX)) runnerFrontierRightX = viewportSize.width * 0.5;
 
-  const explorationRewardPerViewport = Math.max(
-    0,
-    Number.isFinite(options.runnerExplorationRewardPerViewport)
-      ? Number(options.runnerExplorationRewardPerViewport)
-      : DEFAULT_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT
-  );
+  const runnerPaceTargetPx = Math.max(1, Number.isFinite(options.runnerPaceTargetPxPerWindow)
+    ? Number(options.runnerPaceTargetPxPerWindow)
+    : DEFAULT_RUNNER_PACE_TARGET_PX);
+  const runnerPaceRewardPerWindow = Math.max(0, Number.isFinite(options.runnerPaceRewardPerWindow)
+    ? Number(options.runnerPaceRewardPerWindow)
+    : DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW);
+  const chaserPursuitRewardPerPlatform = Math.max(0, Number.isFinite(options.chaserPursuitRewardPerPlatform)
+    ? Number(options.chaserPursuitRewardPerPlatform)
+    : DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM);
   const trace = options.recordTrace ? [] as TrainingEpisodeTraceSample[] : undefined;
   const traceIntervalMs = Math.max(DT, options.traceIntervalMs || 250);
   let nextTraceAtMs = 0;
+
+  // Pace reward bookkeeping. Safe progress remains cumulative for diagnostics, but fitness is
+  // settled in capped 2-second windows so running faster than the target gives no extra reward.
+  const paceWindowStartExpansion = new Array<number>(gameState.agents.length).fill(0);
+  let nextPaceWindowAtMs = RUNNER_PACE_WINDOW_MS;
+  let runnerPaceFitnessBonus = 0;
+  let runnerPaceCompletionSum = 0;
+  let runnerPaceWindowsSatisfied = 0;
+  let runnerPaceWindowsTotal = 0;
+
+  // Pursuit shaping rewards the Chaser only for first safe arrivals on terrain a Runner has already
+  // occupied. It is capped every pace window and can never compete numerically with repeated tags.
+  const runnerVisitedPlatformIds = new Set<number>();
+  const chaserRewardedRunnerPlatformIds = new Set<number>();
+  for (const agent of gameState.agents) {
+    if (agent.status !== AgentStatus.It && agent.lastPlatformId != null) runnerVisitedPlatformIds.add(agent.lastPlatformId);
+  }
+  const previousPlatformIds = gameState.agents.map(agent => agent.lastPlatformId);
+  let pursuitBonusThisWindow = 0;
+  let chaserPursuitFitnessBonus = 0;
+  let chaserPursuitLandings = 0;
+  let runnerPlatformLandings = 0;
+  let chaserPlatformLandings = 0;
+  let runnerBranchLandings = 0;
+  let chaserBranchLandings = 0;
+
+  // Interaction diagnostics use distance hysteresis so one prolonged chase counts as one encounter.
+  let closeEncounterActive = false;
+  let closeEncounters = 0;
+  let successfulEvades = 0;
+  let nearestRunnerDistanceAccum = 0;
+  let nearestRunnerDistanceSamples = 0;
+  let timeWithin100Ms = 0;
+  let timeWithin200Ms = 0;
+  let timeWithin400Ms = 0;
+  let tagsSoonAfterRunnerFall = 0;
+  const lastRunnerFallAtMs = new Array<number>(gameState.agents.length).fill(-Infinity);
 
   const chaserActionCounts = new Array<number>(ACTION_SPACE.length).fill(0);
   const evaderActionCounts = new Array<number>(ACTION_SPACE.length).fill(0);
@@ -790,7 +863,37 @@ export function runTrainingEpisode(
       if (physics.fell) {
         if (!firstFallRole) firstFallRole = physics.roleAtStep;
         if (physics.roleAtStep === 'chaser') chaserFalls++;
-        else evaderFalls++;
+        else {
+          evaderFalls++;
+          lastRunnerFallAtMs[i] = gameState.gameTime;
+        }
+      }
+
+      const landedOnNewPlatform = !physics.fell && agent.isOnGround && agent.lastPlatformId != null && agent.lastPlatformId !== previousPlatformIds[i];
+      if (landedOnNewPlatform) {
+        const platform = gameState.platforms.find(p => p.id === agent.lastPlatformId);
+        const isBranch = platform?.structureType === 'branch-upper' || platform?.structureType === 'branch-lower';
+        if (physics.roleAtStep === 'evader') {
+          runnerPlatformLandings++;
+          if (isBranch) runnerBranchLandings++;
+        } else {
+          chaserPlatformLandings++;
+          if (isBranch) chaserBranchLandings++;
+          if (
+            runnerVisitedPlatformIds.has(agent.lastPlatformId) &&
+            !chaserRewardedRunnerPlatformIds.has(agent.lastPlatformId) &&
+            pursuitBonusThisWindow < CHASER_PURSUIT_REWARD_CAP_PER_WINDOW
+          ) {
+            const reward = Math.min(
+              chaserPursuitRewardPerPlatform,
+              CHASER_PURSUIT_REWARD_CAP_PER_WINDOW - pursuitBonusThisWindow
+            );
+            pursuitBonusThisWindow += reward;
+            chaserPursuitFitnessBonus += reward;
+            chaserPursuitLandings++;
+            chaserRewardedRunnerPlatformIds.add(agent.lastPlatformId);
+          }
+        }
       }
 
       if (physics.roleAtStep === 'evader') {
@@ -818,6 +921,37 @@ export function runTrainingEpisode(
           runnerSafeRightX[i] = centerX;
           runnerSafeRightExpansionByBody[i] += expansion;
         }
+        if (agent.isOnGround && agent.lastPlatformId != null) runnerVisitedPlatformIds.add(agent.lastPlatformId);
+      }
+      previousPlatformIds[i] = agent.lastPlatformId;
+    }
+
+    // Measure actual chase interaction before a tag can swap roles this frame.
+    let chaserBody: AgentState | null = null;
+    for (const agent of gameState.agents) if (agent.status === AgentStatus.It) { chaserBody = agent; break; }
+    let nearestRunnerDistance = Infinity;
+    if (chaserBody) {
+      const cx = chaserBody.position.x + AGENT_WIDTH / 2;
+      const cy = chaserBody.position.y + AGENT_HEIGHT / 2;
+      for (const agent of gameState.agents) {
+        if (agent.status === AgentStatus.It) continue;
+        const dx = agent.position.x + AGENT_WIDTH / 2 - cx;
+        const dy = agent.position.y + AGENT_HEIGHT / 2 - cy;
+        nearestRunnerDistance = Math.min(nearestRunnerDistance, Math.hypot(dx, dy));
+      }
+    }
+    if (Number.isFinite(nearestRunnerDistance)) {
+      nearestRunnerDistanceAccum += nearestRunnerDistance;
+      nearestRunnerDistanceSamples++;
+      if (nearestRunnerDistance <= 100) timeWithin100Ms += DT;
+      if (nearestRunnerDistance <= 200) timeWithin200Ms += DT;
+      if (nearestRunnerDistance <= 400) timeWithin400Ms += DT;
+      if (!closeEncounterActive && nearestRunnerDistance <= CLOSE_ENCOUNTER_ENTER_PX) {
+        closeEncounterActive = true;
+        closeEncounters++;
+      } else if (closeEncounterActive && nearestRunnerDistance >= CLOSE_ENCOUNTER_EXIT_PX) {
+        closeEncounterActive = false;
+        successfulEvades++;
       }
     }
 
@@ -826,6 +960,32 @@ export function runTrainingEpisode(
       tags++;
       tagTimeTotalMs += tagTransition.timeToTagMs;
       taggedSurvivalTimeTotalMs += tagTransition.survivalTimeMs;
+      const taggedIndex = gameState.agents.findIndex(agent => agent.id === tagTransition.taggedId);
+      if (taggedIndex >= 0) {
+        if (gameState.gameTime - lastRunnerFallAtMs[taggedIndex] <= TAG_AFTER_RUNNER_FALL_WINDOW_MS) {
+          tagsSoonAfterRunnerFall++;
+        }
+        // Attribute at most one subsequent tag to a particular fall/respawn.
+        lastRunnerFallAtMs[taggedIndex] = -Infinity;
+      }
+      closeEncounterActive = false;
+    }
+
+    // Settle the capped pace window after all safe progress for this frame has been banked.
+    if (gameState.gameTime + 1e-6 >= nextPaceWindowAtMs) {
+      let safeProgressThisWindow = 0;
+      for (let i = 0; i < runnerSafeRightExpansionByBody.length; i++) {
+        safeProgressThisWindow += Math.max(0, runnerSafeRightExpansionByBody[i] - paceWindowStartExpansion[i]);
+        paceWindowStartExpansion[i] = runnerSafeRightExpansionByBody[i];
+      }
+      const averageRunnerProgress = safeProgressThisWindow / 2;
+      const completion = Math.min(1, averageRunnerProgress / runnerPaceTargetPx);
+      runnerPaceFitnessBonus += completion * runnerPaceRewardPerWindow;
+      runnerPaceCompletionSum += completion;
+      runnerPaceWindowsTotal++;
+      if (completion >= 0.999) runnerPaceWindowsSatisfied++;
+      pursuitBonusThisWindow = 0;
+      nextPaceWindowAtMs += RUNNER_PACE_WINDOW_MS;
     }
 
     gameState.cameraPosition.x = updateRunnerCameraX(
@@ -856,6 +1016,10 @@ export function runTrainingEpisode(
         runnerFrontierLeftX,
         runnerFrontierRightX,
         runnerFrontierExpansionPx: runnerSafeRightExpansionByBody.reduce((sum, value) => sum + value, 0) / 2,
+        runnerPaceFitnessBonus,
+        chaserPursuitFitnessBonus,
+        closeEncounters,
+        successfulEvades,
         tags,
         chaserFalls,
         runnerFalls: evaderFalls,
@@ -876,8 +1040,10 @@ export function runTrainingEpisode(
           moveRight: decisions[gameState.agents.indexOf(agent)]?.moveRight || 0,
           jump: decisions[gameState.agents.indexOf(agent)]?.jump || 0,
           sprint: decisions[gameState.agents.indexOf(agent)]?.sprint || 0,
+          jumpReady: agent.jumpArmed !== false,
           grounded: agent.isOnGround,
           platformId: agent.lastPlatformId,
+          platformStructure: gameState.platforms.find(p => p.id === agent.lastPlatformId)?.structureType,
         })),
       });
       nextTraceAtMs += traceIntervalMs;
@@ -895,10 +1061,15 @@ export function runTrainingEpisode(
   const runnerFrontierExpansionPx = safeRightTotalPx / 2;
   const runnerRightFrontierExpansionPx = runnerFrontierExpansionPx;
   const runnerFrontierExpansionViewports = runnerFrontierExpansionPx / Math.max(1, viewportSize.width);
-  const runnerExplorationFitnessBonus = runnerFrontierExpansionViewports * explorationRewardPerViewport;
+  // Kept as a zero-valued legacy field so older analysis consumers do not mistake distance for fitness.
+  const runnerExplorationFitnessBonus = 0;
   const runnerMaxFrontierExpansionPx = Math.max(0, ...runnerSafeRightExpansionByBody);
-  const chaserFitness = FITNESS_BASE + chaserEventScore * FITNESS_PER_EVENT;
-  const evaderFitness = FITNESS_BASE + evaderEventScore * FITNESS_PER_EVENT + runnerExplorationFitnessBonus;
+  const runnerPaceCompletion = runnerPaceWindowsTotal > 0 ? runnerPaceCompletionSum / runnerPaceWindowsTotal : 0;
+  const meanNearestRunnerDistancePx = nearestRunnerDistanceSamples > 0
+    ? nearestRunnerDistanceAccum / nearestRunnerDistanceSamples
+    : 0;
+  const chaserFitness = FITNESS_BASE + chaserEventScore * FITNESS_PER_EVENT + chaserPursuitFitnessBonus;
+  const evaderFitness = FITNESS_BASE + evaderEventScore * FITNESS_PER_EVENT + runnerPaceFitnessBonus;
 
   return {
     chaserFitness,
@@ -925,6 +1096,23 @@ export function runTrainingEpisode(
     runnerRawRightFrontierExpansionPx,
     runnerRightFrontierExpansionPx,
     runnerExplorationFitnessBonus,
+    runnerPaceFitnessBonus,
+    runnerPaceCompletion,
+    runnerPaceWindowsSatisfied,
+    runnerPaceWindowsTotal,
+    chaserPursuitFitnessBonus,
+    chaserPursuitLandings,
+    runnerPlatformLandings,
+    chaserPlatformLandings,
+    runnerBranchLandings,
+    chaserBranchLandings,
+    closeEncounters,
+    successfulEvades,
+    meanNearestRunnerDistancePx,
+    timeWithin100Ms,
+    timeWithin200Ms,
+    timeWithin400Ms,
+    tagsSoonAfterRunnerFall,
     runnerMaxFrontierExpansionPx,
     trace,
   };

@@ -13,6 +13,8 @@ import {
   GRAVITY,
   JUMP_ENERGY_COST,
   JUMP_STRENGTH,
+  JUMP_PRESS_THRESHOLD,
+  JUMP_RELEASE_THRESHOLD,
   MAX_SPEED,
   MIN_PLATFORM_GAP_X,
   MAX_PLATFORM_GAP_X,
@@ -22,6 +24,9 @@ import {
   PLATFORM_MIN_WIDTH,
   PLATFORM_SPAWN_BUFFER,
   POLICY_CONTROL_ACTIVE_THRESHOLD,
+  BRANCH_STRUCTURE_MIN_X,
+  BRANCH_STRUCTURE_BASE_CHANCE,
+  BRANCH_STRUCTURE_MAX_CHANCE,
   SPRINT_ACCELERATION_MULTIPLIER,
   TAG_COOLDOWN,
   NEW_CHASER_TAG_DELAY_MS,
@@ -158,7 +163,9 @@ export function stepAgentPhysicsInPlace(
   let jumpPower = 0;
   let jumped = false;
   let jumpVelocity = 0;
-  if (jumpControl >= POLICY_CONTROL_ACTIVE_THRESHOLD && agent.isOnGround) {
+  let jumpArmed = agent.jumpArmed !== false;
+  if (jumpControl <= JUMP_RELEASE_THRESHOLD) jumpArmed = true;
+  if (jumpArmed && jumpControl >= JUMP_PRESS_THRESHOLD && agent.isOnGround) {
     jumpPower = controlledJumpEnabledForRole
       ? CONTROLLED_JUMP_MIN_POWER_RATIO + (1 - CONTROLLED_JUMP_MIN_POWER_RATIO) * jumpControl
       : 1;
@@ -171,6 +178,7 @@ export function stepAgentPhysicsInPlace(
       jumpVelocity = velocityY;
       energy -= jumpCost;
       jumped = true;
+      jumpArmed = false;
     }
   }
 
@@ -266,6 +274,7 @@ export function stepAgentPhysicsInPlace(
   agent.cameraFrameContact = contactSide;
   agent.sprintIntensity = sprintIntensity;
   agent.jumpPower = jumpPower;
+  agent.jumpArmed = jumpArmed;
   agent.survivalTime = agent.survivalTime || 0;
   agent.timeSinceBecameIt = agent.timeSinceBecameIt || 0;
 
@@ -405,11 +414,67 @@ function generatePlatform(
     id,
     width: newWidth,
     height: PLATFORM_HEIGHT,
+    structureType: 'normal',
     position: {
       x: toLeft ? baseX - newWidth - gapX : baseX + gapX,
       y: clampedY,
     },
   };
+}
+
+function clampPlatformY(y: number, viewportHeight: number): number {
+  return Math.min(viewportHeight - 120, Math.max(250, y));
+}
+
+function branchChanceAtX(x: number): number {
+  if (x < BRANCH_STRUCTURE_MIN_X) return 0;
+  const t = Math.max(0, Math.min(1, (x - BRANCH_STRUCTURE_MIN_X) / 10000));
+  return BRANCH_STRUCTURE_BASE_CHANCE + (BRANCH_STRUCTURE_MAX_CHANCE - BRANCH_STRUCTURE_BASE_CHANCE) * t;
+}
+
+function appendForwardSegment(
+  platforms: PlatformState[],
+  rightmostPlatform: PlatformState,
+  viewportHeight: number,
+  nextPlatformId: number,
+  rng: () => number
+): { rightmost: PlatformState; nextPlatformId: number } {
+  const baseRight = rightmostPlatform.position.x + rightmostPlatform.width;
+  if (rng() >= branchChanceAtX(baseRight)) {
+    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng);
+    platforms.push(p);
+    return { rightmost: p, nextPlatformId };
+  }
+
+  const groupId = nextPlatformId;
+  const entryGap = 70 + rng() * 55;
+  const upperWidth = 200 + rng() * 90;
+  const lowerWidth = 230 + rng() * 100;
+  const upperX = baseRight + entryGap;
+  const lowerX = baseRight + entryGap + 20 + rng() * 35;
+  const upperY = clampPlatformY(rightmostPlatform.position.y - (75 + rng() * 55), viewportHeight);
+  const lowerY = clampPlatformY(rightmostPlatform.position.y + (55 + rng() * 65), viewportHeight);
+  const upper: PlatformState = {
+    id: nextPlatformId++, width: upperWidth, height: PLATFORM_HEIGHT,
+    position: { x: upperX, y: upperY }, structureType: 'branch-upper', branchGroupId: groupId,
+  };
+  const lower: PlatformState = {
+    id: nextPlatformId++, width: lowerWidth, height: PLATFORM_HEIGHT,
+    position: { x: lowerX, y: lowerY }, structureType: 'branch-lower', branchGroupId: groupId,
+  };
+  const branchEnd = Math.max(upperX + upperWidth, lowerX + lowerWidth);
+  const mergeGap = 75 + rng() * 55;
+  const mergeWidth = 250 + rng() * 100;
+  const mergeY = clampPlatformY(rightmostPlatform.position.y + (rng() - 0.5) * 60, viewportHeight);
+  const merge: PlatformState = {
+    id: nextPlatformId++, width: mergeWidth, height: PLATFORM_HEIGHT,
+    position: { x: branchEnd + mergeGap, y: mergeY }, structureType: 'merge', branchGroupId: groupId,
+  };
+
+  // Keep x-order because rolling generation relies on the last entry being the forward-most segment.
+  if (upper.position.x <= lower.position.x) platforms.push(upper, lower, merge);
+  else platforms.push(lower, upper, merge);
+  return { rightmost: merge, nextPlatformId };
 }
 
 /**
@@ -450,15 +515,9 @@ export function maintainPlatformsForCameraInPlace(
   if (platforms.length > 0) {
     let rightmostPlatform = platforms[platforms.length - 1];
     while (rightmostPlatform.position.x + rightmostPlatform.width < rightGenerationEdge) {
-      const newPlatform = generatePlatform(
-        rightmostPlatform.position.x + rightmostPlatform.width,
-        rightmostPlatform.position.y,
-        viewportSize.height,
-        nextPlatformId++,
-        rng
-      );
-      platforms.push(newPlatform);
-      rightmostPlatform = newPlatform;
+      const generated = appendForwardSegment(platforms, rightmostPlatform, viewportSize.height, nextPlatformId, rng);
+      rightmostPlatform = generated.rightmost;
+      nextPlatformId = generated.nextPlatformId;
     }
   }
 
@@ -524,15 +583,9 @@ export function maintainPlatformsForCamera(
   if (retained.length > 0) {
     let rightmostPlatform = retained[retained.length - 1];
     while (rightmostPlatform.position.x + rightmostPlatform.width < rightGenerationEdge) {
-      const newPlatform = generatePlatform(
-        rightmostPlatform.position.x + rightmostPlatform.width,
-        rightmostPlatform.position.y,
-        viewportSize.height,
-        nextPlatformId++,
-        rng
-      );
-      retained.push(newPlatform);
-      rightmostPlatform = newPlatform;
+      const generated = appendForwardSegment(retained, rightmostPlatform, viewportSize.height, nextPlatformId, rng);
+      rightmostPlatform = generated.rightmost;
+      nextPlatformId = generated.nextPlatformId;
     }
   }
 

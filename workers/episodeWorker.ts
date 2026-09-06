@@ -75,7 +75,9 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
         trackEvaderActions: task.trackEvaderActions,
         upgrades: loadedUpgrades,
         startMode: task.startMode,
-        runnerExplorationRewardPerViewport: loadedFitnessConfig?.runnerExplorationRewardPerViewport,
+        runnerPaceTargetPxPerWindow: loadedFitnessConfig?.runnerPaceTargetPxPerWindow,
+        runnerPaceRewardPerWindow: loadedFitnessConfig?.runnerPaceRewardPerWindow,
+        chaserPursuitRewardPerPlatform: loadedFitnessConfig?.chaserPursuitRewardPerPlatform,
       });
       return { taskId: task.taskId, result };
     });

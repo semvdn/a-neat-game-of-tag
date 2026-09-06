@@ -45,8 +45,14 @@ export interface UpgradeConfig {
   controlledJump: UpgradeRule;
 }
 export interface TrainingFitnessConfig {
-  /** Runner-only reward for one logical viewport of SAFE per-runner rightward progression. */
-  runnerExplorationRewardPerViewport: number;
+  /** SAFE rightward distance needed across the two Runner slots in each 2-second pace window. */
+  runnerPaceTargetPxPerWindow: number;
+  /** Maximum Runner fitness earned for satisfying one pace window. */
+  runnerPaceRewardPerWindow: number;
+  /** Chaser shaping for a first safe landing on a platform a Runner has already occupied. */
+  chaserPursuitRewardPerPlatform: number;
+  /** Legacy field accepted only when migrating older checkpoints/settings. */
+  runnerExplorationRewardPerViewport?: number;
 }
 
 export interface ActiveUpgradeState {
@@ -92,6 +98,8 @@ export interface AgentState {
   cameraFrameContact?: 'left' | 'right' | null;
   sprintIntensity?: number;
   jumpPower?: number;
+  /** Mechanical jump latch: false after a jump until the jump output is released. */
+  jumpArmed?: boolean;
 }
 
 export interface PlatformState {
@@ -99,6 +107,8 @@ export interface PlatformState {
   position: Vector2D;
   width: number;
   height: number;
+  structureType?: 'normal' | 'branch-upper' | 'branch-lower' | 'merge';
+  branchGroupId?: number;
 }
 
 export interface TagEffect {
@@ -181,6 +191,23 @@ export interface BalanceTelemetry {
   runnerRightFrontierExpansionViewportsPerEpisode?: number;
   runnerExplorationBonusPerEpisode?: number;
   runnerMaxFrontierExpansionPx?: number;
+  /** Mean fraction (0..1) of the capped Runner pace target achieved per pace window. */
+  runnerPaceCompletion?: number;
+  runnerPaceWindowsSatisfiedPerEpisode?: number;
+  runnerPaceBonusPerEpisode?: number;
+  chaserPursuitBonusPerEpisode?: number;
+  chaserPursuitLandingsPerEpisode?: number;
+  runnerPlatformLandingsPerEpisode?: number;
+  chaserPlatformLandingsPerEpisode?: number;
+  runnerBranchLandingsPerEpisode?: number;
+  chaserBranchLandingsPerEpisode?: number;
+  closeEncountersPerEpisode?: number;
+  successfulEvadesPerEpisode?: number;
+  meanNearestRunnerDistancePx?: number;
+  timeWithin100Pct?: number;
+  timeWithin200Pct?: number;
+  timeWithin400Pct?: number;
+  tagsSoonAfterRunnerFallPerEpisode?: number;
 }
 
 export interface BenchmarkRoleTelemetry {
@@ -198,6 +225,9 @@ export interface BenchmarkRoleTelemetry {
   idleActionShare: number;
   /** Candidate runner frontier expansion on the permanent benchmark; 0 for chaser-role benchmarks. */
   explorationViewportsPerEpisode?: number;
+  paceCompletion?: number;
+  pursuitBonusPerEpisode?: number;
+  closeEncountersPerEpisode?: number;
 }
 
 export interface CrossGenerationBenchmarkTelemetry {

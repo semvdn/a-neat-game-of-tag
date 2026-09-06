@@ -46,6 +46,10 @@ export const MAX_PLATFORM_GAP_Y = 120;
 // hold horizontal drive while jumping (and sprinting when that manual ability is enabled).
 export const ACTION_SPACE = ["move_left", "move_right", "jump", "sprint"];
 export const POLICY_CONTROL_ACTIVE_THRESHOLD = 0.10;
+// Jump behaves like a button rather than a held auto-repeat control. A press must cross the high
+// threshold, and another jump is impossible until the output is released below the low threshold.
+export const JUMP_PRESS_THRESHOLD = 0.55;
+export const JUMP_RELEASE_THRESHOLD = 0.20;
 // Compact non-redundant senses:
 // 5 self + 2 policy-frame boundaries + 1 target/threat cooldown + 2 current/reference ledges
 // + 9 semantic platform slots + 4 target/threat dynamics + 2 teammate position = 25.
@@ -87,12 +91,31 @@ export const NEAT_CHAMPION_VALIDATION_CURRENT_OPPONENTS = 4;
 export const NEAT_CHAMPION_VALIDATION_HOF_OPPONENTS = 2;
 export const NEAT_EPISODE_MAX_MS = 12000;
 
-// Minimal exploration shaping. Runner fitness rewards SAFE rightward progression: each physical
-// body banks new rightward frontier only while grounded / after a successful landing. Airborne
-// distance that ends in a fall is never banked. Per-body banked progress is averaged across the
-// two simultaneous runner slots so one body cannot hide a stationary teammate behind a team max.
-export const DEFAULT_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT = 50;
-export const MAX_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT = 100;
+// Gameplay-interest shaping. Runner progression is a capped minimum-pace objective rather than an
+// unbounded distance race. Every 2-second window asks for modest SAFE rightward progress; going
+// faster than the target earns nothing extra, leaving room for dodging, reversing, route choice and
+// waiting for terrain. Chaser traversal shaping is deliberately much smaller than a +20 tag.
+export const RUNNER_PACE_WINDOW_MS = 2000;
+export const DEFAULT_RUNNER_PACE_TARGET_PX = 260;
+export const MIN_RUNNER_PACE_TARGET_PX = 100;
+export const MAX_RUNNER_PACE_TARGET_PX = 600;
+export const DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW = 15;
+export const MAX_RUNNER_PACE_REWARD_PER_WINDOW = 30;
+export const DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM = 2.5;
+export const MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM = 8;
+export const CHASER_PURSUIT_REWARD_CAP_PER_WINDOW = 5;
+
+// Interaction diagnostics / evade hysteresis.
+export const CLOSE_ENCOUNTER_ENTER_PX = 180;
+export const CLOSE_ENCOUNTER_EXIT_PX = 380;
+export const TAG_AFTER_RUNNER_FALL_WINDOW_MS = 2000;
+
+// Branch-and-reconnect structures become more frequent farther from the origin. Both routes are
+// intentionally reachable and reconnect quickly so choosing a branch creates pursuit/interception
+// opportunities instead of permanently separating the players.
+export const BRANCH_STRUCTURE_MIN_X = 1800;
+export const BRANCH_STRUCTURE_BASE_CHANCE = 0.08;
+export const BRANCH_STRUCTURE_MAX_CHANCE = 0.28;
 export const NEAT_COMPATIBILITY_THRESHOLD = 0.8;
 export const NEAT_TARGET_SPECIES = 8;
 export const NEAT_CROSSOVER_RATE = 0.75;

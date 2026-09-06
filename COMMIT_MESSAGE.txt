@@ -1,1 +1,1 @@
-Factorize controls and reward safe runner progression
+Add capped pace shaping, pursuit play and branching routes

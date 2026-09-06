@@ -10,6 +10,7 @@ The controller intentionally stays small, but its four outputs are now **factori
 - **Simultaneous controls:** left/right drive and jump can be active on the same physics step; Sprint is independent and ignored when the manual Sprint ability is disabled
 - **Policy inputs:** **25 compact state values**
 - **Role-specific networks:** the chaser and runner use separate NEAT populations
+- **Jump button hysteresis:** jump fires only on a high press and cannot fire again until the output is released below a lower release threshold, eliminating held-output auto-repeat
 - **Controlled Jump:** when enabled manually, jump-output magnitude controls jump power/cost instead of requiring a separate action
 
 ### Compact 25-input sense vector
@@ -61,17 +62,22 @@ Every evaluation runs for the full **12-second simulated horizon**. A tag does n
 
 Falls also do not end an episode. The shared fair-respawn routine restores the fallen body while preserving its role, and play continues.
 
-### Sparse event fitness + safe Runner progression
+### Sparse event fitness + capped gameplay pace
 
-Training keeps the competitive objective sparse and adds one traversal incentive for the Runner.
+The competitive objective stays sparse, but movement shaping is designed to avoid both known trivial optima: camping and maximum-speed endless running.
 
-- **Chaser fitness:** `100 + 20 × (contactTags - chaserFalls)`
-- **Runner fitness:** `100 + 20 × (-contactTags - runnerFalls) + safeRightViewports × explorationStrength`
-- default `explorationStrength = +50 fitness / safely banked 1200 px viewport` (manually adjustable from 0–100).
+- **Chaser fitness:** `100 + 20 × (contactTags - chaserFalls) + cappedPursuitTraversal`
+- **Runner fitness:** `100 + 20 × (-contactTags - runnerFalls) + cappedPaceReward`
+- **Runner pace window:** 2 seconds
+- **Default pace target:** 260 px of SAFE rightward progress per window, averaged across the two Runner slots
+- **Default pace reward:** up to +15 per window; progress beyond the target earns **zero extra fitness**
+- **Chaser pursuit shaping:** +2.5 for a first safe landing on terrain already occupied by a Runner, capped at +5 per 2-second window
 
-Tags are the only directly competitive event: every contact tag rewards the Chaser and penalizes the Runner. Falls are strictly self-penalties. A Runner fall lowers only Runner fitness, and a Chaser fall lowers only Chaser fitness; the opponent receives no fitness benefit from another agent's platforming failure.
+SAFE rightward progress is still banked only while grounded or after a successful landing; failed airborne distance and respawn teleports never count. The key difference is that safe distance is no longer linearly rewarded forever. Each 2-second window converts progress into a `0..1` completion fraction and caps the reward at the target. A Runner therefore has an incentive to keep the game moving, but no fitness reason to run flat-out once it has satisfied the current pace window. It can reverse, dodge, wait for terrain, or choose a branch without sacrificing additional distance reward.
 
-Runner exploration fitness is based on **per-body safe rightward progression**, not raw X displacement or a single team maximum. Each physical body keeps its own safe right frontier while it is controlled by the Runner policy. Grounded rightward running banks immediately; airborne travel is only banked when the body successfully lands. If it falls, the airborne distance earns zero and any respawn teleport is absorbed into the baseline without reward. Role-entry positions after a tag are also rebased without reward so Chaser movement can never be misattributed to the Runner. The banked progress from all bodies is divided by the two simultaneous Runner slots, preventing one highly exploratory body from fully hiding a stationary teammate. Raw left/right envelopes are still recorded diagnostically but do not affect fitness. At the default strength, one full safely traversed viewport is worth +50, deliberately strong enough to compete with the old stationary-jumping local optimum while falls/tags remain -20 each.
+The Chaser's small terrain-following reward improves credit assignment for multi-platform pursuit without replacing the main objective. A +20 tag remains much more valuable than one traversal event, and the pursuit signal is hard-capped each window.
+
+Falls remain self-penalties only: a Runner fall does not reward the Chaser, and a Chaser fall does not reward the Runner.
 
 ## Visual-game parity and start diversity
 
@@ -108,6 +114,13 @@ Fitness comparisons use **common opponent panels** rather than different random 
 
 Every candidate in a role sees the same opponent identities and scenario seeds for that evaluation round. The strongest candidates are then separately re-tested on a held-out panel before champion selection.
 
+
+
+## Branch-and-reconnect terrain
+
+The rolling procedural generator now begins introducing route-choice structures after roughly `x = 1800` and increases their probability farther from the origin. Each structure contains an upper branch, a lower branch, and a shared merge platform shortly afterward.
+
+Both routes are deliberately reachable and reconnect quickly. This gives the Runner a route choice while allowing the Chaser to follow directly or attempt an interception, instead of permanently separating the players. Branch generation uses the same deterministic RNG in visual and headless simulation, preserves the platform array's x-order, and branch landings are tracked separately in diagnostics. Upper/lower branches are subtly differentiated visually so route choices are readable during champion play.
 
 ## Persistent long-term species management
 
@@ -214,7 +227,7 @@ The persistence controls now save **full NEAT evolutionary checkpoints**, not on
 - the accumulated per-generation analysis log;
 - UI diagnostic histories when saved/exported through the app.
 
-Checkpoints are captured at **completed-generation boundaries**. If Save/Export is pressed while evaluator workers are halfway through the next generation, the latest complete boundary is written rather than serializing an inconsistent subset of completed worker batches. Restoring resumes that full population at the beginning of its next evaluation. Champion-only JSON created by this factorized-control build can seed fresh populations/species/Hall-of-Fame state. Pre-factorized left/right/jump/wait policies and v1 full checkpoints are intentionally rejected because their four outputs have different semantics.
+Checkpoints are captured at **completed-generation boundaries**. If Save/Export is pressed while evaluator workers are halfway through the next generation, the latest complete boundary is written rather than serializing an inconsistent subset of completed worker batches. Restoring resumes that full population at the beginning of its next evaluation. Champion-only JSON created by the factorized-control builds can seed fresh populations/species/Hall-of-Fame state. Existing factorized v2 checkpoints remain structurally loadable; when an older objective checkpoint is restored, pace/pursuit defaults are migrated and the fixed benchmark/Hall-of-Fame descriptors are refreshed onto a new suite revision. Pre-factorized left/right/jump/wait policies remain incompatible because their four outputs have different semantics.
 
 The full checkpoint JSON can become much larger than a champion-only file; **Export checkpoint** is therefore the most robust long-term archive path. Browser-local Save still uses local storage and can hit the browser's quota on very large, highly complex populations.
 
@@ -228,7 +241,7 @@ Each completed generation is now evaluated on a run-local benchmark suite that i
 - this produces 9 fixed matches per role (18 total) after each generation;
 - benchmark matches do **not** change genome fitness, champion selection, Elo, Hall-of-Fame matchup telemetry, or population balance counters.
 
-The diagnostics panel stores the benchmark score by generation, so unlike coevolutionary training fitness it is directly comparable from one generation to the next. The suite revision is reset when a new run/model import establishes a new frozen reference bank, and is also advanced when Sprint/Controlled Jump physics settings or the Runner exploration fitness strength change because scores across different capability/reward configurations are not strictly comparable.
+The diagnostics panel stores the benchmark score by generation, so unlike coevolutionary training fitness it is directly comparable from one generation to the next. The suite revision is reset when a new run/model import establishes a new frozen reference bank, and is also advanced when Sprint/Controlled Jump physics settings or pace/pursuit shaping values change because scores across different capability/reward configurations are not strictly comparable.
 
 ## Behaviorally diverse Hall of Fame
 
@@ -236,7 +249,7 @@ The Hall of Fame remains bounded to 12 champions per role, but historical retent
 
 - the 4 most recent champions are always retained;
 - the remaining 8 slots are reserved for behaviorally diverse historical champions;
-- every champion receives a behavioral descriptor from the fixed benchmark: tag involvement, own-fall rate, right-drive activation, jump activation, sprint activation, idle rate, and (for Runners) normalized safe rightward progression;
+- every champion receives a behavioral descriptor from the fixed benchmark: tag involvement, own-fall rate, right-drive activation, jump activation, sprint activation, idle rate, and (for Runners) pace completion / (for Chasers) normalized pursuit traversal;
 - champions that occupy nearly the same behavioral niche compete directly, with the stronger fixed-benchmark representative retained;
 - once the historical archive is full, replacement balances behavioral novelty (75%) with fixed-benchmark strength (25%).
 
@@ -247,13 +260,13 @@ This keeps the opponent league from filling with many generations of effectively
 
 The Diagnostics → Models tab includes **Export analysis JSON**. This is intentionally smaller and more analysis-oriented than a full evolutionary checkpoint. It contains:
 
-- a retained per-generation record (up to 5000 generations) with population fitness/species metrics, balance, fixed benchmark, Hall-of-Fame state, role Elo, action shares and Runner frontier metrics;
+- a retained per-generation record (up to 5000 generations) with population fitness/species metrics, balance, fixed benchmark, Hall-of-Fame state, role Elo, action shares, pace/pursuit shaping, landings and chase-interaction metrics;
 - the exploration reward configuration used for each generation, so later retuning is visible in the history;
-- safe rightward progression plus raw left/right Runner envelopes in logical viewports per episode;
+- Runner pace completion/reward, safe rightward progression, raw left/right envelopes, platform/branch landings and Chaser pursuit traversal;
 - the current run totals/configuration;
 - three deterministic current-champion probe episodes (exact visual, varied fresh and true mid-game), sampled every 250 ms.
 
-Each probe sample records camera X, left/right Runner envelope, safe banked progression, tags/falls, generated platform range, and every body's x/y position, velocity, role, status, cooldown, stamina, primary action label, independent left/right/jump/sprint control strengths, grounded state and platform id. Uploading this analysis JSON in a later conversation makes it possible to diagnose camping, oscillation, directional collapse, repeated fall loops, weak pursuit, action saturation and whether exploration is actually producing deeper level traversal.
+Each probe sample records camera X, Runner safe/raw progression, accumulated pace/pursuit shaping, close encounters/evades, tags/falls, generated platform range, and every body's x/y position, velocity, role, status, cooldown, stamina, jump-latch readiness, independent left/right/jump/sprint controls, grounded state, platform id and branch/merge structure type. Uploading this analysis JSON in a later conversation makes it possible to diagnose camping, oscillation, directional collapse, repeated fall loops, weak pursuit, action saturation and whether exploration is actually producing deeper level traversal. It also records close encounters, successful evades, nearest-Runner distance, time spent within 100/200/400 px, new-platform and branch landings, and tags occurring within two seconds of a Runner fall/respawn so genuine pursuit can be separated from catches caused mainly by platform mistakes.
 
 
 ## Training sleep / stall resilience
