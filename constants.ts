@@ -14,12 +14,12 @@ export const FRICTION = 0.9; // closer to 1 is less friction
 export const MAX_SPEED = 5;
 export const JUMP_STRENGTH = -13;
 
-// Progression upgrades. These do not change the original 4-action controller or 39-input senses.
-// Sprint uses the strength of an already-selected left/right NEAT output as a continuous intensity.
+// Optional manual abilities. The policy has four factorized outputs: left drive, right drive, jump, sprint.
+// Sprint is ignored when the manual Sprint upgrade is disabled.
 export const SPRINT_MAX_SPEED = 7.25;
 export const SPRINT_ACCELERATION_MULTIPLIER = 1.35;
 export const SPRINT_ENERGY_COST_PER_SEC = 28;
-// Controlled jump uses the strength of the already-selected jump output to scale the original jump.
+// Controlled jump uses the independent jump output strength to scale the original jump.
 export const CONTROLLED_JUMP_MIN_POWER_RATIO = 0.45;
 export const CONTROLLED_JUMP_MIN_ENERGY_COST = 4;
 
@@ -30,6 +30,7 @@ export const JUMP_ENERGY_COST = 10;
 
 // Tag mechanics
 export const TAG_COOLDOWN = 2000; // 2 seconds in ms
+export const NEW_CHASER_TAG_DELAY_MS = 600; // brief no-tag window immediately after becoming Chaser
 
 // Platform generation
 export const PLATFORM_MIN_WIDTH = 180;
@@ -41,12 +42,14 @@ export const MAX_PLATFORM_GAP_X = 200;
 export const MIN_PLATFORM_GAP_Y = -120;
 export const MAX_PLATFORM_GAP_Y = 120;
 
-// Learning Agent - Base Abilities Action Space
-export const ACTION_SPACE = ["move_left", "move_right", "jump", "wait"];
-// 6 self + 3 explicit boundary + 4 platform ledge + (3 nearby_plats * 3 feats = 9) + 4 target + 4 teammate + 8 lidar_rays + 1 bias = 39
-export const NUM_LIDAR_RAYS = 8;
-export const LIDAR_MAX_DISTANCE = 350;
-export const STATE_VECTOR_SIZE = 39;
+// Learning Agent - factorized policy outputs. These are NOT mutually exclusive actions: an agent can
+// hold horizontal drive while jumping (and sprinting when that manual ability is enabled).
+export const ACTION_SPACE = ["move_left", "move_right", "jump", "sprint"];
+export const POLICY_CONTROL_ACTIVE_THRESHOLD = 0.10;
+// Compact non-redundant senses:
+// 5 self + 2 policy-frame boundaries + 1 target/threat cooldown + 2 current/reference ledges
+// + 9 semantic platform slots + 4 target/threat dynamics + 2 teammate position = 25.
+export const STATE_VECTOR_SIZE = 25;
 // Invariant Coordinate Reference (prevents window resizing from changing neural network inputs)
 export const WORLD_REF_WIDTH = 1200;
 export const WORLD_REF_HEIGHT = 800;
@@ -70,9 +73,26 @@ export const TIME_TO_TAG_HISTORY_LENGTH = 10; // Average over the last N tag tim
 export const NEAT_POPULATION_SIZE = 48;
 export const NEAT_OPPONENTS_PER_GENOME = 3;
 export const NEAT_HOF_OPPONENTS_PER_GENOME = 1; // extra historical opponent per genome once the archive is populated
-export const NEAT_HOF_MAX_SIZE = 12; // per role: recent champions + a reservoir sample of older champions
+export const NEAT_HOF_MAX_SIZE = 12; // per role: recent champions + behaviorally diverse historical champions
 export const NEAT_HOF_RECENT_SLOTS = 4;
+export const NEAT_HOF_SIMILARITY_THRESHOLD = 0.16; // descriptors closer than this are treated as the same behavioral niche
+export const NEAT_HOF_NOVELTY_WEIGHT = 0.75; // historical archive utility = novelty + fixed-benchmark strength
+export const NEAT_BENCHMARK_REFERENCES_PER_ROLE = 3; // frozen at the beginning of a run; never used for selection
+export const NEAT_BENCHMARK_START_MODES = 3; // exact visual, varied fresh, and true mid-game per frozen reference
+// Main population evaluation uses a common opponent panel: every candidate in a role is
+// compared against the same opponents/scenario seeds, eliminating most opponent-draw noise.
+// The strongest few then face a separate held-out panel before one is accepted as champion.
+export const NEAT_CHAMPION_VALIDATION_CANDIDATES = 4;
+export const NEAT_CHAMPION_VALIDATION_CURRENT_OPPONENTS = 4;
+export const NEAT_CHAMPION_VALIDATION_HOF_OPPONENTS = 2;
 export const NEAT_EPISODE_MAX_MS = 12000;
+
+// Minimal exploration shaping. Runner fitness rewards SAFE rightward progression: each physical
+// body banks new rightward frontier only while grounded / after a successful landing. Airborne
+// distance that ends in a fall is never banked. Per-body banked progress is averaged across the
+// two simultaneous runner slots so one body cannot hide a stationary teammate behind a team max.
+export const DEFAULT_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT = 50;
+export const MAX_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT = 100;
 export const NEAT_COMPATIBILITY_THRESHOLD = 0.8;
 export const NEAT_TARGET_SPECIES = 8;
 export const NEAT_CROSSOVER_RATE = 0.75;

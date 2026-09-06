@@ -21,10 +21,9 @@ export enum AgentStatus {
 
 export type RewardBreakdown = { [key: string]: number };
 
-export type UpgradeMode = 'off' | 'auto' | 'on';
+export type UpgradeMode = 'off' | 'on';
 export interface UpgradeRule {
   mode: UpgradeMode;
-  threshold: number;
   chaserEnabled: boolean;
   runnerEnabled: boolean;
 }
@@ -45,6 +44,11 @@ export interface UpgradeConfig {
   sprint: SprintUpgradeRule;
   controlledJump: UpgradeRule;
 }
+export interface TrainingFitnessConfig {
+  /** Runner-only reward for one logical viewport of SAFE per-runner rightward progression. */
+  runnerExplorationRewardPerViewport: number;
+}
+
 export interface ActiveUpgradeState {
   sprint: boolean;
   controlledJump: boolean;
@@ -58,14 +62,6 @@ export interface ActiveUpgradeState {
   sprintRunnerStaminaCostPerSec: number;
 }
 
-export interface LidarRayData {
-  angle: number;
-  direction: Vector2D;
-  distance: number;
-  normalizedDistance: number;
-  hitPoint: Vector2D | null;
-  maxDistance: number;
-}
 
 export interface AgentState {
   id: number;
@@ -92,7 +88,6 @@ export interface AgentState {
   modelPerformance?: number;
   elo?: number;
   role?: 'chaser' | 'evader';
-  lidarRays?: LidarRayData[];
   touchingCameraFrame?: boolean;
   cameraFrameContact?: 'left' | 'right' | null;
   sprintIntensity?: number;
@@ -158,26 +153,6 @@ export interface PerformanceDataPoint {
   evaderElo?: number;
 }
 
-export interface BenchmarkResult {
-  id: string;
-  timestamp: number;
-  modelLabel: string;
-  durationSeconds: number;
-  tagsCompleted: number;
-  fallsCount: number;
-  avgSurvivalTimeSec: number;
-  avgTimeToTagSec: number;
-  fallsPerMinute: number;
-  tagsPerMinute: number;
-  platformJumps: number;
-  actionDistribution: Record<string, number>;
-  scoreGrade: 'S' | 'A' | 'B' | 'C' | 'D';
-  baselineDelta?: {
-    survivalPct: number;
-    tagSpeedPct: number;
-    fallReductionPct: number;
-  };
-}
 
 
 export interface BalanceTelemetry {
@@ -185,16 +160,51 @@ export interface BalanceTelemetry {
   matches: number;
   tags: number;
   tagRate: number;
+  /** Fraction of population matches with no tag and no runner fall. */
   survivalRate: number;
   avgTagTimeMs: number | null;
-  /** Population matches that terminated because the chaser fell. */
+  /** Fixed-horizon population matches containing at least one chaser fall. */
   chaserFalls?: number;
-  /** Population matches that terminated because any runner fell. */
+  /** Fixed-horizon population matches containing at least one runner fall. */
   runnerFalls?: number;
-  /** Fraction of population matches ending in a chaser fall. */
+  /** Fraction of population matches containing at least one chaser fall. */
   chaserFallRate?: number;
-  /** Fraction of population matches ending in a runner fall. */
+  /** Fraction of population matches containing at least one runner fall. */
   runnerFallRate?: number;
+  /** Mean SAFE rightward progression, averaged across the two runner slots, per scored match. */
+  runnerFrontierExpansionPxPerEpisode?: number;
+  runnerFrontierExpansionViewportsPerEpisode?: number;
+  runnerLeftFrontierExpansionViewportsPerEpisode?: number;
+  /** Raw rightward territory envelope (diagnostic only; may include unbanked airborne motion). */
+  runnerRawRightFrontierExpansionViewportsPerEpisode?: number;
+  /** SAFE rightward progression used for exploration fitness. */
+  runnerRightFrontierExpansionViewportsPerEpisode?: number;
+  runnerExplorationBonusPerEpisode?: number;
+  runnerMaxFrontierExpansionPx?: number;
+}
+
+export interface BenchmarkRoleTelemetry {
+  meanFitness: number;
+  matches: number;
+  tagsPerEpisode: number;
+  ownFallsPerEpisode: number;
+  /** Fraction of policy decisions with net rightward drive (right − left) above the active threshold. */
+  rightActionShare: number;
+  /** Fraction of decisions with jump output above the active threshold. */
+  jumpActionShare: number;
+  /** Fraction of decisions with sprint output above the active threshold. */
+  sprintActionShare: number;
+  /** Fraction of decisions with no factorized control above the active threshold. */
+  idleActionShare: number;
+  /** Candidate runner frontier expansion on the permanent benchmark; 0 for chaser-role benchmarks. */
+  explorationViewportsPerEpisode?: number;
+}
+
+export interface CrossGenerationBenchmarkTelemetry {
+  generation: number;
+  suiteRevision: number;
+  chaser: BenchmarkRoleTelemetry;
+  evader: BenchmarkRoleTelemetry;
 }
 
 export interface HallOfFameTelemetry {
@@ -204,6 +214,12 @@ export interface HallOfFameTelemetry {
   opponentsPerGenome: number;
   chaserGenerations: number[];
   evaderGenerations: number[];
+  chaserRecentSize?: number;
+  evaderRecentSize?: number;
+  chaserDiverseSize?: number;
+  evaderDiverseSize?: number;
+  chaserDiversity?: number;
+  evaderDiversity?: number;
 }
 
 export interface DiagnosticsState {
@@ -216,6 +232,8 @@ export interface DiagnosticsState {
   performanceHistory: PerformanceDataPoint[];
   totalTags: number;
   totalFalls: number;
+  totalChaserFalls?: number;
+  totalRunnerFalls?: number;
   totalSuccessfulJumps: number;
   actionDistribution: Record<string, number>;
   chaserActionDistribution: Record<string, number>;
@@ -224,21 +242,39 @@ export interface DiagnosticsState {
   chaserElo: number;
   evaderElo: number;
   eloLeaderboard: EloLeaderboardEntry[];
-  showLidar?: boolean;
-  benchmarkActive: boolean;
-  benchmarkTimeRemaining: number;
-  benchmarkResults: BenchmarkResult[];
   hallOfFame?: HallOfFameTelemetry;
+  lastCrossGenerationBenchmark?: CrossGenerationBenchmarkTelemetry | null;
+  benchmarkHistory?: CrossGenerationBenchmarkTelemetry[];
+  benchmarkSuiteRevision?: number;
   lastGenerationBalance?: BalanceTelemetry | null;
   balanceHistory?: BalanceTelemetry[];
   trainingSpeedX?: number;
   trainingEpisodesPerSecond?: number;
   trainingBackend?: string;
   trainingWorkerCount?: number;
-  upgradePerformanceScore?: number;
-  upgradePeakPerformanceScore?: number;
+  trainingRecoveryCount?: number;
+  trainingLastRecoveryReason?: string;
   sprintUpgradeActive?: boolean;
   controlledJumpUpgradeActive?: boolean;
-  sprintAutoUnlocked?: boolean;
-  controlledJumpAutoUnlocked?: boolean;
+  trainingFitnessConfig?: TrainingFitnessConfig;
 }
+
+export interface TrainingGenerationAnalysisRecord {
+  generation: number;
+  recordedAt: number;
+  simulatedTimeMs: number;
+  completedEpisodes: number;
+  chaserMetrics: NeatGenerationMetrics | null;
+  runnerMetrics: NeatGenerationMetrics | null;
+  balance: BalanceTelemetry | null;
+  benchmark: CrossGenerationBenchmarkTelemetry | null;
+  hallOfFame: HallOfFameTelemetry;
+  chaserElo: number;
+  runnerElo: number;
+  actionShares: {
+    chaser: Record<string, number>;
+    runner: Record<string, number>;
+  };
+  fitnessConfig: TrainingFitnessConfig;
+}
+

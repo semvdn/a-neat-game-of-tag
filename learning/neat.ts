@@ -27,6 +27,37 @@ export interface NeatGenomeData {
   speciesId?: number;
 }
 
+export interface InnovationTrackerCheckpoint {
+  nextInnovation: number;
+  nextNodeId: number;
+  edgeInnovations: Array<[string, number]>;
+  splitNodes: Array<[number, number]>;
+}
+
+export interface NeatSpeciesCheckpoint {
+  id: number;
+  representative: NeatGenomeData;
+  createdGeneration: number;
+  age: number;
+  bestFitnessEver: number;
+  performanceEma: number;
+  bestPerformanceEma: number;
+  lastImprovedGeneration: number;
+  stagnant: boolean;
+}
+
+export interface NeatPopulationCheckpoint {
+  version: 1;
+  role: 'chaser' | 'evader';
+  generation: number;
+  compatibilityThreshold: number;
+  speciesCounter: number;
+  extinctSpeciesSinceLastEvolution: number;
+  genomes: NeatGenomeData[];
+  species: NeatSpeciesCheckpoint[];
+  innovationTracker: InnovationTrackerCheckpoint;
+}
+
 export interface NeatGenerationMetrics {
   role: 'chaser' | 'evader';
   generation: number;
@@ -34,6 +65,12 @@ export interface NeatGenerationMetrics {
   averageFitness: number;
   minFitness: number;
   speciesCount: number;
+  reproductiveSpeciesCount: number;
+  youngSpeciesCount: number;
+  stagnantSpeciesCount: number;
+  extinctSpeciesCount: number;
+  oldestSpeciesAge: number;
+  averageSpeciesAge: number;
   averageNodes: number;
   averageConnections: number;
   championNodes: number;
@@ -59,6 +96,12 @@ export interface NeatConfig {
   interspeciesMatingRate: number;
   tournamentSize: number;
   elitismMinSpeciesSize: number;
+  speciesSurvivalThreshold: number;
+  speciesStagnationGenerations: number;
+  youngSpeciesProtectionGenerations: number;
+  protectedSpeciesCount: number;
+  stagnationEmaAlpha: number;
+  stagnationImprovementEpsilon: number;
 }
 
 export const DEFAULT_NEAT_CONFIG: NeatConfig = {
@@ -78,6 +121,12 @@ export const DEFAULT_NEAT_CONFIG: NeatConfig = {
   interspeciesMatingRate: 0.02,
   tournamentSize: 3,
   elitismMinSpeciesSize: 4,
+  speciesSurvivalThreshold: 0.5,
+  speciesStagnationGenerations: 20,
+  youngSpeciesProtectionGenerations: 5,
+  protectedSpeciesCount: 2,
+  stagnationEmaAlpha: 0.25,
+  stagnationImprovementEpsilon: 0.01,
 };
 
 const cloneNodes = (nodes: NodeGene[]) => nodes.map(n => ({ ...n }));
@@ -109,6 +158,25 @@ export class InnovationTracker {
     const nodeId = this.nextNodeId++;
     this.splitNodes.set(connectionInnovation, nodeId);
     return nodeId;
+  }
+
+  public exportCheckpoint(): InnovationTrackerCheckpoint {
+    return {
+      nextInnovation: this.nextInnovation,
+      nextNodeId: this.nextNodeId,
+      edgeInnovations: [...this.edgeInnovations.entries()],
+      splitNodes: [...this.splitNodes.entries()],
+    };
+  }
+
+  public restoreCheckpoint(checkpoint: InnovationTrackerCheckpoint): void {
+    if (!checkpoint || !Number.isFinite(checkpoint.nextInnovation) || !Number.isFinite(checkpoint.nextNodeId)) {
+      throw new Error('Invalid NEAT innovation tracker checkpoint');
+    }
+    this.nextInnovation = Math.max(0, Math.floor(checkpoint.nextInnovation));
+    this.nextNodeId = Math.max(STATE_VECTOR_SIZE + ACTION_SPACE.length, Math.floor(checkpoint.nextNodeId));
+    this.edgeInnovations = new Map(checkpoint.edgeInnovations || []);
+    this.splitNodes = new Map(checkpoint.splitNodes || []);
   }
 
   public observeGenome(genome: NeatGenomeData) {
@@ -481,6 +549,67 @@ interface Species {
   id: number;
   representative: NeatGenomeData;
   members: NeatGenomeData[];
+  createdGeneration: number;
+  age: number;
+  bestFitnessEver: number;
+  performanceEma: number;
+  bestPerformanceEma: number;
+  lastImprovedGeneration: number;
+  stagnant: boolean;
+}
+
+function selectSpeciesRepresentative(members: NeatGenomeData[], config: NeatConfig): NeatGenomeData {
+  if (members.length === 1) return cloneGenome(members[0]);
+  let best = members[0];
+  let bestDistance = Infinity;
+  for (const candidate of members) {
+    let totalDistance = 0;
+    for (const other of members) {
+      if (candidate === other) continue;
+      totalDistance += compatibilityDistance(candidate, other, config);
+    }
+    if (totalDistance < bestDistance) {
+      bestDistance = totalDistance;
+      best = candidate;
+    }
+  }
+  return cloneGenome(best);
+}
+
+function allocateSpeciesOffspring(
+  species: Species[],
+  score: (species: Species) => number,
+  populationSize: number
+): Map<number, number> {
+  const allocation = new Map<number, number>();
+  if (species.length === 0) return allocation;
+
+  // Give every surviving lineage one slot first. This prevents a newly-created or
+  // temporarily weak species from disappearing purely due to rounding noise.
+  const guaranteed = Math.min(populationSize, species.length);
+  for (let i = 0; i < guaranteed; i++) allocation.set(species[i].id, 1);
+  let remaining = populationSize - guaranteed;
+  if (remaining <= 0) return allocation;
+
+  const weights = species.map(s => Math.max(1e-9, score(s)));
+  const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+  const fractions: Array<{ id: number; fraction: number }> = [];
+  let assigned = 0;
+
+  for (let i = 0; i < species.length; i++) {
+    const exact = totalWeight > 0 ? (weights[i] / totalWeight) * remaining : remaining / species.length;
+    const whole = Math.floor(exact);
+    allocation.set(species[i].id, (allocation.get(species[i].id) ?? 0) + whole);
+    assigned += whole;
+    fractions.push({ id: species[i].id, fraction: exact - whole });
+  }
+
+  fractions.sort((a, b) => b.fraction - a.fraction);
+  for (let i = 0; i < remaining - assigned; i++) {
+    const id = fractions[i % fractions.length].id;
+    allocation.set(id, (allocation.get(id) ?? 0) + 1);
+  }
+  return allocation;
 }
 
 function tournament(members: NeatGenomeData[], size: number): NeatGenomeData {
@@ -509,6 +638,8 @@ export class NeatPopulation {
   private tracker: InnovationTracker;
   private speciesCounter = 0;
   private compatibilityThreshold: number;
+  private speciesRecords = new Map<number, Species>();
+  private extinctSpeciesSinceLastEvolution = 0;
 
   constructor(public readonly role: 'chaser' | 'evader', public readonly config: NeatConfig = { ...DEFAULT_NEAT_CONFIG }) {
     this.tracker = new InnovationTracker(STATE_VECTOR_SIZE + ACTION_SPACE.length);
@@ -520,11 +651,86 @@ export class NeatPopulation {
     }
   }
 
+  public exportCheckpoint(): NeatPopulationCheckpoint {
+    return {
+      version: 1,
+      role: this.role,
+      generation: this.generation,
+      compatibilityThreshold: this.compatibilityThreshold,
+      speciesCounter: this.speciesCounter,
+      extinctSpeciesSinceLastEvolution: this.extinctSpeciesSinceLastEvolution,
+      genomes: this.genomes.map(genome => cloneGenome(genome)),
+      species: [...this.speciesRecords.values()].map(species => ({
+        id: species.id,
+        representative: cloneGenome(species.representative),
+        createdGeneration: species.createdGeneration,
+        age: species.age,
+        bestFitnessEver: species.bestFitnessEver,
+        performanceEma: species.performanceEma,
+        bestPerformanceEma: species.bestPerformanceEma,
+        lastImprovedGeneration: species.lastImprovedGeneration,
+        stagnant: species.stagnant,
+      })),
+      innovationTracker: this.tracker.exportCheckpoint(),
+    };
+  }
+
+  public restoreCheckpoint(checkpoint: NeatPopulationCheckpoint): void {
+    if (!checkpoint || checkpoint.version !== 1 || checkpoint.role !== this.role) {
+      throw new Error(`Invalid ${this.role} NEAT population checkpoint`);
+    }
+    if (!Array.isArray(checkpoint.genomes) || checkpoint.genomes.length !== this.config.populationSize) {
+      throw new Error(
+        `Checkpoint ${this.role} population has ${checkpoint.genomes?.length ?? 0} genomes; expected ${this.config.populationSize}`
+      );
+    }
+    for (const genome of checkpoint.genomes) {
+      const inputCount = genome.nodes.filter(node => node.type === 'input').length;
+      const outputCount = genome.nodes.filter(node => node.type === 'output').length;
+      if (inputCount !== STATE_VECTOR_SIZE || outputCount !== ACTION_SPACE.length) {
+        throw new Error(
+          `Checkpoint ${this.role} genome ${genome.id} is incompatible: expected ${STATE_VECTOR_SIZE} inputs/${ACTION_SPACE.length} outputs`
+        );
+      }
+    }
+
+    this.generation = Math.max(1, Math.floor(checkpoint.generation));
+    this.compatibilityThreshold = Math.max(0.5, Math.min(10, checkpoint.compatibilityThreshold));
+    this.speciesCounter = Math.max(0, Math.floor(checkpoint.speciesCounter));
+    this.extinctSpeciesSinceLastEvolution = Math.max(0, Math.floor(checkpoint.extinctSpeciesSinceLastEvolution || 0));
+    this.genomes = checkpoint.genomes.map(genome => cloneGenome(genome));
+    this.tracker = new InnovationTracker(STATE_VECTOR_SIZE + ACTION_SPACE.length);
+    this.tracker.restoreCheckpoint(checkpoint.innovationTracker);
+    // Observe all restored genomes defensively in case a checkpoint came from a build that did not
+    // persist one of the innovation maps completely. Existing innovations retain their ids.
+    for (const genome of this.genomes) this.tracker.observeGenome(genome);
+
+    this.speciesRecords.clear();
+    for (const saved of checkpoint.species || []) {
+      const species: Species = {
+        id: saved.id,
+        representative: cloneGenome(saved.representative),
+        members: [],
+        createdGeneration: saved.createdGeneration,
+        age: saved.age,
+        bestFitnessEver: saved.bestFitnessEver,
+        performanceEma: saved.performanceEma,
+        bestPerformanceEma: saved.bestPerformanceEma,
+        lastImprovedGeneration: saved.lastImprovedGeneration,
+        stagnant: saved.stagnant,
+      };
+      this.speciesRecords.set(species.id, species);
+      this.speciesCounter = Math.max(this.speciesCounter, species.id);
+    }
+  }
+
   public reset() {
     this.generation = 1;
     this.tracker = new InnovationTracker(STATE_VECTOR_SIZE + ACTION_SPACE.length);
     this.compatibilityThreshold = this.config.compatibilityThreshold;
     this.speciesCounter = 0;
+    this.speciesRecords.clear();
+    this.extinctSpeciesSinceLastEvolution = 0;
     this.genomes = [];
     for (let i = 0; i < this.config.populationSize; i++) {
       this.genomes.push(createMinimalGenome(`${this.role}_g1_${i}`, this.role, this.tracker, 1));
@@ -536,48 +742,140 @@ export class NeatPopulation {
     this.tracker.observeGenome(champion);
     this.compatibilityThreshold = this.config.compatibilityThreshold;
     this.speciesCounter = 0;
+    this.speciesRecords.clear();
+    this.extinctSpeciesSinceLastEvolution = 0;
     this.generation = Math.max(1, champion.generation || 1);
     this.genomes = [];
     for (let i = 0; i < this.config.populationSize; i++) {
       const clone = cloneGenome(champion, `${this.role}_g${this.generation}_${i}`);
       clone.role = this.role;
       clone.fitness = 0;
+      clone.speciesId = undefined;
       if (i > 0) mutateGenome(clone, this.tracker, this.config);
       this.genomes.push(clone);
     }
   }
 
+  private createSpecies(genome: NeatGenomeData): Species {
+    const fitness = genome.fitness ?? 0;
+    const species: Species = {
+      id: ++this.speciesCounter,
+      representative: cloneGenome(genome),
+      members: [],
+      createdGeneration: this.generation,
+      age: 1,
+      bestFitnessEver: fitness,
+      performanceEma: 0,
+      bestPerformanceEma: -Infinity,
+      lastImprovedGeneration: this.generation,
+      stagnant: false,
+    };
+    this.speciesRecords.set(species.id, species);
+    return species;
+  }
+
   private speciate(): Species[] {
-    const species: Species[] = [];
+    const candidateSpecies = [...this.speciesRecords.values()];
+    for (const species of candidateSpecies) species.members = [];
+
+    // Match against persistent representatives and choose the closest compatible
+    // lineage, rather than the first compatible bucket. This makes species IDs much
+    // more stable across long runs and reduces arbitrary assignment-order effects.
     for (const genome of this.genomes) {
       let assigned: Species | undefined;
-      for (const candidate of species) {
-        if (compatibilityDistance(genome, candidate.representative, { ...this.config, compatibilityThreshold: this.compatibilityThreshold }) < this.compatibilityThreshold) {
+      let bestDistance = Infinity;
+      for (const candidate of candidateSpecies) {
+        const distance = compatibilityDistance(genome, candidate.representative, this.config);
+        if (distance < this.compatibilityThreshold && distance < bestDistance) {
+          bestDistance = distance;
           assigned = candidate;
-          break;
         }
       }
       if (!assigned) {
-        assigned = { id: ++this.speciesCounter, representative: cloneGenome(genome), members: [] };
-        species.push(assigned);
+        assigned = this.createSpecies(genome);
+        candidateSpecies.push(assigned);
       }
       genome.speciesId = assigned.id;
       assigned.members.push(genome);
     }
 
-    if (species.length > this.config.targetSpecies + 1) this.compatibilityThreshold = Math.min(10, this.compatibilityThreshold + 0.15);
-    else if (species.length < this.config.targetSpecies - 1) this.compatibilityThreshold = Math.max(0.5, this.compatibilityThreshold - 0.15);
-    return species;
+    // A lineage with no descendants is naturally extinct and should not remain as
+    // a ghost representative that can capture unrelated future genomes.
+    for (const species of [...this.speciesRecords.values()]) {
+      if (species.members.length === 0) {
+        this.speciesRecords.delete(species.id);
+        this.extinctSpeciesSinceLastEvolution++;
+      }
+    }
+
+    const activeSpecies = [...this.speciesRecords.values()];
+    const populationFitness = this.genomes.map(g => g.fitness ?? 0);
+    const populationMin = Math.min(...populationFitness);
+    const populationMax = Math.max(...populationFitness);
+    const populationRange = populationMax - populationMin;
+    for (const species of activeSpecies) {
+      const currentBest = Math.max(...species.members.map(g => g.fitness ?? -Infinity));
+      species.age = this.generation - species.createdGeneration + 1;
+      species.bestFitnessEver = Math.max(species.bestFitnessEver, currentBest);
+
+      // Coevolutionary raw fitness is not stationary because the opponent pool changes
+      // every generation. Stagnation therefore tracks a smoothed *relative* score
+      // within the current population rather than comparing raw historical fitness.
+      const relativeBest = populationRange > 1e-9
+        ? (currentBest - populationMin) / populationRange
+        : 0.5;
+      const alpha = Math.max(0.01, Math.min(1, this.config.stagnationEmaAlpha));
+      if (!Number.isFinite(species.bestPerformanceEma)) {
+        species.performanceEma = relativeBest;
+        species.bestPerformanceEma = relativeBest;
+        species.lastImprovedGeneration = this.generation;
+      } else {
+        species.performanceEma = alpha * relativeBest + (1 - alpha) * species.performanceEma;
+        if (species.performanceEma > species.bestPerformanceEma + this.config.stagnationImprovementEpsilon) {
+          species.bestPerformanceEma = species.performanceEma;
+          species.lastImprovedGeneration = this.generation;
+        }
+      }
+      species.stagnant = (this.generation - species.lastImprovedGeneration) >= this.config.speciesStagnationGenerations;
+      species.representative = selectSpeciesRepresentative(species.members, this.config);
+    }
+
+    if (activeSpecies.length > this.config.targetSpecies + 1) {
+      this.compatibilityThreshold = Math.min(10, this.compatibilityThreshold + 0.15);
+    } else if (activeSpecies.length < this.config.targetSpecies - 1) {
+      this.compatibilityThreshold = Math.max(0.5, this.compatibilityThreshold - 0.15);
+    }
+    return activeSpecies;
   }
 
   public evolve(): { metrics: NeatGenerationMetrics; champion: NeatGenomeData } {
     if (this.genomes.some(g => !Number.isFinite(g.fitness))) throw new Error(`Cannot evolve ${this.role}: every genome needs a finite fitness`);
 
+    this.extinctSpeciesSinceLastEvolution = 0;
     const species = this.speciate();
     const sorted = [...this.genomes].sort((a, b) => (b.fitness ?? 0) - (a.fitness ?? 0));
     const champion = cloneGenome(sorted[0], `${this.role}_champion_g${this.generation}`);
 
+    const speciesByCurrentBest = [...species].sort(
+      (a, b) => Math.max(...b.members.map(g => g.fitness ?? -Infinity)) - Math.max(...a.members.map(g => g.fitness ?? -Infinity))
+    );
+    const championSpeciesId = sorted[0].speciesId;
+    const protectedIds = new Set<number>(speciesByCurrentBest.slice(0, Math.max(0, this.config.protectedSpeciesCount)).map(s => s.id));
+    if (championSpeciesId !== undefined) protectedIds.add(championSpeciesId);
+
+    const youngSpecies = species.filter(s => s.age <= this.config.youngSpeciesProtectionGenerations);
+    let reproductiveSpecies = species.filter(s => !s.stagnant || protectedIds.has(s.id) || s.age <= this.config.youngSpeciesProtectionGenerations);
+    if (reproductiveSpecies.length === 0 && speciesByCurrentBest.length > 0) reproductiveSpecies = [speciesByCurrentBest[0]];
+
+    const stagnantSpeciesCount = species.filter(s => s.stagnant).length;
+    const stagnantPruned = species.filter(s => s.stagnant && !protectedIds.has(s.id) && s.age > this.config.youngSpeciesProtectionGenerations);
+    for (const dead of stagnantPruned) {
+      this.speciesRecords.delete(dead.id);
+      this.extinctSpeciesSinceLastEvolution++;
+    }
+
     const fitnesses = this.genomes.map(g => g.fitness ?? 0);
+    const speciesAges = species.map(s => s.age);
     const metrics: NeatGenerationMetrics = {
       role: this.role,
       generation: this.generation,
@@ -585,6 +883,12 @@ export class NeatPopulation {
       averageFitness: fitnesses.reduce((a, b) => a + b, 0) / fitnesses.length,
       minFitness: Math.min(...fitnesses),
       speciesCount: species.length,
+      reproductiveSpeciesCount: reproductiveSpecies.length,
+      youngSpeciesCount: youngSpecies.length,
+      stagnantSpeciesCount,
+      extinctSpeciesCount: this.extinctSpeciesSinceLastEvolution,
+      oldestSpeciesAge: speciesAges.length ? Math.max(...speciesAges) : 0,
+      averageSpeciesAge: speciesAges.length ? speciesAges.reduce((a, b) => a + b, 0) / speciesAges.length : 0,
       averageNodes: this.genomes.reduce((s, g) => s + g.nodes.length, 0) / this.genomes.length,
       averageConnections: this.genomes.reduce((s, g) => s + g.connections.filter(c => c.enabled).length, 0) / this.genomes.length,
       championNodes: champion.nodes.length,
@@ -593,60 +897,88 @@ export class NeatPopulation {
       timestamp: Date.now(),
     };
 
+    // Shift the population as one unit if event-only fitness is negative. Species
+    // allocation then uses mean adjusted fitness (canonical explicit fitness sharing),
+    // so large species do not win merely by containing more genomes.
+    const minPopulationFitness = Math.min(...fitnesses);
+    const fitnessOffset = minPopulationFitness < 0 ? -minPopulationFitness : 0;
     const speciesScore = (s: Species) => {
-      const mean = s.members.reduce((sum, g) => sum + Math.max(0, g.fitness ?? 0), 0) / s.members.length;
+      const mean = s.members.reduce(
+        (sum, g) => sum + Math.max(0, (g.fitness ?? 0) + fitnessOffset),
+        0
+      ) / Math.max(1, s.members.length);
       return mean + 1e-6;
     };
 
+    const offspring = allocateSpeciesOffspring(reproductiveSpecies, speciesScore, this.config.populationSize);
     const nextGeneration = this.generation + 1;
     const next: NeatGenomeData[] = [];
 
-    // Preserve a global champion and one elite from every substantial species.
-    const globalElite = cloneGenome(champion, `${this.role}_g${nextGeneration}_0`);
-    globalElite.generation = nextGeneration;
-    globalElite.fitness = 0;
-    globalElite.speciesId = undefined;
-    next.push(globalElite);
-    const speciesByBest = [...species].sort(
-      (a, b) => Math.max(...b.members.map(g => g.fitness ?? 0)) - Math.max(...a.members.map(g => g.fitness ?? 0))
-    );
-    for (const s of speciesByBest) {
-      if (next.length >= this.config.populationSize) break;
-      if (s.members.length < this.config.elitismMinSpeciesSize) continue;
-      const elite = [...s.members].sort((a, b) => (b.fitness ?? 0) - (a.fitness ?? 0))[0];
-      if (elite.id === champion.id) continue;
-      const eliteClone = cloneGenome(elite, `${this.role}_g${nextGeneration}_${next.length}`);
-      eliteClone.generation = nextGeneration;
-      eliteClone.fitness = 0;
-      eliteClone.speciesId = undefined;
-      next.push(eliteClone);
-    }
+    for (const speciesLineage of reproductiveSpecies) {
+      const quota = offspring.get(speciesLineage.id) ?? 0;
+      if (quota <= 0) continue;
 
-    while (next.length < this.config.populationSize) {
-      const selectedSpecies = roulette(species, speciesScore);
-      const parentA = tournament(selectedSpecies.members, this.config.tournamentSize);
-      let child: NeatGenomeData;
+      const rankedMembers = [...speciesLineage.members].sort((a, b) => (b.fitness ?? 0) - (a.fitness ?? 0));
+      const survivalCount = Math.max(1, Math.ceil(rankedMembers.length * Math.max(0.05, Math.min(1, this.config.speciesSurvivalThreshold))));
+      const parentPool = rankedMembers.slice(0, survivalCount);
+      let produced = 0;
 
-      if (Math.random() < this.config.crossoverRate) {
-        let parentB: NeatGenomeData;
-        if (Math.random() < this.config.interspeciesMatingRate && species.length > 1) {
-          const otherSpecies = roulette(species.filter(s => s.id !== selectedSpecies.id), speciesScore);
-          parentB = tournament(otherSpecies.members, this.config.tournamentSize);
-        } else {
-          parentB = tournament(selectedSpecies.members, this.config.tournamentSize);
-        }
-        child = crossover(parentA, parentB, `${this.role}_g${nextGeneration}_${next.length}`, nextGeneration);
-      } else {
-        child = cloneGenome(parentA, `${this.role}_g${nextGeneration}_${next.length}`);
-        child.generation = nextGeneration;
-        child.fitness = 0;
+      const containsGlobalChampion = speciesLineage.id === championSpeciesId;
+      const shouldElite = containsGlobalChampion || speciesLineage.members.length >= this.config.elitismMinSpeciesSize || speciesLineage.age <= this.config.youngSpeciesProtectionGenerations;
+      if (shouldElite && produced < quota) {
+        const eliteSource = containsGlobalChampion ? sorted[0] : rankedMembers[0];
+        const eliteClone = cloneGenome(eliteSource, `${this.role}_g${nextGeneration}_${next.length}`);
+        eliteClone.generation = nextGeneration;
+        eliteClone.fitness = 0;
+        eliteClone.speciesId = speciesLineage.id;
+        next.push(eliteClone);
+        produced++;
       }
 
-      mutateGenome(child, this.tracker, this.config);
+      while (produced < quota && next.length < this.config.populationSize) {
+        const parentA = tournament(parentPool, this.config.tournamentSize);
+        let child: NeatGenomeData;
+
+        if (Math.random() < this.config.crossoverRate) {
+          let parentB: NeatGenomeData;
+          if (Math.random() < this.config.interspeciesMatingRate && reproductiveSpecies.length > 1) {
+            const alternatives = reproductiveSpecies.filter(s => s.id !== speciesLineage.id);
+            const otherSpecies = roulette(alternatives, speciesScore);
+            const otherRanked = [...otherSpecies.members].sort((a, b) => (b.fitness ?? 0) - (a.fitness ?? 0));
+            const otherSurvivalCount = Math.max(1, Math.ceil(otherRanked.length * Math.max(0.05, Math.min(1, this.config.speciesSurvivalThreshold))));
+            parentB = tournament(otherRanked.slice(0, otherSurvivalCount), this.config.tournamentSize);
+          } else {
+            parentB = tournament(parentPool, this.config.tournamentSize);
+          }
+          child = crossover(parentA, parentB, `${this.role}_g${nextGeneration}_${next.length}`, nextGeneration);
+        } else {
+          child = cloneGenome(parentA, `${this.role}_g${nextGeneration}_${next.length}`);
+          child.generation = nextGeneration;
+          child.fitness = 0;
+        }
+
+        mutateGenome(child, this.tracker, this.config);
+        child.fitness = 0;
+        // Preserve the parental lineage hint for diagnostics; next generation's
+        // actual species assignment is still decided by compatibility distance.
+        child.speciesId = speciesLineage.id;
+        next.push(child);
+        produced++;
+      }
+    }
+
+    // Rounding should already make an exact population. Keep a defensive fallback
+    // so a malformed custom config cannot silently shrink the population.
+    while (next.length < this.config.populationSize) {
+      const fallbackSpecies = reproductiveSpecies[0] ?? speciesByCurrentBest[0];
+      const source = fallbackSpecies?.members[0] ?? sorted[0];
+      const child = cloneGenome(source, `${this.role}_g${nextGeneration}_${next.length}`);
+      child.generation = nextGeneration;
       child.fitness = 0;
-      child.speciesId = undefined;
+      mutateGenome(child, this.tracker, this.config);
       next.push(child);
     }
+    if (next.length > this.config.populationSize) next.length = this.config.populationSize;
 
     this.genomes = next;
     this.generation = nextGeneration;

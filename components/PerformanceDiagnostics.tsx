@@ -37,6 +37,7 @@ interface PerformanceDiagnosticsProps {
   isOpen: boolean;
   onClose: () => void;
   onExportModels?: () => void;
+  onExportAnalysis?: () => void;
   onImportModels?: (json: string) => boolean;
   onSaveLocalStorage?: () => void;
   onLoadLocalStorage?: () => void;
@@ -196,9 +197,13 @@ const FitnessSummary: React.FC<{ title: string; metrics?: NeatGenerationMetrics 
       <div><div className="text-gray-500">Best fitness</div><div className="font-mono text-lg text-emerald-300">{fmt(metrics?.bestFitness)}</div></div>
       <div><div className="text-gray-500">Mean fitness</div><div className="font-mono text-lg text-white">{fmt(metrics?.averageFitness)}</div></div>
       <div><div className="text-gray-500">Species</div><div className="font-mono text-lg text-violet-300">{metrics?.speciesCount ?? '—'}</div></div>
+      <div><div className="text-gray-500">Reproducing</div><div className="font-mono text-lg text-violet-200">{metrics?.reproductiveSpeciesCount ?? metrics?.speciesCount ?? '—'}</div></div>
+      <div><div className="text-gray-500">Stagnant</div><div className="font-mono text-lg text-amber-300">{metrics?.stagnantSpeciesCount ?? '—'}</div></div>
+      <div><div className="text-gray-500">Extinct this gen</div><div className="font-mono text-lg text-gray-300">{metrics?.extinctSpeciesCount ?? '—'}</div></div>
+      <div><div className="text-gray-500">Oldest species</div><div className="font-mono text-lg text-white">{metrics?.oldestSpeciesAge != null ? `${metrics.oldestSpeciesAge} gen` : '—'}</div></div>
+      <div><div className="text-gray-500">Mean species age</div><div className="font-mono text-lg text-white">{metrics?.averageSpeciesAge != null ? `${metrics.averageSpeciesAge.toFixed(1)} gen` : '—'}</div></div>
       <div><div className="text-gray-500">Compatibility δ</div><div className="font-mono text-lg text-white">{fmt(metrics?.compatibilityThreshold)}</div></div>
-      <div><div className="text-gray-500">Champion nodes</div><div className="font-mono text-lg text-white">{metrics?.championNodes ?? '—'}</div></div>
-      <div><div className="text-gray-500">Champion links</div><div className="font-mono text-lg text-white">{metrics?.championConnections ?? '—'}</div></div>
+      <div><div className="text-gray-500">Champion topology</div><div className="font-mono text-lg text-white">{metrics ? `${metrics.championNodes}n / ${metrics.championConnections}l` : '—'}</div></div>
     </div>
   </div>
 );
@@ -219,6 +224,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   isOpen,
   onClose,
   onExportModels,
+  onExportAnalysis,
   onImportModels,
   onSaveLocalStorage,
   onLoadLocalStorage,
@@ -233,6 +239,8 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   const chaserHistory = diagnostics.chaserNeatHistory || [];
   const evaderHistory = diagnostics.evaderNeatHistory || [];
   const balanceHistory = diagnostics.balanceHistory || [];
+  const benchmarkHistory = diagnostics.benchmarkHistory || [];
+  const benchmark = diagnostics.lastCrossGenerationBenchmark;
   const balance = diagnostics.lastGenerationBalance;
   const chaserMetrics = diagnostics.lastChaserNeatMetrics;
   const evaderMetrics = diagnostics.lastEvaderNeatMetrics;
@@ -246,7 +254,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
     const reader = new FileReader();
     reader.onload = () => {
       const ok = onImportModels(String(reader.result || ''));
-      setStatus(ok ? 'Imported NEAT champions.' : 'Import failed. This build expects NEAT genome JSON.');
+      setStatus(ok ? 'Imported NEAT checkpoint/model.' : 'Import failed. This build expects a compatible NEAT checkpoint or genome JSON.');
       setTimeout(() => setStatus(null), 3500);
     };
     reader.readAsText(file);
@@ -285,6 +293,11 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             <span className="text-[10px] font-mono text-gray-600" title={diagnostics.trainingBackend || 'CPU training'}>
               {diagnostics.trainingWorkerCount || 1} workers
             </span>
+            {(diagnostics.trainingRecoveryCount || 0) > 0 && (
+              <span className="text-[10px] font-mono text-orange-300" title={diagnostics.trainingLastRecoveryReason || 'Recovered stalled evaluator batch'}>
+                {diagnostics.trainingRecoveryCount} recovered
+              </span>
+            )}
             <button onClick={onToggleTrainingPause} className="p-1.5 rounded hover:bg-gray-900 text-amber-200" title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>{isTrainingPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}</button>
           </div>
           <button onClick={onClose} className="p-2 rounded border border-gray-800 hover:bg-gray-900"><X className="w-4 h-4" /></button>
@@ -309,13 +322,13 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
           <div className="max-w-7xl mx-auto space-y-5">
             <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-10 gap-3">
               <MetricCard label="Generation" value={generation} hint="one full population evaluation" />
-              <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} hint="same 0–220 scale as runner" />
-              <MetricCard label="Runner best" value={fmt(evaderMetrics?.bestFitness)} hint="same 0–220 scale as chaser" />
-              <MetricCard label="Species C / R" value={`${chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.speciesCount ?? '—'}`} />
+              <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} hint="tags − own falls; no exploration shaping" />
+              <MetricCard label="Runner best" value={fmt(evaderMetrics?.bestFitness)} hint="−tags − own falls + safe rightward progression" />
+              <MetricCard label="Species C / R" value={`${chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.speciesCount ?? '—'}`} hint={`reproducing ${chaserMetrics?.reproductiveSpeciesCount ?? chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.reproductiveSpeciesCount ?? evaderMetrics?.speciesCount ?? '—'}`} />
               <MetricCard label="Tag rate" value={balance ? `${(balance.tagRate * 100).toFixed(1)}%` : '—'} hint="contact tags only" />
-              <MetricCard label="Survival rate" value={balance ? `${(balance.survivalRate * 100).toFixed(1)}%` : '—'} hint="no contact tag" />
-              <MetricCard label="Chaser fall rate" value={balance?.chaserFallRate != null ? `${(balance.chaserFallRate * 100).toFixed(1)}%` : '—'} hint={balance?.chaserFalls != null ? `${balance.chaserFalls} matches ended by chaser fall` : 'population matches'} />
-              <MetricCard label="Runner fall rate" value={balance?.runnerFallRate != null ? `${(balance.runnerFallRate * 100).toFixed(1)}%` : '—'} hint={balance?.runnerFalls != null ? `${balance.runnerFalls} matches ended by runner fall` : 'population matches'} />
+              <MetricCard label="Runner clean survival" value={balance ? `${(balance.survivalRate * 100).toFixed(1)}%` : '—'} hint="no tag and no runner fall" />
+              <MetricCard label="Chaser fall rate" value={balance?.chaserFallRate != null ? `${(balance.chaserFallRate * 100).toFixed(1)}%` : '—'} hint={balance?.chaserFalls != null ? `${balance.chaserFalls} matches with chaser fall` : 'population matches'} />
+              <MetricCard label="Runner fall rate" value={balance?.runnerFallRate != null ? `${(balance.runnerFallRate * 100).toFixed(1)}%` : '—'} hint={balance?.runnerFalls != null ? `${balance.runnerFalls} matches with runner fall` : 'population matches'} />
               <MetricCard label="Avg tag time" value={balance?.avgTagTimeMs != null ? `${(balance.avgTagTimeMs / 1000).toFixed(2)}s` : '—'} hint="when a contact tag occurs" />
               <MetricCard label="Matches" value={balance?.matches ?? '—'} hint="last completed generation" />
             </div>
@@ -324,10 +337,43 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <FitnessSummary title="Chaser population" metrics={chaserMetrics} />
               <FitnessSummary title="Evader population" metrics={evaderMetrics} />
             </div>
-            <div className="grid md:grid-cols-3 gap-3">
+            <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
               <MetricCard label="Hall of Fame C / E" value={`${diagnostics.hallOfFame?.chaserSize ?? 0} / ${diagnostics.hallOfFame?.evaderSize ?? 0}`} hint={`max ${diagnostics.hallOfFame?.maxSize ?? 0} champions per role`} />
-              <MetricCard label="Historical opponents" value={diagnostics.hallOfFame?.opponentsPerGenome ?? 0} hint="extra archive matchups per genome" />
-              <MetricCard label="Archived generations" value={(diagnostics.hallOfFame?.chaserGenerations?.length || diagnostics.hallOfFame?.evaderGenerations?.length) ? `${diagnostics.hallOfFame?.chaserGenerations?.[0] ?? '—'}–${diagnostics.hallOfFame?.chaserGenerations?.slice(-1)[0] ?? '—'}` : '—'} hint="recent + reservoir-sampled history" />
+              <MetricCard label="Recent C / E" value={`${diagnostics.hallOfFame?.chaserRecentSize ?? 0} / ${diagnostics.hallOfFame?.evaderRecentSize ?? 0}`} hint="always retained to track current coevolution" />
+              <MetricCard label="Diverse history C / E" value={`${diagnostics.hallOfFame?.chaserDiverseSize ?? 0} / ${diagnostics.hallOfFame?.evaderDiverseSize ?? 0}`} hint="behaviorally distinct older champions" />
+              <MetricCard label="Archive diversity C / E" value={`${fmt(diagnostics.hallOfFame?.chaserDiversity, 3)} / ${fmt(diagnostics.hallOfFame?.evaderDiversity, 3)}`} hint="mean behavioral descriptor distance" />
+            </div>
+
+            <div className="grid md:grid-cols-3 gap-3">
+              <MetricCard label="Fixed benchmark C" value={benchmark ? fmt(benchmark.chaser.meanFitness) : '—'} hint={benchmark ? `${benchmark.chaser.matches} permanent reference matches` : 'telemetry only; never used for selection'} />
+              <MetricCard label="Fixed benchmark R" value={benchmark ? fmt(benchmark.evader.meanFitness) : '—'} hint={benchmark ? `${benchmark.evader.matches} matches · ${(benchmark.evader.explorationViewportsPerEpisode ?? 0).toFixed(2)} safe views/ep` : 'telemetry only; never used for selection'} />
+              <MetricCard label="Benchmark suite" value={benchmark ? `v${benchmark.suiteRevision}` : `v${diagnostics.benchmarkSuiteRevision ?? 0}`} hint="same frozen opponents, seeds and start modes across generations" />
+            </div>
+
+            <div className="grid md:grid-cols-4 gap-3">
+              <MetricCard label="Runner right-drive" value={benchmark ? `${(benchmark.evader.rightActionShare * 100).toFixed(1)}%` : '—'} hint="independent control active; can overlap jump" />
+              <MetricCard label="Runner jump" value={benchmark ? `${(benchmark.evader.jumpActionShare * 100).toFixed(1)}%` : '—'} hint="independent control active" />
+              <MetricCard label="Runner sprint" value={benchmark ? `${(benchmark.evader.sprintActionShare * 100).toFixed(1)}%` : '—'} hint="0 while Sprint ability is disabled" />
+              <MetricCard label="Runner idle" value={benchmark ? `${(benchmark.evader.idleActionShare * 100).toFixed(1)}%` : '—'} hint="no control above activation threshold" />
+            </div>
+
+            <div className="grid md:grid-cols-4 gap-3">
+              <MetricCard label="Runner safe-right / episode" value={balance?.runnerFrontierExpansionViewportsPerEpisode != null ? `${balance.runnerFrontierExpansionViewportsPerEpisode.toFixed(2)} view` : '—'} hint={balance?.runnerFrontierExpansionPxPerEpisode != null ? `${balance.runnerFrontierExpansionPxPerEpisode.toFixed(0)} px banked after safe traversal` : 'current-population matches'} />
+              <MetricCard label="Exploration bonus / episode" value={balance?.runnerExplorationBonusPerEpisode != null ? `+${balance.runnerExplorationBonusPerEpisode.toFixed(2)}` : '—'} hint="runner fitness only" />
+              <MetricCard label="Best safe progress / body" value={balance?.runnerMaxFrontierExpansionPx != null ? `${balance.runnerMaxFrontierExpansionPx.toFixed(0)} px` : '—'} hint="largest per-body safe rightward progression in a scored match" />
+              <MetricCard label="Exploration strength" value={`+${(diagnostics.trainingFitnessConfig?.runnerExplorationRewardPerViewport ?? 0).toFixed(1)}/view`} hint="manual runner shaping setting" />
+            </div>
+
+            <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
+              <div className="flex items-center gap-2 mb-3"><Trophy className="w-4 h-4 text-emerald-300" /><h3 className="font-semibold text-white">Fixed cross-generation benchmark</h3></div>
+              <LineChart
+                series={[
+                  { label: 'Chaser benchmark', values: benchmarkHistory.map(m => m.chaser.meanFitness) },
+                  { label: 'Runner benchmark', values: benchmarkHistory.map(m => m.evader.meanFitness) },
+                ]}
+                emptyLabel="Complete at least two generations to compare champions on the permanent benchmark suite."
+              />
+              <p className="mt-2 text-xs text-gray-500">Each champion is tested against the same frozen run-start reference bank, the same permanent seeds, and the same visual/varied/mid-game scenario mix. These matches do not affect fitness, champion selection, Elo, or population telemetry. The suite revision changes when a new run/import is seeded, enabled physics abilities change, or the exploration fitness strength is retuned.</p>
             </div>
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
@@ -340,11 +386,25 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <LineChart
                 series={[
                   { label: 'Chaser tag %', values: balanceHistory.map(m => m.tagRate * 100) },
-                  { label: 'Runner survival %', values: balanceHistory.map(m => m.survivalRate * 100) },
+                  { label: 'Runner clean survival %', values: balanceHistory.map(m => m.survivalRate * 100) },
                 ]}
                 emptyLabel="Complete generations to populate the balance chart."
               />
               <p className="mt-2 text-xs text-gray-500">Measured only on current-population matchups; Hall-of-Fame tests are excluded so the balance signal stays comparable.</p>
+            </div>
+
+            <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/10 p-4">
+              <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-cyan-300" /><h3 className="font-semibold text-white">Runner exploration by generation</h3></div>
+              <LineChart
+                series={[
+                  { label: 'Safe right (fitness)', values: balanceHistory.map(m => m.runnerRightFrontierExpansionViewportsPerEpisode ?? 0) },
+                  { label: 'Raw right envelope', values: balanceHistory.map(m => m.runnerRawRightFrontierExpansionViewportsPerEpisode ?? 0) },
+                  { label: 'Raw left envelope', values: balanceHistory.map(m => m.runnerLeftFrontierExpansionViewportsPerEpisode ?? 0) },
+                  { label: 'Exploration bonus', values: balanceHistory.map(m => m.runnerExplorationBonusPerEpisode ?? 0) },
+                ]}
+                emptyLabel="Complete generations to populate exploration diagnostics."
+              />
+              <p className="mt-2 text-xs text-gray-500">Safe right progression is the fitness-bearing signal: grounded motion banks immediately and airborne motion banks only on a successful landing. Raw left/right envelopes remain diagnostic so failed or unbanked movement is still visible without being rewarded.</p>
             </div>
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
@@ -356,11 +416,11 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                 ]}
                 emptyLabel="Complete generations to populate the fall-rate chart."
               />
-              <p className="mt-2 text-xs text-gray-500">Rate = percentage of current-population evaluation matches that terminate because that role falls. A runner rate records a match when either runner falls. Contact tags are excluded, and Hall-of-Fame matches are excluded.</p>
+              <p className="mt-2 text-xs text-gray-500">Rate = percentage of fixed-horizon current-population evaluation matches containing at least one fall by that role. Matches continue after falls and tags; Hall-of-Fame tests are excluded.</p>
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> the original discrete left/right/jump/wait controller and 39-input LiDAR state are preserved. Optional sprint and controlled-jump progression upgrades reuse the strength of the selected original output, so no extra policy outputs or senses are added. Every genome is evaluated against rotating opponents plus historical Hall of Fame champions, while the worker pool runs independent episodes at maximum available CPU throughput.
+              <strong className="text-violet-200">Training architecture:</strong> persistent NEAT species now carry lineage age and progress across generations, with conservative stagnation pruning and protected young/top lineages. The compact 25-input policy now has factorized left-drive, right-drive, jump and sprint outputs, so horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities. Every genome is evaluated against common opponent panels plus Hall of Fame champions. Recent champions are retained alongside a strength-aware behaviorally diverse historical archive, while a separate fixed benchmark tracks real cross-generation progress without influencing selection. The runner also receives a tunable SAFE per-body rightward progression incentive: grounded travel and successful landings bank progress, while failed jumps, falls and respawn teleports do not. The worker pool preloads genomes and batches episodes for lower messaging overhead.
             </div>
           </div>
         )}
@@ -385,8 +445,8 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               ]} />
             </div>
             <div className="grid md:grid-cols-2 gap-4">
-              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4"><h3 className="font-semibold text-white mb-3">Species count</h3><LineChart series={[{ label: 'Chaser species', values: chaserHistory.map(m => m.speciesCount) }, { label: 'Evader species', values: evaderHistory.map(m => m.speciesCount) }]} /></div>
-              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4"><h3 className="font-semibold text-white mb-3">Minimum fitness</h3><LineChart series={[{ label: 'Chaser min', values: chaserHistory.map(m => m.minFitness) }, { label: 'Evader min', values: evaderHistory.map(m => m.minFitness) }]} /></div>
+              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4"><h3 className="font-semibold text-white mb-3">Species count</h3><LineChart series={[{ label: 'Chaser active', values: chaserHistory.map(m => m.speciesCount) }, { label: 'Evader active', values: evaderHistory.map(m => m.speciesCount) }, { label: 'Chaser reproducing', values: chaserHistory.map(m => m.reproductiveSpeciesCount ?? m.speciesCount) }, { label: 'Evader reproducing', values: evaderHistory.map(m => m.reproductiveSpeciesCount ?? m.speciesCount) }]} /></div>
+              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4"><h3 className="font-semibold text-white mb-3">Species longevity</h3><LineChart series={[{ label: 'Chaser oldest age', values: chaserHistory.map(m => m.oldestSpeciesAge ?? 0) }, { label: 'Evader oldest age', values: evaderHistory.map(m => m.oldestSpeciesAge ?? 0) }, { label: 'Chaser stagnant', values: chaserHistory.map(m => m.stagnantSpeciesCount ?? 0) }, { label: 'Evader stagnant', values: evaderHistory.map(m => m.stagnantSpeciesCount ?? 0) }]} /></div>
             </div>
           </div>
         )}
@@ -430,16 +490,23 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
 
         {tab === 'models' && (
           <div className="max-w-4xl mx-auto space-y-5">
+            <div className="rounded-xl border border-cyan-500/25 bg-cyan-950/10 p-4">
+              <div className="flex items-center gap-2 mb-3"><BarChart3 className="w-4 h-4 text-cyan-300" /><h3 className="font-semibold text-white">Training analysis recording</h3></div>
+              <p className="text-xs leading-relaxed text-gray-500">Export a compact analysis file designed for post-hoc review. It contains the full per-generation analysis log plus three deterministic champion probe episodes (visual, varied and mid-game) sampled every 250 ms with body positions, actions, roles, energy, cooldowns, camera position, platforms and frontier progression.</p>
+              <button onClick={onExportAnalysis} className="mt-3 px-3 py-2 rounded border border-cyan-500/40 text-cyan-200 text-xs flex items-center gap-1"><Download className="w-3.5 h-3.5" />Export analysis JSON</button>
+              <p className="mt-2 text-[10px] text-gray-600">Upload this JSON back into ChatGPT and I can analyze trends and actual learned movement rather than relying only on screenshots or descriptions.</p>
+            </div>
+
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-              <div className="flex items-center gap-2 mb-4"><HardDrive className="w-4 h-4 text-violet-300" /><h3 className="font-semibold text-white">Champion persistence</h3></div>
+              <div className="flex items-center gap-2 mb-4"><HardDrive className="w-4 h-4 text-violet-300" /><h3 className="font-semibold text-white">Evolution checkpoint persistence</h3></div>
               <div className="flex flex-wrap gap-2">
-                <button onClick={() => { onSaveLocalStorage?.(); setStatus('Saved NEAT champions locally.'); }} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1"><Save className="w-3.5 h-3.5" />Save</button>
-                <button disabled={!hasSavedModel} onClick={() => { onLoadLocalStorage?.(); setStatus('Loaded local champions.'); }} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1 disabled:opacity-40"><HardDrive className="w-3.5 h-3.5" />Load</button>
-                <button onClick={onExportModels} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1"><Download className="w-3.5 h-3.5" />Export JSON</button>
-                <label className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1 cursor-pointer"><Upload className="w-3.5 h-3.5" />Import JSON<input type="file" accept="application/json" className="hidden" onChange={upload} /></label>
+                <button onClick={() => { onSaveLocalStorage?.(); setStatus('Saving full evolutionary checkpoint locally…'); }} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1"><Save className="w-3.5 h-3.5" />Save</button>
+                <button disabled={!hasSavedModel} onClick={() => { onLoadLocalStorage?.(); setStatus('Loading full evolutionary checkpoint…'); }} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1 disabled:opacity-40"><HardDrive className="w-3.5 h-3.5" />Load</button>
+                <button onClick={onExportModels} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1"><Download className="w-3.5 h-3.5" />Export checkpoint</button>
+                <label className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center gap-1 cursor-pointer"><Upload className="w-3.5 h-3.5" />Import checkpoint<input type="file" accept="application/json" className="hidden" onChange={upload} /></label>
               </div>
               {status && <div className="mt-3 text-xs text-violet-200">{status}</div>}
-              <p className="mt-4 text-xs text-gray-500 leading-relaxed">The worker maintains the Hall of Fame during the current training session. Loading a champion seeds a fresh archive baseline around that imported champion.</p>
+              <p className="mt-4 text-xs text-gray-500 leading-relaxed">Full checkpoints preserve both populations, persistent species/innovation history, Hall of Fame, frozen benchmark references, Elo, diagnostics counters, and manual ability configuration. Checkpoints are captured at completed-generation boundaries so an interrupted evaluator batch can never corrupt evolutionary state. Legacy champion-only JSON remains importable and seeds fresh populations.</p>
             </div>
 
             <div className="rounded-xl border border-red-500/20 bg-red-950/10 p-4">

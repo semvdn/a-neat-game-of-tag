@@ -1,72 +1,96 @@
 import { LearningAgent } from '../learning/agent';
-import { runTrainingEpisode } from '../learning/trainingEpisode';
+import { runTrainingEpisode, type TrainingStartMode } from '../learning/trainingEpisode';
 import type { NeatGenomeData } from '../learning/neat';
-import type { ActiveUpgradeState } from '../types';
+import type { ActiveUpgradeState, TrainingFitnessConfig } from '../types';
 
-interface EvaluateMessage {
-  type: 'EVALUATE';
+interface ControllerEntry {
+  key: string;
+  role: 'chaser' | 'evader';
+  genome: NeatGenomeData;
+}
+
+interface LoadEpochMessage {
+  type: 'LOAD_EPOCH';
   payload: {
-    taskId: number;
     epoch: number;
-    chaserGenome: NeatGenomeData;
-    evaderGenome: NeatGenomeData;
-    seed: number;
-    trackChaserActions: boolean;
-    trackEvaderActions: boolean;
-    upgrades?: ActiveUpgradeState;
+    controllers: ControllerEntry[];
+    upgrades: ActiveUpgradeState;
+    fitnessConfig: TrainingFitnessConfig;
   };
 }
 
-const controllerCache = new Map<string, LearningAgent>();
-const MAX_CACHE_SIZE = 256;
-let cachedEpoch: number | null = null;
-
-function cacheKey(role: 'chaser' | 'evader', genome: NeatGenomeData): string {
-  return `${role}:${genome.id}:${genome.generation}:${genome.nodes.length}:${genome.connections.length}`;
+interface EvaluateBatchTask {
+  taskId: number;
+  chaserKey: string;
+  evaderKey: string;
+  seed: number;
+  trackChaserActions: boolean;
+  trackEvaderActions: boolean;
+  startMode?: TrainingStartMode;
 }
 
-function getController(role: 'chaser' | 'evader', genome: NeatGenomeData): LearningAgent {
-  const key = cacheKey(role, genome);
-  const cached = controllerCache.get(key);
-  if (cached) return cached;
-  const controller = new LearningAgent(role, genome);
-  controllerCache.set(key, controller);
-  if (controllerCache.size > MAX_CACHE_SIZE) {
-    const firstKey = controllerCache.keys().next().value as string | undefined;
-    if (firstKey) controllerCache.delete(firstKey);
-  }
-  return controller;
+interface EvaluateBatchMessage {
+  type: 'EVALUATE_BATCH';
+  payload: {
+    epoch: number;
+    tasks: EvaluateBatchTask[];
+  };
 }
 
-self.onmessage = (event: MessageEvent<EvaluateMessage>) => {
+type WorkerMessage = LoadEpochMessage | EvaluateBatchMessage;
+
+const controllers = new Map<string, LearningAgent>();
+let loadedEpoch: number | null = null;
+let loadedUpgrades: ActiveUpgradeState | undefined;
+let loadedFitnessConfig: TrainingFitnessConfig | undefined;
+
+self.onmessage = (event: MessageEvent<WorkerMessage>) => {
   const { type, payload } = event.data;
-  if (type !== 'EVALUATE') return;
 
   try {
-    if (cachedEpoch !== payload.epoch) {
-      controllerCache.clear();
-      cachedEpoch = payload.epoch;
+    if (type === 'LOAD_EPOCH') {
+      controllers.clear();
+      for (const entry of payload.controllers) {
+        controllers.set(entry.key, new LearningAgent(entry.role, entry.genome));
+      }
+      loadedEpoch = payload.epoch;
+      loadedUpgrades = payload.upgrades;
+      loadedFitnessConfig = payload.fitnessConfig;
+      return;
     }
-    const chaser = getController('chaser', payload.chaserGenome);
-    const evader = getController('evader', payload.evaderGenome);
-    const result = runTrainingEpisode(chaser, evader, payload.seed, {
-      trackChaserActions: payload.trackChaserActions,
-      trackEvaderActions: payload.trackEvaderActions,
-      upgrades: payload.upgrades,
+
+    if (type !== 'EVALUATE_BATCH') return;
+    if (loadedEpoch !== payload.epoch) {
+      throw new Error(`Evaluator epoch mismatch: loaded ${loadedEpoch}, requested ${payload.epoch}`);
+    }
+
+    const results = payload.tasks.map(task => {
+      const chaser = controllers.get(task.chaserKey);
+      const evader = controllers.get(task.evaderKey);
+      if (!chaser || !evader) {
+        throw new Error(`Missing preloaded controller for task ${task.taskId}`);
+      }
+      const result = runTrainingEpisode(chaser, evader, task.seed, {
+        trackChaserActions: task.trackChaserActions,
+        trackEvaderActions: task.trackEvaderActions,
+        upgrades: loadedUpgrades,
+        startMode: task.startMode,
+        runnerExplorationRewardPerViewport: loadedFitnessConfig?.runnerExplorationRewardPerViewport,
+      });
+      return { taskId: task.taskId, result };
     });
+
     self.postMessage({
-      type: 'RESULT',
+      type: 'BATCH_RESULT',
       payload: {
-        taskId: payload.taskId,
         epoch: payload.epoch,
-        result,
+        results,
       },
     });
   } catch (error) {
     self.postMessage({
       type: 'ERROR',
       payload: {
-        taskId: payload.taskId,
         epoch: payload.epoch,
         message: error instanceof Error ? error.message : String(error),
       },

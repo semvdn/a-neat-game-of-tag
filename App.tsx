@@ -6,49 +6,36 @@ import { useGameLoop } from './hooks/useGameLoop';
 import { LearningAgent } from './learning/agent';
 import { createLeaderboardEntries } from './learning/elo';
 import { getAgentStateVector } from './learning/state';
-import { getFairRespawn } from './learning/respawn';
 import { initAudio, playDynamicJumpSound, playTagSound, playFallSound, playToggleSound } from './services/soundService';
+import {
+  advanceRoleTimers,
+  maintainPlatformsForCamera,
+  resolveTagSwap,
+  stepAgentPhysics,
+  updateRunnerCameraX,
+} from './learning/simulationCore';
 import type {
   GameState,
   AgentState,
   PlatformState,
   RewardBreakdown,
   DiagnosticsState,
-  BenchmarkResult,
   PerformanceDataPoint,
-  EloLeaderboardEntry,
   UpgradeConfig,
   UpgradeRule,
   SprintUpgradeRule,
+  ActiveUpgradeState,
+  TrainingFitnessConfig,
 } from './types';
 import { AgentStatus } from './types';
 import {
-  GRAVITY,
   AGENT_WIDTH,
-  AGENT_HEIGHT,
   MAX_SPEED,
-  JUMP_STRENGTH,
-  TAG_COOLDOWN,
-  FALL_BOUNDARY,
-  PLATFORM_MIN_WIDTH,
-  PLATFORM_MAX_WIDTH,
   PLATFORM_HEIGHT,
-  PLATFORM_SPAWN_BUFFER,
-  MIN_PLATFORM_GAP_X,
-  MAX_PLATFORM_GAP_X,
-  MIN_PLATFORM_GAP_Y,
-  MAX_PLATFORM_GAP_Y,
   AGENT_COLORS,
-  AGENT_ACCELERATION,
-  FRICTION,
   MAX_ENERGY,
-  ENERGY_REGEN_RATE,
-  JUMP_ENERGY_COST,
   SPRINT_MAX_SPEED,
-  SPRINT_ACCELERATION_MULTIPLIER,
   SPRINT_ENERGY_COST_PER_SEC,
-  CONTROLLED_JUMP_MIN_POWER_RATIO,
-  CONTROLLED_JUMP_MIN_ENERGY_COST,
   SURVIVAL_TIME_HISTORY_LENGTH,
   TIME_TO_TAG_HISTORY_LENGTH,
   INITIAL_ELO,
@@ -58,6 +45,9 @@ import {
   LEFT_BOUNDARY_PROXIMITY_PENALTY,
   RIGHTWARD_VELOCITY_REWARD,
   RIGHTWARD_PROGRESSION_REWARD,
+  DEFAULT_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT,
+  MAX_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT,
+  POLICY_CONTROL_ACTIVE_THRESHOLD,
 } from './constants';
 import { Activity, Play, Pause, RotateCcw, MonitorPlay, Cpu, Minus, Plus } from 'lucide-react';
 
@@ -99,11 +89,11 @@ const formatTrainingRate = (value: number | undefined) => {
 const CHAMPION_WORLD_VIEWPORT = { width: 1200, height: 800 } as const;
 const DEFAULT_UPGRADE_CONFIG: UpgradeConfig = {
   sprint: {
-    mode: 'auto', threshold: 140, chaserEnabled: true, runnerEnabled: true,
+    mode: 'off', chaserEnabled: true, runnerEnabled: true,
     chaserAdvanced: { maxSpeedOverride: false, maxSpeed: SPRINT_MAX_SPEED, staminaCostOverride: false, staminaCostPerSec: SPRINT_ENERGY_COST_PER_SEC },
     runnerAdvanced: { maxSpeedOverride: false, maxSpeed: SPRINT_MAX_SPEED, staminaCostOverride: false, staminaCostPerSec: SPRINT_ENERGY_COST_PER_SEC },
   },
-  controlledJump: { mode: 'auto', threshold: 180, chaserEnabled: true, runnerEnabled: true },
+  controlledJump: { mode: 'off', chaserEnabled: true, runnerEnabled: true },
 };
 const UPGRADE_STORAGE_KEY = 'ai_tag_upgrade_config';
 
@@ -113,8 +103,8 @@ const loadUpgradeConfig = (): UpgradeConfig => {
     if (!raw) return DEFAULT_UPGRADE_CONFIG;
     const parsed = JSON.parse(raw) as Partial<UpgradeConfig>;
     const normalize = (rule: Partial<UpgradeRule> | undefined, fallback: UpgradeRule): UpgradeRule => ({
-      mode: rule?.mode === 'off' || rule?.mode === 'on' || rule?.mode === 'auto' ? rule.mode : fallback.mode,
-      threshold: Number.isFinite(Number(rule?.threshold)) ? Math.max(0, Number(rule?.threshold)) : fallback.threshold,
+      // Legacy 'auto' configs migrate to off: abilities are manual-only in this build.
+      mode: rule?.mode === 'on' ? 'on' : 'off',
       chaserEnabled: typeof rule?.chaserEnabled === 'boolean' ? rule.chaserEnabled : fallback.chaserEnabled,
       runnerEnabled: typeof rule?.runnerEnabled === 'boolean' ? rule.runnerEnabled : fallback.runnerEnabled,
     });
@@ -138,6 +128,27 @@ const loadUpgradeConfig = (): UpgradeConfig => {
   }
 };
 
+const TRAINING_FITNESS_STORAGE_KEY = 'ai_tag_training_fitness_config_safe_v2';
+const DEFAULT_TRAINING_FITNESS_CONFIG: TrainingFitnessConfig = {
+  runnerExplorationRewardPerViewport: DEFAULT_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT,
+};
+
+const loadTrainingFitnessConfig = (): TrainingFitnessConfig => {
+  try {
+    const raw = localStorage.getItem(TRAINING_FITNESS_STORAGE_KEY);
+    if (!raw) return DEFAULT_TRAINING_FITNESS_CONFIG;
+    const parsed = JSON.parse(raw) as Partial<TrainingFitnessConfig>;
+    const value = Number(parsed.runnerExplorationRewardPerViewport);
+    return {
+      runnerExplorationRewardPerViewport: Number.isFinite(value)
+        ? Math.max(0, Math.min(MAX_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT, value))
+        : DEFAULT_TRAINING_FITNESS_CONFIG.runnerExplorationRewardPerViewport,
+    };
+  } catch {
+    return DEFAULT_TRAINING_FITNESS_CONFIG;
+  }
+};
+
 export const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -145,7 +156,7 @@ export const App: React.FC = () => {
   // Physics and policy senses stay fixed to the original 1200x800 logical world.
   const viewportSize = CHAMPION_WORLD_VIEWPORT;
   const [showTrails, setShowTrails] = useState(true);
-  const [showLidar, setShowLidar] = useState(true);
+  const [showSenses, setShowSenses] = useState(true);
 
   // The visible champion arena and background evolution are controlled independently.
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
@@ -154,8 +165,11 @@ export const App: React.FC = () => {
   const [isVisualPaused, setIsVisualPaused] = useState(false);
   const [isTrainingPaused, setIsTrainingPaused] = useState(false);
   const [upgradeConfig, setUpgradeConfig] = useState<UpgradeConfig>(loadUpgradeConfig);
+  const [trainingFitnessConfig, setTrainingFitnessConfig] = useState<TrainingFitnessConfig>(loadTrainingFitnessConfig);
   const stepFrameRef = useRef(false);
   const visualStepAccumulatorRef = useRef(0);
+  const wakeLockRef = useRef<any>(null);
+  const [trainingWakeLockActive, setTrainingWakeLockActive] = useState(false);
 
   const [diagnosticsState, setDiagnosticsState] = useState<DiagnosticsState>(() => ({
     chaserNeatHistory: [],
@@ -174,34 +188,25 @@ export const App: React.FC = () => {
     generation: 0,
     chaserElo: INITIAL_ELO,
     evaderElo: INITIAL_ELO,
-    eloLeaderboard: createLeaderboardEntries(INITIAL_ELO, INITIAL_ELO, 0, 0, 0, 0, 0),
-    benchmarkActive: false,
-    benchmarkTimeRemaining: 0,
-    benchmarkResults: [],
-    hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: 12, opponentsPerGenome: 1, chaserGenerations: [], evaderGenerations: [] },
+    eloLeaderboard: createLeaderboardEntries(INITIAL_ELO, INITIAL_ELO, 0, 0, 0, 0, 0, 0, 0),
+    hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: 12, opponentsPerGenome: 1, chaserGenerations: [], evaderGenerations: [], chaserRecentSize: 0, evaderRecentSize: 0, chaserDiverseSize: 0, evaderDiverseSize: 0, chaserDiversity: 0, evaderDiversity: 0 },
+    lastCrossGenerationBenchmark: null,
+    benchmarkHistory: [],
+    benchmarkSuiteRevision: 0,
     lastGenerationBalance: null,
     balanceHistory: [],
     trainingSpeedX: 0,
     trainingEpisodesPerSecond: 0,
     trainingBackend: 'CPU optimized',
     trainingWorkerCount: 1,
-    upgradePerformanceScore: 0,
-    upgradePeakPerformanceScore: 0,
+    trainingRecoveryCount: 0,
+    trainingLastRecoveryReason: '',
     sprintUpgradeActive: false,
     controlledJumpUpgradeActive: false,
-    sprintAutoUnlocked: false,
-    controlledJumpAutoUnlocked: false,
+    trainingFitnessConfig: loadTrainingFitnessConfig(),
   }));
 
-  const benchmarkSessionRef = useRef<{
-    active: boolean;
-    startTime: number;
-    durationMs: number;
-    startTags: number;
-    startFalls: number;
-    startJumps: number;
-    modelLabel: string;
-  } | null>(null);
+
 
   const lastTelemetryTimeRef = useRef(0);
   const actionCountsRef = useRef<{
@@ -234,6 +239,12 @@ export const App: React.FC = () => {
   const workerRef = useRef<Worker | null>(null);
   const initializedRef = useRef(false);
   const installedChampionGenerationRef = useRef({ chaser: 0, evader: 0 });
+  const checkpointRequestCounterRef = useRef(1);
+  const analysisRequestCounterRef = useRef(1);
+  const pendingCheckpointActionRef = useRef<{ requestId: number; action: 'save' | 'export' } | null>(null);
+  const pendingRestoreDiagnosticsRef = useRef<DiagnosticsState | null>(null);
+  const diagnosticsStateRef = useRef(diagnosticsState);
+  diagnosticsStateRef.current = diagnosticsState;
 
   const initializeGameState = useCallback(() => {
     chaserAgent.current = new LearningAgent('chaser');
@@ -258,7 +269,7 @@ export const App: React.FC = () => {
         color: AGENT_COLORS[0],
         isOnGround: false,
         cooldownTimer: 0,
-        lastAction: 'wait',
+        lastAction: 'idle',
         energy: MAX_ENERGY,
         maxEnergy: MAX_ENERGY,
         trajectory: [{ x: 100, y: 500, timestamp: 0 }],
@@ -281,7 +292,7 @@ export const App: React.FC = () => {
         color: AGENT_COLORS[1],
         isOnGround: false,
         cooldownTimer: 0,
-        lastAction: 'wait',
+        lastAction: 'idle',
         energy: MAX_ENERGY,
         maxEnergy: MAX_ENERGY,
         trajectory: [{ x: 400, y: 500, timestamp: 0 }],
@@ -304,7 +315,7 @@ export const App: React.FC = () => {
         color: AGENT_COLORS[2],
         isOnGround: false,
         cooldownTimer: 0,
-        lastAction: 'wait',
+        lastAction: 'idle',
         energy: MAX_ENERGY,
         maxEnergy: MAX_ENERGY,
         trajectory: [{ x: 700, y: 500, timestamp: 0 }],
@@ -372,6 +383,7 @@ export const App: React.FC = () => {
         const { type, payload } = event.data;
 
         if (type === 'TELEMETRY') {
+          lastTelemetryTimeRef.current = Date.now();
           if (typeof payload.chaserElo === 'number') chaserElo.current = payload.chaserElo;
           if (typeof payload.evaderElo === 'number') evaderElo.current = payload.evaderElo;
           if (typeof payload.totalTags === 'number') totalTagsRef.current = payload.totalTags;
@@ -421,6 +433,11 @@ export const App: React.FC = () => {
             const chaserMetric = payload.lastChaserNeatMetrics;
             const evaderMetric = payload.lastEvaderNeatMetrics;
             const balanceMetric = payload.lastGenerationBalance;
+            const benchmarkMetric = payload.lastCrossGenerationBenchmark;
+            const incomingBenchmarkRevision = typeof payload.benchmarkSuiteRevision === 'number'
+              ? payload.benchmarkSuiteRevision
+              : (prev.benchmarkSuiteRevision ?? 0);
+            const benchmarkRevisionChanged = incomingBenchmarkRevision !== (prev.benchmarkSuiteRevision ?? 0);
             const appendUnique = <T extends { generation: number },>(history: T[] | undefined, metric?: T) => {
               if (!metric) return history || [];
               const current = history || [];
@@ -435,6 +452,8 @@ export const App: React.FC = () => {
               generation: generation,
               totalTags: payload.totalTags,
               totalFalls: payload.totalFalls,
+              totalChaserFalls: payload.totalChaserFalls,
+              totalRunnerFalls: payload.totalRunnerFalls,
               totalSuccessfulJumps: payload.totalJumps,
               chaserActionDistribution: payload.actionCountsChaser || prev.chaserActionDistribution,
               evaderActionDistribution: payload.actionCountsEvader || prev.evaderActionDistribution,
@@ -458,21 +477,77 @@ export const App: React.FC = () => {
               chaserChampionGenome: payload.chaserChampionGenome || prev.chaserChampionGenome,
               evaderChampionGenome: payload.evaderChampionGenome || prev.evaderChampionGenome,
               hallOfFame: payload.hallOfFame || prev.hallOfFame,
+              lastCrossGenerationBenchmark: benchmarkMetric || (benchmarkRevisionChanged ? null : prev.lastCrossGenerationBenchmark),
+              benchmarkHistory: appendUnique(benchmarkRevisionChanged ? [] : prev.benchmarkHistory, benchmarkMetric),
+              benchmarkSuiteRevision: incomingBenchmarkRevision,
               lastGenerationBalance: balanceMetric || prev.lastGenerationBalance,
               balanceHistory: appendUnique(prev.balanceHistory, balanceMetric),
               trainingSpeedX: typeof payload.trainingSpeedX === 'number' ? payload.trainingSpeedX : prev.trainingSpeedX,
               trainingEpisodesPerSecond: typeof payload.trainingEpisodesPerSecond === 'number' ? payload.trainingEpisodesPerSecond : prev.trainingEpisodesPerSecond,
               trainingBackend: typeof payload.trainingBackend === 'string' ? payload.trainingBackend : prev.trainingBackend,
               trainingWorkerCount: typeof payload.trainingWorkerCount === 'number' ? payload.trainingWorkerCount : prev.trainingWorkerCount,
-              upgradePerformanceScore: typeof payload.upgradePerformanceScore === 'number' ? payload.upgradePerformanceScore : prev.upgradePerformanceScore,
-              upgradePeakPerformanceScore: typeof payload.upgradePeakPerformanceScore === 'number' ? payload.upgradePeakPerformanceScore : prev.upgradePeakPerformanceScore,
+              trainingRecoveryCount: typeof payload.trainingRecoveryCount === 'number' ? payload.trainingRecoveryCount : prev.trainingRecoveryCount,
+              trainingLastRecoveryReason: typeof payload.trainingLastRecoveryReason === 'string' ? payload.trainingLastRecoveryReason : prev.trainingLastRecoveryReason,
               sprintUpgradeActive: typeof payload.sprintUpgradeActive === 'boolean' ? payload.sprintUpgradeActive : prev.sprintUpgradeActive,
               controlledJumpUpgradeActive: typeof payload.controlledJumpUpgradeActive === 'boolean' ? payload.controlledJumpUpgradeActive : prev.controlledJumpUpgradeActive,
-              sprintAutoUnlocked: typeof payload.sprintAutoUnlocked === 'boolean' ? payload.sprintAutoUnlocked : prev.sprintAutoUnlocked,
-              controlledJumpAutoUnlocked: typeof payload.controlledJumpAutoUnlocked === 'boolean' ? payload.controlledJumpAutoUnlocked : prev.controlledJumpAutoUnlocked,
+              trainingFitnessConfig: payload.trainingFitnessConfig || prev.trainingFitnessConfig,
             };
           });
 
+        } else if (type === 'ANALYSIS_EXPORT_RESPONSE') {
+          if (payload?.error || !payload?.analysis) {
+            console.error('Failed to build training analysis export:', payload?.error || 'Unknown analysis export error');
+            return;
+          }
+          const exportPayload = {
+            ...payload.analysis,
+            uiDiagnostics: diagnosticsStateRef.current,
+          };
+          const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `neat_tag_analysis_gen${payload.analysis.generation || 0}.json`;
+          a.click();
+          URL.revokeObjectURL(url);
+        } else if (type === 'CHECKPOINT_RESPONSE') {
+          const pending = pendingCheckpointActionRef.current;
+          if (!pending || pending.requestId !== payload?.requestId || !payload?.checkpoint) return;
+          pendingCheckpointActionRef.current = null;
+          const checkpoint = payload.checkpoint;
+          const filePayload = {
+            version: '4.0.0',
+            algorithm: 'NEAT',
+            kind: 'full-evolution-checkpoint',
+            timestamp: Date.now(),
+            generation: checkpoint.generation,
+            evolutionCheckpoint: checkpoint,
+            uiDiagnostics: diagnosticsStateRef.current,
+          };
+          const serialized = JSON.stringify(filePayload, null, pending.action === 'export' ? 2 : 0);
+          if (pending.action === 'save') {
+            try {
+              localStorage.setItem('ai_tag_studio_models', serialized);
+            } catch (error) {
+              console.error('Full checkpoint is too large for browser local storage; use Export JSON instead.', error);
+            }
+          } else {
+            const blob = new Blob([serialized], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `neat_tag_checkpoint_gen${checkpoint.generation}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+          }
+        } else if (type === 'RESTORE_CHECKPOINT_RESPONSE') {
+          if (!payload?.ok) {
+            console.error('Failed to restore full evolution checkpoint:', payload?.message || 'Unknown checkpoint error');
+            pendingRestoreDiagnosticsRef.current = null;
+          } else if (pendingRestoreDiagnosticsRef.current) {
+            setDiagnosticsState(pendingRestoreDiagnosticsRef.current);
+            pendingRestoreDiagnosticsRef.current = null;
+          }
         } else if (type === 'SYNC_WEIGHTS_RESPONSE') {
           if (payload.chaserWeights && chaserAgent.current) {
             chaserAgent.current.setWeights(payload.chaserWeights);
@@ -499,6 +574,14 @@ export const App: React.FC = () => {
     workerRef.current?.postMessage({ type: 'SET_UPGRADE_CONFIG', payload: { upgradeConfig } });
   }, [upgradeConfig]);
 
+  useEffect(() => {
+    localStorage.setItem(TRAINING_FITNESS_STORAGE_KEY, JSON.stringify(trainingFitnessConfig));
+    workerRef.current?.postMessage({
+      type: 'SET_TRAINING_FITNESS_CONFIG',
+      payload: { trainingFitnessConfig },
+    });
+  }, [trainingFitnessConfig]);
+
   // Background evolution is independent from the visible champion arena and always runs
   // at maximum worker throughput unless explicitly paused.
   useEffect(() => {
@@ -518,22 +601,104 @@ export const App: React.FC = () => {
         evaderElo: evaderElo.current,
         viewportSize,
         upgradeConfig,
+        trainingFitnessConfig,
       },
     });
   }, [isTrainingPaused, isSimulating]);
 
-  const upgradePerformanceScore = diagnosticsState.upgradePerformanceScore || 0;
-  const upgradePeakPerformanceScore = diagnosticsState.upgradePeakPerformanceScore || upgradePerformanceScore;
-  const sprintUpgradeActive = upgradeConfig.sprint.mode === 'on' ||
-    (upgradeConfig.sprint.mode === 'auto' && (Boolean(diagnosticsState.sprintAutoUnlocked) || upgradePeakPerformanceScore >= upgradeConfig.sprint.threshold));
-  const controlledJumpUpgradeActive = upgradeConfig.controlledJump.mode === 'on' ||
-    (upgradeConfig.controlledJump.mode === 'auto' && (Boolean(diagnosticsState.controlledJumpAutoUnlocked) || upgradePeakPerformanceScore >= upgradeConfig.controlledJump.threshold));
+  // Keep the display awake while training is actively running. Chromium releases screen wake
+  // locks automatically when a document becomes hidden, so reacquire it when the page becomes
+  // visible again. If the API is unavailable, training still works and the evaluator watchdog
+  // below recovers suspended batches after the browser resumes.
+  useEffect(() => {
+    let cancelled = false;
+
+    const releaseWakeLock = async () => {
+      const lock = wakeLockRef.current;
+      wakeLockRef.current = null;
+      setTrainingWakeLockActive(false);
+      if (lock?.release) {
+        try { await lock.release(); } catch { /* already released */ }
+      }
+    };
+
+    const requestWakeLock = async () => {
+      if (cancelled || !isSimulating || isTrainingPaused || document.visibilityState !== 'visible') return;
+      if (wakeLockRef.current) return;
+      const wakeLockApi = (navigator as any).wakeLock;
+      if (!wakeLockApi?.request) return;
+      try {
+        const lock = await wakeLockApi.request('screen');
+        if (cancelled) {
+          try { await lock.release(); } catch { /* no-op */ }
+          return;
+        }
+        wakeLockRef.current = lock;
+        setTrainingWakeLockActive(true);
+        lock.addEventListener?.('release', () => {
+          if (wakeLockRef.current === lock) wakeLockRef.current = null;
+          setTrainingWakeLockActive(false);
+        });
+      } catch {
+        setTrainingWakeLockActive(false);
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void requestWakeLock();
+        // A hidden/sleep transition may have suspended a nested evaluator batch. Nudge the worker
+        // immediately instead of waiting for the normal stale-telemetry watchdog.
+        workerRef.current?.postMessage({ type: 'WAKE_TRAINING' });
+      }
+    };
+
+    if (isSimulating && !isTrainingPaused) void requestWakeLock();
+    else void releaseWakeLock();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      void releaseWakeLock();
+    };
+  }, [isSimulating, isTrainingPaused]);
+
+  // Main-thread health monitor. A healthy trainer emits telemetry several times per second. If
+  // telemetry goes quiet while the page is visible, ask the training worker to recover any stalled
+  // evaluator slots. This does not reset populations or the current generation.
+  useEffect(() => {
+    if (!isSimulating || isTrainingPaused) return;
+    lastTelemetryTimeRef.current = Date.now();
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      const staleForMs = Date.now() - lastTelemetryTimeRef.current;
+      if (staleForMs >= 5000) {
+        workerRef.current?.postMessage({ type: 'WAKE_TRAINING', payload: { staleForMs } });
+      }
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, [isSimulating, isTrainingPaused]);
+
+  const sprintUpgradeActive = upgradeConfig.sprint.mode === 'on';
+  const controlledJumpUpgradeActive = upgradeConfig.controlledJump.mode === 'on';
 
   const updateUpgradeRule = useCallback((upgrade: keyof UpgradeConfig, patch: Partial<UpgradeRule> | Partial<SprintUpgradeRule>) => {
     setUpgradeConfig(prev => ({
       ...prev,
       [upgrade]: { ...prev[upgrade], ...patch },
     }));
+  }, []);
+
+  const updateTrainingFitnessConfig = useCallback((patch: Partial<TrainingFitnessConfig>) => {
+    setTrainingFitnessConfig(prev => {
+      const value = patch.runnerExplorationRewardPerViewport ?? prev.runnerExplorationRewardPerViewport;
+      return {
+        ...prev,
+        ...patch,
+        runnerExplorationRewardPerViewport: Math.max(0, Math.min(MAX_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT, Number(value) || 0)),
+      };
+    });
   }, []);
 
   const calculateReward = (
@@ -551,7 +716,7 @@ export const App: React.FC = () => {
       return { total: -20, breakdown };
     }
 
-    if (agent.lastAction === 'wait') {
+    if (agent.lastAction === 'idle') {
       breakdown['inactivity'] = -0.02;
     }
 
@@ -675,20 +840,20 @@ export const App: React.FC = () => {
           avgTimeToTag: prevGameState.avgTimeToTag,
         };
 
-        // 1. Update Timers
-        newState.agents.forEach(agent => {
-          if (agent.status !== AgentStatus.It) {
-            agent.survivalTime = (agent.survivalTime || 0) + deltaTime;
-            agent.timeSinceBecameIt = 0;
-          } else {
-            agent.timeSinceBecameIt = (agent.timeSinceBecameIt || 0) + deltaTime;
-            agent.survivalTime = 0;
-          }
-        });
+        // 1. Update Timers using the same shared rule as headless training.
+        advanceRoleTimers(newState.agents, deltaTime);
 
-        // 2. Champion action selection using the evolved 39-input / 4-output NEAT networks.
-        // Upgrade intensity reuses the magnitude of the selected original output.
-        const agentActions: { [key: number]: { action: string; strength: number } } = {};
+        // 2. Champion action selection using factorized 25-input / 4-output NEAT controls.
+        // Left/right drive, jump and sprint are independent, so agents can run and jump together.
+        const agentActions: {
+          [key: number]: {
+            action: string;
+            moveLeft: number;
+            moveRight: number;
+            jump: number;
+            sprint: number;
+          }
+        } = {};
         newState.agents.forEach(agent => {
           const stateVector = getAgentStateVector(agent, newState, viewportSize);
           const isChaser = agent.status === AgentStatus.It;
@@ -699,235 +864,128 @@ export const App: React.FC = () => {
 
           const model = isChaser ? chaserAgent.current : evaderAgent.current;
           if (!model) return;
-          const { action, actionStrength } = model.chooseAction(stateVector);
-          agentActions[agent.id] = { action, strength: actionStrength };
+          const decision = model.chooseAction(stateVector);
+          agentActions[agent.id] = {
+            action: decision.action,
+            moveLeft: decision.moveLeft,
+            moveRight: decision.moveRight,
+            jump: decision.jump,
+            sprint: decision.sprint,
+          };
 
-          actionCountsRef.current.all[action] = (actionCountsRef.current.all[action] || 0) + 1;
-          if (isChaser) actionCountsRef.current.chaser[action] = (actionCountsRef.current.chaser[action] || 0) + 1;
-          else actionCountsRef.current.evader[action] = (actionCountsRef.current.evader[action] || 0) + 1;
+          let active = 0;
+          const horizontalDrive = decision.moveRight - decision.moveLeft;
+          const movementName = horizontalDrive > POLICY_CONTROL_ACTIVE_THRESHOLD
+            ? 'move_right'
+            : horizontalDrive < -POLICY_CONTROL_ACTIVE_THRESHOLD
+              ? 'move_left'
+              : null;
+          const activeNames: string[] = [];
+          if (movementName) activeNames.push(movementName);
+          if (decision.jump >= POLICY_CONTROL_ACTIVE_THRESHOLD) activeNames.push('jump');
+          if (decision.sprint >= POLICY_CONTROL_ACTIVE_THRESHOLD) activeNames.push('sprint');
+          for (const name of activeNames) {
+            active++;
+            actionCountsRef.current.all[name] = (actionCountsRef.current.all[name] || 0) + 1;
+            if (isChaser) actionCountsRef.current.chaser[name] = (actionCountsRef.current.chaser[name] || 0) + 1;
+            else actionCountsRef.current.evader[name] = (actionCountsRef.current.evader[name] || 0) + 1;
+          }
+          if (active === 0) {
+            actionCountsRef.current.all.idle = (actionCountsRef.current.all.idle || 0) + 1;
+            if (isChaser) actionCountsRef.current.chaser.idle = (actionCountsRef.current.chaser.idle || 0) + 1;
+            else actionCountsRef.current.evader.idle = (actionCountsRef.current.evader.idle || 0) + 1;
+          }
         });
 
-        // 3. Update Physics & Boundaries
-        let fallEvents: { [id: number]: boolean } = {};
-        newState.agents = newState.agents.map(agent => {
-          let newVelocity = { ...agent.velocity };
-          let newPosition = { ...agent.position };
-          let newCooldownTimer = Math.max(0, agent.cooldownTimer - deltaTime);
-          let newEnergy = Math.min(agent.maxEnergy, agent.energy + ENERGY_REGEN_RATE * (deltaTime / 1000));
-          let newStatus = agent.status;
+        // 3. Update Physics & Boundaries through the shared simulation core. The core was
+        // extracted from this visual loop, so presentation behavior remains authoritative while
+        // headless training now executes the exact same movement/fall rules.
+        const activeUpgrades: ActiveUpgradeState = {
+          sprint: sprintUpgradeActive,
+          controlledJump: controlledJumpUpgradeActive,
+          sprintChaser: sprintUpgradeActive && upgradeConfig.sprint.chaserEnabled,
+          sprintRunner: sprintUpgradeActive && upgradeConfig.sprint.runnerEnabled,
+          controlledJumpChaser: controlledJumpUpgradeActive && upgradeConfig.controlledJump.chaserEnabled,
+          controlledJumpRunner: controlledJumpUpgradeActive && upgradeConfig.controlledJump.runnerEnabled,
+          sprintChaserMaxSpeed: upgradeConfig.sprint.chaserAdvanced.maxSpeedOverride
+            ? upgradeConfig.sprint.chaserAdvanced.maxSpeed
+            : SPRINT_MAX_SPEED,
+          sprintRunnerMaxSpeed: upgradeConfig.sprint.runnerAdvanced.maxSpeedOverride
+            ? upgradeConfig.sprint.runnerAdvanced.maxSpeed
+            : SPRINT_MAX_SPEED,
+          sprintChaserStaminaCostPerSec: upgradeConfig.sprint.chaserAdvanced.staminaCostOverride
+            ? upgradeConfig.sprint.chaserAdvanced.staminaCostPerSec
+            : SPRINT_ENERGY_COST_PER_SEC,
+          sprintRunnerStaminaCostPerSec: upgradeConfig.sprint.runnerAdvanced.staminaCostOverride
+            ? upgradeConfig.sprint.runnerAdvanced.staminaCostPerSec
+            : SPRINT_ENERGY_COST_PER_SEC,
+        };
 
-          if (newStatus === AgentStatus.Cooldown && newCooldownTimer === 0) {
-            newStatus = AgentStatus.Normal;
-          }
-
+        const fallEvents: { [id: number]: boolean } = {};
+        const agentsBeforePhysics = newState.agents;
+        newState.agents = agentsBeforePhysics.map(agent => {
           const actionDecision = agentActions[agent.id];
-          const action = actionDecision?.action || agent.lastAction;
-          const actionStrength = actionDecision?.strength ?? 0;
-          agent.lastAction = action;
+          const physics = stepAgentPhysics(
+            agent,
+            agentsBeforePhysics,
+            newState.platforms,
+            newState.cameraPosition.x,
+            viewportSize,
+            deltaTime,
+            {
+              action: actionDecision?.action || agent.lastAction,
+              moveLeft: actionDecision?.moveLeft ?? 0,
+              moveRight: actionDecision?.moveRight ?? 0,
+              jump: actionDecision?.jump ?? 0,
+              sprint: actionDecision?.sprint ?? 0,
+            },
+            activeUpgrades
+          );
 
-          agent.acceleration.x = 0;
-          const isChaserRole = agent.status === AgentStatus.It;
-          const sprintEnabledForRole = sprintUpgradeActive && (isChaserRole ? upgradeConfig.sprint.chaserEnabled : upgradeConfig.sprint.runnerEnabled);
-          const controlledJumpEnabledForRole = controlledJumpUpgradeActive && (isChaserRole ? upgradeConfig.controlledJump.chaserEnabled : upgradeConfig.controlledJump.runnerEnabled);
-          const sprintAdvanced = isChaserRole ? upgradeConfig.sprint.chaserAdvanced : upgradeConfig.sprint.runnerAdvanced;
-          const roleSprintMaxSpeed = sprintAdvanced.maxSpeedOverride ? sprintAdvanced.maxSpeed : SPRINT_MAX_SPEED;
-          const roleSprintStaminaCost = sprintAdvanced.staminaCostOverride ? sprintAdvanced.staminaCostPerSec : SPRINT_ENERGY_COST_PER_SEC;
-          const isMoveAction = action === 'move_left' || action === 'move_right';
-          const sprintIntensity = sprintEnabledForRole && isMoveAction && newEnergy > 0 ? actionStrength : 0;
-          const accelerationScale = 1 + (SPRINT_ACCELERATION_MULTIPLIER - 1) * sprintIntensity;
-          if (action === 'move_left') agent.acceleration.x = -AGENT_ACCELERATION * accelerationScale;
-          else if (action === 'move_right') agent.acceleration.x = AGENT_ACCELERATION * accelerationScale;
-
-          if (Math.abs(agent.acceleration.x) < 0.1) newVelocity.x *= FRICTION;
-          newVelocity.x += agent.acceleration.x;
-          const maxHorizontalSpeed = MAX_SPEED + (roleSprintMaxSpeed - MAX_SPEED) * sprintIntensity;
-          newVelocity.x = Math.max(-maxHorizontalSpeed, Math.min(maxHorizontalSpeed, newVelocity.x));
-          if (sprintIntensity > 0) {
-            newEnergy = Math.max(0, newEnergy - roleSprintStaminaCost * sprintIntensity * (deltaTime / 1000));
-          }
-
-          let jumpPower = 0;
-          if (action === 'jump' && agent.isOnGround) {
-            jumpPower = controlledJumpEnabledForRole
-              ? CONTROLLED_JUMP_MIN_POWER_RATIO + (1 - CONTROLLED_JUMP_MIN_POWER_RATIO) * actionStrength
-              : 1;
-            const jumpCost = controlledJumpEnabledForRole
-              ? CONTROLLED_JUMP_MIN_ENERGY_COST + (JUMP_ENERGY_COST - CONTROLLED_JUMP_MIN_ENERGY_COST) * jumpPower * jumpPower
-              : JUMP_ENERGY_COST;
-            if (newEnergy >= jumpCost) {
-              newVelocity.y = JUMP_STRENGTH * jumpPower;
-              newEnergy -= jumpCost;
-              playDynamicJumpSound(newVelocity.y);
-            }
-          }
-
-          newVelocity.y += GRAVITY;
-          newPosition.x += newVelocity.x;
-          newPosition.y += newVelocity.y;
-
-          // Camera Frame Wall Collisions
-          const minVisibleX = newState.cameraPosition.x;
-          const maxVisibleX = newState.cameraPosition.x + viewportSize.width - AGENT_WIDTH;
-          let isTouchingFrame = false;
-          let contactSide: 'left' | 'right' | null = null;
-
-          if (newPosition.x < minVisibleX) {
-            newPosition.x = minVisibleX;
-            newVelocity.x = 0;
-            isTouchingFrame = true;
-            contactSide = 'left';
-          } else if (newPosition.x > maxVisibleX) {
-            newPosition.x = maxVisibleX;
-            newVelocity.x = 0;
-            isTouchingFrame = true;
-            contactSide = 'right';
-          }
-
-          // Platform Landing Collisions
-          let grounded = false;
-          let landedPlatformId = agent.lastPlatformId;
-
-          for (const platform of newState.platforms) {
-            const prevBottom = agent.position.y + AGENT_HEIGHT;
-            const newBottom = newPosition.y + AGENT_HEIGHT;
-            const isHorizontallyAligned =
-              newPosition.x + AGENT_WIDTH > platform.position.x && newPosition.x < platform.position.x + platform.width;
-
-            if (
-              isHorizontallyAligned &&
-              prevBottom <= platform.position.y + 8 &&
-              newBottom >= platform.position.y &&
-              newVelocity.y >= 0
-            ) {
-              newPosition.y = platform.position.y - AGENT_HEIGHT;
-              newVelocity.y = 0;
-              grounded = true;
-              landedPlatformId = platform.id;
-              break;
-            }
-          }
-
-          // Continuously remember the latest safe grounded location. This is the respawn
-          // checkpoint, so a fall returns the agent to where it last genuinely stood rather
-          // than advancing it to a camera-relative platform.
-          let respawnCheckpoint = agent.positionAtLastTakeoff;
-          let checkpointEnergy = agent.energyAtLastTakeoff;
-          if (grounded) {
-            respawnCheckpoint = { ...newPosition };
-            checkpointEnergy = newEnergy;
-          }
-
-          // Fair fall recovery: return to the agent's last grounded checkpoint rather than
-          // teleporting to an arbitrary visible platform. The shared deterministic helper also
-          // avoids spawning directly in tag contact and never grants stamina or role changes.
-          if (newPosition.y > FALL_BOUNDARY) {
+          if (physics.jumped) playDynamicJumpSound(physics.jumpVelocity);
+          if (physics.fell) {
             fallEvents[agent.id] = true;
             visualFallsRef.current++;
             playFallSound();
-
-            const respawn = getFairRespawn(agent, newState.platforms, newState.agents, {
-              minX: minVisibleX,
-              maxX: maxVisibleX,
-            });
-            newPosition = { ...respawn.position };
-            newVelocity.x = 0;
-            newVelocity.y = 0;
-            grounded = true;
-            landedPlatformId = respawn.platformId;
-            respawnCheckpoint = { ...respawn.position };
-            checkpointEnergy = newEnergy;
           }
 
-          // Trail samples are world-space and time-limited. A respawn starts a fresh trail
-          // so teleporting back onto the level never draws a line across the arena.
-          const newTrajectory = fallEvents[agent.id]
-            ? [{ x: newPosition.x, y: newPosition.y, timestamp: newState.gameTime }]
-            : updateTrail(agent.trajectory, newPosition, newState.gameTime);
+          const newTrajectory = physics.fell
+            ? [{ x: physics.agent.position.x, y: physics.agent.position.y, timestamp: newState.gameTime }]
+            : updateTrail(agent.trajectory, physics.agent.position, newState.gameTime);
 
-          return {
-            ...agent,
-            position: newPosition,
-            trajectory: newTrajectory,
-            velocity: newVelocity,
-            isOnGround: grounded,
-            energy: newEnergy,
-            status: newStatus,
-            cooldownTimer: newCooldownTimer,
-            lastPlatformId: landedPlatformId,
-            positionAtLastTakeoff: respawnCheckpoint,
-            energyAtLastTakeoff: checkpointEnergy,
-            touchingCameraFrame: isTouchingFrame,
-            cameraFrameContact: contactSide,
-            sprintIntensity,
-            jumpPower,
-            survivalTime: agent.survivalTime || 0,
-            timeSinceBecameIt: agent.timeSinceBecameIt || 0,
-          };
+          return { ...physics.agent, trajectory: newTrajectory };
         });
 
-        // 4. Tag Detection & role swap between the current NEAT champions.
-        // Only a physical contact tag changes roles. Falling remains a severe loss signal
-        // for training/reward purposes, but a fall/respawn never changes who is It.
+        // 4. Tag Detection & role swap through the shared visual-game rule.
         let tagEvent: { taggerId?: number; taggedId?: number } = {};
-        const itAgent = newState.agents.find(a => a.status === AgentStatus.It);
+        const tagTransition = resolveTagSwap(newState.agents);
+        if (tagTransition) {
+          tagEvent = { taggerId: tagTransition.taggerId, taggedId: tagTransition.taggedId };
+          visualTagsRef.current++;
 
-        if (itAgent && (itAgent.cooldownTimer || 0) <= 0) {
-          const taggedAgent = newState.agents.find(otherAgent => {
-            if (
-              otherAgent.id === itAgent.id ||
-              otherAgent.status === AgentStatus.It ||
-              (otherAgent.cooldownTimer || 0) > 0
-            ) return false;
-
-            const dx = itAgent.position.x + AGENT_WIDTH / 2 - (otherAgent.position.x + AGENT_WIDTH / 2);
-            const dy = itAgent.position.y + AGENT_HEIGHT / 2 - (otherAgent.position.y + AGENT_HEIGHT / 2);
-            return Math.hypot(dx, dy) < (AGENT_WIDTH + AGENT_HEIGHT) / 2;
-          });
-
-          if (taggedAgent) {
-            tagEvent = { taggerId: itAgent.id, taggedId: taggedAgent.id };
-            visualTagsRef.current++;
-
-            const recordedSurvival = Math.max(taggedAgent.survivalTime || 0, 100);
-            const recordedTimeToTag = Math.max(itAgent.timeSinceBecameIt || 0, 100);
-
-            recentSurvivalTimes.current.push(recordedSurvival);
-            if (recentSurvivalTimes.current.length > SURVIVAL_TIME_HISTORY_LENGTH) {
-              recentSurvivalTimes.current.shift();
-            }
-            recentTimesToTag.current.push(recordedTimeToTag);
-            if (recentTimesToTag.current.length > TIME_TO_TAG_HISTORY_LENGTH) {
-              recentTimesToTag.current.shift();
-            }
-
-            // Role swap; each role always uses its latest evolved champion.
-            const oldTagger = itAgent;
-            const newTagger = taggedAgent;
-
-            newTagger.status = AgentStatus.It;
-            newTagger.role = 'chaser';
-            newTagger.elo = chaserElo.current;
-            newTagger.cooldownTimer = 600;
-            newTagger.survivalTime = 0;
-            newTagger.timeSinceBecameIt = 0;
-            newTagger.modelId = 'current_chaser';
-
-            oldTagger.status = AgentStatus.Cooldown;
-            oldTagger.role = 'evader';
-            oldTagger.elo = evaderElo.current;
-            oldTagger.cooldownTimer = TAG_COOLDOWN;
-            oldTagger.survivalTime = 0;
-            oldTagger.timeSinceBecameIt = 0;
-            oldTagger.modelId = 'current_evader';
-
-            playTagSound();
-            const effectLife = 500;
-            newState.tagEffects.push({
-              position: { ...taggedAgent.position },
-              life: effectLife,
-              initialLife: effectLife,
-            });
+          recentSurvivalTimes.current.push(tagTransition.survivalTimeMs);
+          if (recentSurvivalTimes.current.length > SURVIVAL_TIME_HISTORY_LENGTH) {
+            recentSurvivalTimes.current.shift();
           }
+          recentTimesToTag.current.push(tagTransition.timeToTagMs);
+          if (recentTimesToTag.current.length > TIME_TO_TAG_HISTORY_LENGTH) {
+            recentTimesToTag.current.shift();
+          }
+
+          // Shared gameplay code owns status/role/cooldown changes; the visible game adds only
+          // role-specific UI ratings, sound and the contact flash.
+          const newTagger = newState.agents.find(a => a.id === tagTransition.taggedId);
+          const oldTagger = newState.agents.find(a => a.id === tagTransition.taggerId);
+          if (newTagger) newTagger.elo = chaserElo.current;
+          if (oldTagger) oldTagger.elo = evaderElo.current;
+
+          playTagSound();
+          const effectLife = 500;
+          newState.tagEffects.push({
+            position: { ...tagTransition.position },
+            life: effectLife,
+            initialLife: effectLife,
+          });
         }
 
         // 5. Performance Averages
@@ -970,81 +1028,25 @@ export const App: React.FC = () => {
 
         // Evolutionary diagnostics remain worker-owned; the visible game is presentation only.
 
-        // 7. Camera Tracking (Runners have dominant authority over camera progression)
-        const evaders = newState.agents.filter(a => a.status !== AgentStatus.It);
-        const trackingGroup = evaders.length > 0 ? evaders : newState.agents;
-
-        let minRunnerX = Infinity,
-          maxRunnerX = -Infinity;
-        trackingGroup.forEach(a => {
-          minRunnerX = Math.min(minRunnerX, a.position.x);
-          maxRunnerX = Math.max(maxRunnerX, a.position.x + AGENT_WIDTH);
-        });
-
-        // Center on runner cluster with slight forward horizon bias (+5% right)
-        const runnersCenterX = (minRunnerX + maxRunnerX) / 2;
-        const desiredCameraX = runnersCenterX - viewportSize.width * 0.45;
-        newState.cameraPosition.x += (desiredCameraX - newState.cameraPosition.x) * 0.12;
-
-        // 10. Platform Generation
-        const rightGenerationEdge = newState.cameraPosition.x + viewportSize.width + PLATFORM_SPAWN_BUFFER;
-        const leftGenerationEdge = newState.cameraPosition.x - PLATFORM_SPAWN_BUFFER;
-        const despawnMargin = PLATFORM_SPAWN_BUFFER * 2;
-        const protectedRespawnPlatformIds = new Set(
-          newState.agents
-            .map(agent => agent.lastPlatformId)
-            .filter((id): id is number => id !== null && id !== undefined)
-        );
-        newState.platforms = newState.platforms.filter(
-          p =>
-            protectedRespawnPlatformIds.has(p.id) ||
-            (p.position.x + p.width > newState.cameraPosition.x - despawnMargin &&
-              p.position.x < newState.cameraPosition.x + viewportSize.width + despawnMargin)
+        // 7. Camera Tracking (shared with headless training)
+        newState.cameraPosition.x = updateRunnerCameraX(
+          newState.agents,
+          newState.cameraPosition.x,
+          viewportSize.width
         );
 
-        const sortedPlatforms = [...newState.platforms].sort((a, b) => a.position.x - b.position.x);
-
-        function generatePlatform(baseX: number, baseY: number, toLeft: boolean = false): PlatformState {
-          let gapX = MIN_PLATFORM_GAP_X + Math.random() * (MAX_PLATFORM_GAP_X - MIN_PLATFORM_GAP_X);
-          const gapY = (Math.random() - 0.5) * MAX_PLATFORM_GAP_Y * 1.5;
-          const newY = baseY + gapY;
-          const clampedY = Math.min(viewportSize.height - 120, Math.max(250, newY));
-          const verticalDifference = clampedY - baseY;
-
-          if (verticalDifference < -100) gapX = Math.max(MIN_PLATFORM_GAP_X, Math.min(gapX, 90));
-          else if (verticalDifference > 80) gapX = Math.max(gapX, 140);
-
-          const newWidth = Math.random() * (PLATFORM_MAX_WIDTH - PLATFORM_MIN_WIDTH) + PLATFORM_MIN_WIDTH;
-          return {
-            id: platformIdCounter.current++,
-            width: newWidth,
-            height: PLATFORM_HEIGHT,
-            position: {
-              x: toLeft ? baseX - newWidth - gapX : baseX + gapX,
-              y: clampedY,
-            },
-          };
-        }
-
-        if (sortedPlatforms.length > 0) {
-          let rightmostPlatform = sortedPlatforms[sortedPlatforms.length - 1];
-          while (rightmostPlatform.position.x + rightmostPlatform.width < rightGenerationEdge) {
-            const newPlatform = generatePlatform(
-              rightmostPlatform.position.x + rightmostPlatform.width,
-              rightmostPlatform.position.y
-            );
-            newState.platforms.push(newPlatform);
-            rightmostPlatform = newPlatform;
-          }
-        }
-        if (sortedPlatforms.length > 0) {
-          let leftmostPlatform = sortedPlatforms[0];
-          while (leftmostPlatform.position.x > leftGenerationEdge) {
-            const newPlatform = generatePlatform(leftmostPlatform.position.x, leftmostPlatform.position.y, true);
-            newState.platforms.unshift(newPlatform);
-            leftmostPlatform = newPlatform;
-          }
-        }
+        // 10. Platform Generation. The visual game continues to use Math.random; training
+        // supplies a seeded RNG to this same rule so all compared genomes see identical terrain.
+        const platformUpdate = maintainPlatformsForCamera(
+          newState.platforms,
+          newState.agents,
+          newState.cameraPosition.x,
+          viewportSize,
+          platformIdCounter.current,
+          Math.random
+        );
+        newState.platforms = platformUpdate.platforms;
+        platformIdCounter.current = platformUpdate.nextPlatformId;
 
         // 11. Tag Visual Effects
         newState.tagEffects = newState.tagEffects
@@ -1070,7 +1072,7 @@ export const App: React.FC = () => {
   );
 
   const updateSimulation = useCallback(
-    (_deltaTime: number) => {
+    (deltaTime: number) => {
       if (isVisualPaused && !stepFrameRef.current) return;
 
       if (stepFrameRef.current) {
@@ -1079,10 +1081,12 @@ export const App: React.FC = () => {
         return;
       }
 
-      // Keep visual playback smooth and independent from the max-speed background trainer.
-      visualStepAccumulatorRef.current += Math.max(0.25, Math.min(10, visualSpeed));
-      const wholeSteps = Math.floor(visualStepAccumulatorRef.current);
-      visualStepAccumulatorRef.current -= wholeSteps;
+      // Fixed-step visual physics driven by real elapsed wall time. This makes 1x playback the
+      // same speed on 60/120/144 Hz displays while preserving deterministic 16.67 ms physics steps.
+      const safeDeltaMs = Math.min(100, Math.max(0, deltaTime));
+      visualStepAccumulatorRef.current += safeDeltaMs * Math.max(0.25, Math.min(10, visualSpeed));
+      const wholeSteps = Math.min(60, Math.floor(visualStepAccumulatorRef.current / 16.67));
+      visualStepAccumulatorRef.current -= wholeSteps * 16.67;
       for (let i = 0; i < wholeSteps; i++) updateGame(16.67);
     },
     [isVisualPaused, visualSpeed, updateGame]
@@ -1100,9 +1104,9 @@ export const App: React.FC = () => {
     setShowTrails(prev => !prev);
   };
 
-  const handleToggleLidar = () => {
-    playToggleSound(!showLidar);
-    setShowLidar(prev => !prev);
+  const handleToggleSenses = () => {
+    playToggleSound(!showSenses);
+    setShowSenses(prev => !prev);
   };
 
   useEffect(() => {
@@ -1110,7 +1114,7 @@ export const App: React.FC = () => {
       if (event.key.toLowerCase() !== 's' || event.repeat) return;
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
-      setShowLidar(prev => {
+      setShowSenses(prev => {
         playToggleSound(!prev);
         return !prev;
       });
@@ -1119,37 +1123,6 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const handleRunBenchmark = (durationSeconds = 20) => {
-    const durationMs = durationSeconds * 1000;
-    const now = Date.now();
-    const currentGeneration = diagnosticsState.generation || Math.max(
-      chaserAgent.current?.getGeneration() || 0,
-      evaderAgent.current?.getGeneration() || 0
-    );
-    benchmarkSessionRef.current = {
-      active: true,
-      startTime: now,
-      durationMs,
-      startTags: totalTagsRef.current,
-      startFalls: totalFallsRef.current,
-      startJumps: totalJumpsRef.current,
-      modelLabel: `Benchmark (Generation ${currentGeneration})`,
-    };
-    setDiagnosticsState(prev => ({
-      ...prev,
-      benchmarkActive: true,
-      benchmarkTimeRemaining: durationMs,
-    }));
-  };
-
-  const handleCancelBenchmark = () => {
-    benchmarkSessionRef.current = null;
-    setDiagnosticsState(prev => ({
-      ...prev,
-      benchmarkActive: false,
-      benchmarkTimeRemaining: 0,
-    }));
-  };
 
   const handleResetChampionGame = useCallback(() => {
     recentSurvivalTimes.current = [];
@@ -1178,7 +1151,7 @@ export const App: React.FC = () => {
           elo: isChaser ? chaserElo.current : evaderElo.current,
           isOnGround: false,
           cooldownTimer: 0,
-          lastAction: 'wait',
+          lastAction: 'idle',
           energy: MAX_ENERGY,
           maxEnergy: MAX_ENERGY,
           trajectory: [{ x, y: 500, timestamp: 0 }],
@@ -1238,122 +1211,120 @@ export const App: React.FC = () => {
       generation: 0,
       chaserElo: INITIAL_ELO,
       evaderElo: INITIAL_ELO,
-      eloLeaderboard: createLeaderboardEntries(INITIAL_ELO, INITIAL_ELO, 0, 0, 0, 0, 0),
-      hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: 12, opponentsPerGenome: 1, chaserGenerations: [], evaderGenerations: [] },
+      eloLeaderboard: createLeaderboardEntries(INITIAL_ELO, INITIAL_ELO, 0, 0, 0, 0, 0, 0, 0),
+      hallOfFame: { chaserSize: 0, evaderSize: 0, maxSize: 12, opponentsPerGenome: 1, chaserGenerations: [], evaderGenerations: [], chaserRecentSize: 0, evaderRecentSize: 0, chaserDiverseSize: 0, evaderDiverseSize: 0, chaserDiversity: 0, evaderDiversity: 0 },
+      lastCrossGenerationBenchmark: null,
+      benchmarkHistory: [],
+      benchmarkSuiteRevision: 0,
       lastGenerationBalance: null,
       balanceHistory: [],
       trainingSpeedX: 0,
       trainingEpisodesPerSecond: 0,
       trainingBackend: 'CPU optimized',
       trainingWorkerCount: 1,
-      upgradePerformanceScore: 0,
-      upgradePeakPerformanceScore: 0,
-      sprintUpgradeActive: upgradeConfig.sprint.mode === 'on',
+          sprintUpgradeActive: upgradeConfig.sprint.mode === 'on',
       controlledJumpUpgradeActive: upgradeConfig.controlledJump.mode === 'on',
-      sprintAutoUnlocked: false,
-      controlledJumpAutoUnlocked: false,
-    }));
+      trainingFitnessConfig: { ...trainingFitnessConfig },
+        }));
   };
 
-  const handleSaveModels = () => {
-    if (!chaserAgent.current || !evaderAgent.current) return;
-    const payload = {
-      version: '3.0.0',
-      algorithm: 'NEAT',
-      timestamp: Date.now(),
-      chaser: JSON.parse(chaserAgent.current.exportJson()),
-      evader: JSON.parse(evaderAgent.current.exportJson()),
-      chaserElo: chaserElo.current,
-      evaderElo: evaderElo.current,
-      diagnostics: {
-        totalTags: totalTagsRef.current,
-        totalFalls: totalFallsRef.current,
-      },
-    };
-    localStorage.setItem('ai_tag_studio_models', JSON.stringify(payload));
+  const requestFullCheckpoint = (action: 'save' | 'export') => {
+    if (!workerRef.current) return;
+    const requestId = checkpointRequestCounterRef.current++;
+    pendingCheckpointActionRef.current = { requestId, action };
+    workerRef.current.postMessage({ type: 'CHECKPOINT_REQUEST', payload: { requestId } });
   };
+
+  const restoreModelPayload = (payload: any): boolean => {
+    try {
+      if (payload?.kind === 'full-evolution-checkpoint' && payload?.evolutionCheckpoint) {
+        const checkpoint = payload.evolutionCheckpoint;
+        // Validate both champion phenotypes on temporary agents before touching either live model.
+        const nextChaser = new LearningAgent('chaser');
+        const nextEvader = new LearningAgent('evader');
+        nextChaser.setWeights(checkpoint.championChaser);
+        nextEvader.setWeights(checkpoint.championEvader);
+
+        chaserAgent.current?.setWeights(checkpoint.championChaser);
+        evaderAgent.current?.setWeights(checkpoint.championEvader);
+        const chaserGeneration = checkpoint.lastChaserMetrics?.generation ?? checkpoint.championChaser?.generation ?? 0;
+        const evaderGeneration = checkpoint.lastEvaderMetrics?.generation ?? checkpoint.championEvader?.generation ?? 0;
+        installedChampionGenerationRef.current = { chaser: chaserGeneration, evader: evaderGeneration };
+        chaserAgent.current?.setGeneration(chaserGeneration);
+        evaderAgent.current?.setGeneration(evaderGeneration);
+        if (typeof checkpoint.chaserElo === 'number') chaserElo.current = checkpoint.chaserElo;
+        if (typeof checkpoint.evaderElo === 'number') evaderElo.current = checkpoint.evaderElo;
+        if (checkpoint.upgradeConfig) setUpgradeConfig(checkpoint.upgradeConfig);
+        if (checkpoint.trainingFitnessConfig) setTrainingFitnessConfig(checkpoint.trainingFitnessConfig);
+
+        pendingRestoreDiagnosticsRef.current = payload.uiDiagnostics || null;
+        const requestId = checkpointRequestCounterRef.current++;
+        workerRef.current?.postMessage({
+          type: 'RESTORE_CHECKPOINT',
+          payload: { requestId, checkpoint },
+        });
+        return true;
+      }
+
+      // Legacy v3 champion-only files remain importable. They seed fresh populations rather than
+      // pretending to restore species/Hall-of-Fame/innovation history that the file never stored.
+      let nextChaserWeights = chaserAgent.current?.getWeights();
+      let nextEvaderWeights = evaderAgent.current?.getWeights();
+      if (payload.chaser) {
+        const candidate = new LearningAgent('chaser');
+        if (!candidate.importJson(JSON.stringify(payload.chaser))) return false;
+        nextChaserWeights = candidate.getWeights();
+      }
+      if (payload.evader) {
+        const candidate = new LearningAgent('evader');
+        if (!candidate.importJson(JSON.stringify(payload.evader))) return false;
+        nextEvaderWeights = candidate.getWeights();
+      }
+      if (nextChaserWeights && chaserAgent.current) chaserAgent.current.setWeights(nextChaserWeights);
+      if (nextEvaderWeights && evaderAgent.current) evaderAgent.current.setWeights(nextEvaderWeights);
+      if (typeof payload.chaserElo === 'number') chaserElo.current = payload.chaserElo;
+      if (typeof payload.evaderElo === 'number') evaderElo.current = payload.evaderElo;
+      workerRef.current?.postMessage({
+        type: 'SET_WEIGHTS',
+        payload: {
+          chaserWeights: chaserAgent.current?.getWeights(),
+          evaderWeights: evaderAgent.current?.getWeights(),
+          chaserElo: chaserElo.current,
+          evaderElo: evaderElo.current,
+        },
+      });
+      return true;
+    } catch (error) {
+      console.error('Failed to restore NEAT save:', error);
+      return false;
+    }
+  };
+
+  const handleSaveModels = () => requestFullCheckpoint('save');
 
   const handleLoadModels = (): boolean => {
     try {
       const raw = localStorage.getItem('ai_tag_studio_models');
       if (!raw) return false;
-      const payload = JSON.parse(raw);
-      if (payload.chaser && chaserAgent.current) {
-        chaserAgent.current.importJson(JSON.stringify(payload.chaser));
-      }
-      if (payload.evader && evaderAgent.current) {
-        evaderAgent.current.importJson(JSON.stringify(payload.evader));
-      }
-      if (typeof payload.chaserElo === 'number') chaserElo.current = payload.chaserElo;
-      if (typeof payload.evaderElo === 'number') evaderElo.current = payload.evaderElo;
-      if (workerRef.current) {
-        workerRef.current.postMessage({
-          type: 'SET_WEIGHTS',
-          payload: {
-            chaserWeights: chaserAgent.current?.getWeights(),
-            evaderWeights: evaderAgent.current?.getWeights(),
-            chaserElo: chaserElo.current,
-            evaderElo: evaderElo.current,
-          },
-        });
-      }
-      return true;
-    } catch (e) {
-      console.error('Failed to load models:', e);
+      return restoreModelPayload(JSON.parse(raw));
+    } catch (error) {
+      console.error('Failed to load models/checkpoint:', error);
       return false;
     }
   };
 
-  const handleExportModels = () => {
-    if (!chaserAgent.current || !evaderAgent.current) return;
-    const payload = {
-      version: '3.0.0',
-      algorithm: 'NEAT',
-      timestamp: Date.now(),
-      chaser: JSON.parse(chaserAgent.current.exportJson()),
-      evader: JSON.parse(evaderAgent.current.exportJson()),
-      chaserElo: chaserElo.current,
-      evaderElo: evaderElo.current,
-      diagnostics: {
-        totalTags: totalTagsRef.current,
-        totalFalls: totalFallsRef.current,
-        benchmarkResults: diagnosticsState.benchmarkResults,
-      },
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `neat_tag_champions_gen${diagnosticsState.generation}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleExportModels = () => requestFullCheckpoint('export');
+  const handleExportAnalysis = () => {
+    if (!workerRef.current) return;
+    const requestId = analysisRequestCounterRef.current++;
+    workerRef.current.postMessage({ type: 'ANALYSIS_EXPORT_REQUEST', payload: { requestId } });
   };
 
   const handleImportModels = (jsonString: string): boolean => {
     try {
-      const payload = JSON.parse(jsonString);
-      if (payload.chaser && chaserAgent.current) {
-        chaserAgent.current.importJson(JSON.stringify(payload.chaser));
-      }
-      if (payload.evader && evaderAgent.current) {
-        evaderAgent.current.importJson(JSON.stringify(payload.evader));
-      }
-      if (typeof payload.chaserElo === 'number') chaserElo.current = payload.chaserElo;
-      if (typeof payload.evaderElo === 'number') evaderElo.current = payload.evaderElo;
-      if (workerRef.current) {
-        workerRef.current.postMessage({
-          type: 'SET_WEIGHTS',
-          payload: {
-            chaserWeights: chaserAgent.current?.getWeights(),
-            evaderWeights: evaderAgent.current?.getWeights(),
-            chaserElo: chaserElo.current,
-            evaderElo: evaderElo.current,
-          },
-        });
-      }
-      return true;
-    } catch (e) {
-      console.error('Failed to parse uploaded models JSON:', e);
+      return restoreModelPayload(JSON.parse(jsonString));
+    } catch (error) {
+      console.error('Failed to parse uploaded models/checkpoint JSON:', error);
       return false;
     }
   };
@@ -1469,6 +1440,17 @@ export const App: React.FC = () => {
               <span className="text-[9px] font-mono text-gray-600" title={diagnosticsState.trainingBackend || 'CPU training'}>
                 {diagnosticsState.trainingWorkerCount || 1}w
               </span>
+              <span
+                className={`text-[9px] font-mono ${trainingWakeLockActive ? 'text-emerald-400' : 'text-gray-600'}`}
+                title={trainingWakeLockActive ? 'Screen wake lock active while training' : 'Screen wake lock unavailable or inactive'}
+              >
+                {trainingWakeLockActive ? 'awake' : 'guard'}
+              </span>
+              {(diagnosticsState.trainingRecoveryCount || 0) > 0 && (
+                <span className="text-[9px] font-mono text-orange-300" title={diagnosticsState.trainingLastRecoveryReason || 'Recovered stalled evaluator'}>
+                  ↻{diagnosticsState.trainingRecoveryCount}
+                </span>
+              )}
             </div>
             <button onClick={() => setIsTrainingPaused(p => !p)} className="p-2 rounded-lg border border-gray-700 text-amber-200 hover:bg-gray-800" title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>
               {isTrainingPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
@@ -1499,7 +1481,7 @@ export const App: React.FC = () => {
                 <h2 className="text-2xl font-bold text-cyan-400 mb-2">Autonomous Agent Arena</h2>
                 <p className="text-sm text-gray-400 mb-6 leading-relaxed">
                   Three autonomous agents evolve chasing, dodging, jumping, and spatial awareness using
-                  dual NEAT populations, speciation, structural mutation, the original 39-input state with 8-ray LiDAR, and headless generation evaluation.
+                  dual NEAT populations, speciation, structural mutation, a compact 25-input state, and headless generation evaluation.
                 </p>
                 <button
                   onClick={startSimulation}
@@ -1521,7 +1503,7 @@ export const App: React.FC = () => {
               gameState={gameState}
               onFrameReady={() => {}}
               showTrails={showTrails}
-              showLidar={showLidar}
+              showSenses={showSenses}
               cameraZoom={cameraZoom}
             />
           )}
@@ -1531,19 +1513,17 @@ export const App: React.FC = () => {
           isSimulating={isSimulating}
             showTrails={showTrails}
           onToggleTrails={handleToggleTrails}
-          showLidar={showLidar}
-          onToggleLidar={handleToggleLidar}
+          showSenses={showSenses}
+          onToggleSenses={handleToggleSenses}
           chaserElo={chaserElo.current}
           evaderElo={evaderElo.current}
           onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
           upgradeConfig={upgradeConfig}
-          upgradePerformanceScore={upgradePerformanceScore}
-          upgradePeakPerformanceScore={upgradePeakPerformanceScore}
           sprintUpgradeActive={sprintUpgradeActive}
           controlledJumpUpgradeActive={controlledJumpUpgradeActive}
-          sprintAutoUnlocked={Boolean(diagnosticsState.sprintAutoUnlocked)}
-          controlledJumpAutoUnlocked={Boolean(diagnosticsState.controlledJumpAutoUnlocked)}
           onUpdateUpgrade={updateUpgradeRule}
+          trainingFitnessConfig={trainingFitnessConfig}
+          onUpdateTrainingFitnessConfig={updateTrainingFitnessConfig}
         />
       </div>
 
@@ -1566,6 +1546,7 @@ export const App: React.FC = () => {
         onSaveLocalStorage={handleSaveModels}
         onLoadLocalStorage={handleLoadModels}
         onExportModels={handleExportModels}
+        onExportAnalysis={handleExportAnalysis}
         onImportModels={handleImportModels}
         hasSavedModel={Boolean(localStorage.getItem('ai_tag_studio_models'))}
       />

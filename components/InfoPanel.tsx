@@ -1,29 +1,27 @@
 
 
 import React from 'react';
-import type { AgentState, RewardBreakdown, UpgradeConfig, UpgradeMode, UpgradeRule, SprintUpgradeRule, SprintRoleAdvanced } from '../types';
+import type { AgentState, RewardBreakdown, TrainingFitnessConfig, UpgradeConfig, UpgradeMode, UpgradeRule, SprintUpgradeRule, SprintRoleAdvanced } from '../types';
 import { AgentStatus } from '../types';
 import { Radar, Shield, Swords, Zap, ArrowUp, SlidersHorizontal } from 'lucide-react';
-import { MAX_SPEED, SPRINT_MAX_SPEED, SPRINT_ENERGY_COST_PER_SEC } from '../constants';
+import { MAX_SPEED, SPRINT_MAX_SPEED, SPRINT_ENERGY_COST_PER_SEC, MAX_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT } from '../constants';
 
 interface InfoPanelProps {
   agents: AgentState[];
   isSimulating: boolean;
   showTrails: boolean;
   onToggleTrails: () => void;
-  showLidar: boolean;
-  onToggleLidar: () => void;
+  showSenses: boolean;
+  onToggleSenses: () => void;
   onOpenDiagnostics: () => void;
   chaserElo?: number;
   evaderElo?: number;
   upgradeConfig: UpgradeConfig;
-  upgradePerformanceScore: number;
-  upgradePeakPerformanceScore: number;
   sprintUpgradeActive: boolean;
   controlledJumpUpgradeActive: boolean;
-  sprintAutoUnlocked: boolean;
-  controlledJumpAutoUnlocked: boolean;
   onUpdateUpgrade: (upgrade: keyof UpgradeConfig, patch: Partial<UpgradeRule> | Partial<SprintUpgradeRule>) => void;
+  trainingFitnessConfig: TrainingFitnessConfig;
+  onUpdateTrainingFitnessConfig: (patch: Partial<TrainingFitnessConfig>) => void;
 }
 
 const statusColors: Record<AgentStatus, string> = {
@@ -53,26 +51,20 @@ const RoleToggle: React.FC<{ id: string; label: string; checked: boolean; onChan
 );
 
 const stateVectorLabels = [
-    // Self Kinematics & Status (6)
-    { label: 'Vel X' }, { label: 'Vel Y' }, { label: 'Energy' },
-    { label: 'Ground' }, { label: 'Is It' }, { label: 'Cooldown' },
-    // Explicit Boundary Distances (3)
-    { label: 'Screen Left' }, { label: 'Screen Right' }, { label: 'Fall Depth' },
-    // Explicit Platform & Ledge Distances (4)
-    { label: 'L-Ledge' }, { label: 'R-Ledge' }, { label: 'Close Ledge' }, { label: 'Ledge Alert' },
-    // Nearby Platforms (9)
-    { label: 'P1 dX' }, { label: 'P1 dY' }, { label: 'P1 Width' },
-    { label: 'P2 dX' }, { label: 'P2 dY' }, { label: 'P2 Width' },
-    { label: 'P3 dX' }, { label: 'P3 dY' }, { label: 'P3 Width' },
-    // Target / Threat (4)
+    // Self (5)
+    { label: 'Vel X' }, { label: 'Vel Y' }, { label: 'Energy' }, { label: 'Ground' }, { label: 'Self CD' },
+    // Policy frame + target cooldown (3)
+    { label: 'Screen Left' }, { label: 'Screen Right' }, { label: 'Target CD' },
+    // Current/reference platform ledges (2)
+    { label: 'L-Ledge' }, { label: 'R-Ledge' },
+    // Stable semantic platforms (9): next, second-next, previous
+    { label: 'Next dX' }, { label: 'Next dY' }, { label: 'Next Width' },
+    { label: 'Next2 dX' }, { label: 'Next2 dY' }, { label: 'Next2 Width' },
+    { label: 'Prev dX' }, { label: 'Prev dY' }, { label: 'Prev Width' },
+    // Target / threat dynamics (4)
     { label: 'Tgt dX' }, { label: 'Tgt dY' }, { label: 'Tgt Vel X' }, { label: 'Tgt Vel Y' },
-    // Teammate (4)
-    { label: 'Mate dX' }, { label: 'Mate dY' }, { label: 'Mate Vel X' }, { label: 'Mate Vel Y' },
-    // Original LiDAR rays (8)
-    { label: 'Ray 0° (R)' }, { label: 'Ray 45° (DR)' }, { label: 'Ray 90° (D)' }, { label: 'Ray 135° (DL)' },
-    { label: 'Ray 180° (L)' }, { label: 'Ray 225° (UL)' }, { label: 'Ray 270° (U)' }, { label: 'Ray 315° (UR)' },
-    // Bias (1)
-    { label: 'Bias' },
+    // Closest teammate position (2)
+    { label: 'Mate dX' }, { label: 'Mate dY' },
 ];
 
 const rewardTermOrder = [
@@ -102,21 +94,22 @@ const rewardTermOrder = [
 
 const VectorBar: React.FC<{label: string, value: number}> = ({label, value}) => {
     const clampedValue = Math.max(-1, Math.min(1, value));
-    const isBoolean = label === 'Ground' || label === 'Is It' || label === 'Cooldown';
-    const barColor = isBoolean
-        ? (value > 0.5 ? '#22c55e' : 'transparent')
+    const isBoolean = label === 'Ground';
+    const isUnipolar = isBoolean || label === 'Energy' || label === 'Self CD' || label === 'Target CD' || label.includes('Width') || label.includes('Ledge') || label.startsWith('Screen ');
+    const barColor = isUnipolar
+        ? (value > 0.001 ? '#22c55e' : 'transparent')
         : (clampedValue >= 0.01 ? '#22c55e' : (clampedValue <= -0.01 ? '#ef4444' : 'transparent'));
     
     return (
         <div title={`${label}: ${value.toFixed(3)}`} className="flex items-center justify-between text-gray-300 text-xs">
             <span className="w-20 truncate" title={label}>{label}</span>
             <div className="flex-1 h-3 bg-gray-800 rounded-sm relative mx-2">
-                {!isBoolean && <div className="absolute top-0 left-1/2 w-px h-full bg-gray-600"></div>}
+                {!isUnipolar && <div className="absolute top-0 left-1/2 w-px h-full bg-gray-600"></div>}
                 <div 
                     className="absolute top-0 h-full rounded-sm"
                     style={{
-                        left: isBoolean ? '0%' : (clampedValue > 0 ? '50%' : `calc(50% - ${Math.abs(clampedValue) * 50}%)`),
-                        width: isBoolean ? `${clampedValue * 100}%` : `${Math.abs(clampedValue) * 50}%`,
+                        left: isUnipolar ? '0%' : (clampedValue > 0 ? '50%' : `calc(50% - ${Math.abs(clampedValue) * 50}%)`),
+                        width: isUnipolar ? `${Math.max(0, clampedValue) * 100}%` : `${Math.abs(clampedValue) * 50}%`,
                         backgroundColor: barColor,
                     }}
                 ></div>
@@ -132,12 +125,9 @@ const UpgradeControl: React.FC<{
   icon: React.ReactNode;
   rule: UpgradeRule;
   active: boolean;
-  autoUnlocked: boolean;
-  performanceScore: number;
-  peakPerformanceScore: number;
   onChange: (patch: Partial<UpgradeRule>) => void;
-}> = ({ title, description, icon, rule, active, autoUnlocked, performanceScore, peakPerformanceScore, onChange }) => {
-  const modes: UpgradeMode[] = ['off', 'auto', 'on'];
+}> = ({ title, description, icon, rule, active, onChange }) => {
+  const modes: UpgradeMode[] = ['off', 'on'];
   return (
     <div className={`rounded-lg border p-3 ${active ? 'border-emerald-500/40 bg-emerald-950/15' : 'border-gray-700 bg-gray-800/70'}`}>
       <div className="flex items-start justify-between gap-2">
@@ -149,10 +139,10 @@ const UpgradeControl: React.FC<{
           </div>
         </div>
         <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${active ? 'bg-emerald-500/20 text-emerald-300' : 'bg-gray-900 text-gray-500'}`}>
-          {active ? 'active' : 'locked'}
+          {active ? 'enabled' : 'disabled'}
         </span>
       </div>
-      <div className="mt-2 grid grid-cols-3 gap-1 rounded-md bg-gray-950 p-1">
+      <div className="mt-2 grid grid-cols-2 gap-1 rounded-md bg-gray-950 p-1">
         {modes.map(mode => (
           <button
             key={mode}
@@ -163,9 +153,9 @@ const UpgradeControl: React.FC<{
           </button>
         ))}
       </div>
-      {rule.mode !== 'off' && (
+      {rule.mode === 'on' && (
         <div className="mt-2">
-          <div className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-gray-500">Applied to role when active</div>
+          <div className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-gray-500">Enabled role</div>
           <div className="grid grid-cols-2 gap-1.5">
             <RoleToggle
               id={`${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-chaser`}
@@ -180,22 +170,6 @@ const UpgradeControl: React.FC<{
               onChange={() => onChange({ runnerEnabled: !rule.runnerEnabled })}
             />
           </div>
-        </div>
-      )}
-      <div className="mt-2 flex items-center justify-between gap-2 text-[10px]">
-        <label className="text-gray-500">Auto threshold</label>
-        <input
-          type="number"
-          min={0}
-          step={5}
-          value={rule.threshold}
-          onChange={e => onChange({ threshold: Math.max(0, Number(e.target.value) || 0) })}
-          className="w-20 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-right font-mono text-gray-200 outline-none focus:border-cyan-500"
-        />
-      </div>
-      {rule.mode === 'auto' && (
-        <div className="mt-1 text-[9px] text-gray-500">
-          Current {performanceScore.toFixed(1)} · peak {peakPerformanceScore.toFixed(1)} / {rule.threshold.toFixed(1)}{autoUnlocked ? ' · unlocked for this training run' : ''}
         </div>
       )}
     </div>
@@ -366,9 +340,9 @@ const RewardBreakdownDisplay: React.FC<{ breakdown: RewardBreakdown, status: Age
     return (
         <details className="mt-3 group">
             <summary className="text-xs font-semibold text-gray-400 cursor-pointer hover:text-white transition-colors flex justify-between">
-                <span>Reward Function</span>
+                <span>Visual heuristic · not training fitness</span>
                 <span className={`font-mono ${totalReward > 0 ? 'text-green-400' : totalReward < 0 ? 'text-red-400' : ''}`}>
-                    Total: {totalReward.toFixed(2)}
+                    Visual total: {totalReward.toFixed(2)}
                 </span>
             </summary>
             <div className="mt-2 space-y-1 pr-1">
@@ -386,19 +360,17 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
   isSimulating,
   showTrails,
   onToggleTrails,
-  showLidar,
-  onToggleLidar,
+  showSenses,
+  onToggleSenses,
   onOpenDiagnostics,
   chaserElo,
   evaderElo,
   upgradeConfig,
-  upgradePerformanceScore,
-  upgradePeakPerformanceScore,
   sprintUpgradeActive,
   controlledJumpUpgradeActive,
-  sprintAutoUnlocked,
-  controlledJumpAutoUnlocked,
   onUpdateUpgrade,
+  trainingFitnessConfig,
+  onUpdateTrainingFitnessConfig,
 }) => {
   return (
     <aside className="w-80 bg-gray-800 rounded-lg shadow-lg p-4 flex flex-col gap-4 overflow-y-auto">
@@ -415,29 +387,23 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
           <Radar className="w-4 h-4 text-cyan-400" />
           <div>
             <h3 className="font-semibold text-gray-300">Agent Senses</h3>
-            <p className="text-[10px] text-gray-400">39-D original brain inputs · full overlay + 8 LiDAR rays · press S</p>
+            <p className="text-[10px] text-gray-400">25-D compact brain inputs · no redundant LiDAR · press S</p>
           </div>
         </div>
-        <ToggleSwitch id="lidar-toggle" checked={showLidar} onChange={onToggleLidar} />
+        <ToggleSwitch id="senses-toggle" checked={showSenses} onChange={onToggleSenses} />
       </div>
 
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-semibold text-gray-300">Progression Upgrades</h3>
-            <p className="text-[10px] text-gray-500">Performance = mean latest chaser + runner champion fitness.</p>
-          </div>
-          <span className="rounded bg-violet-500/15 px-2 py-1 font-mono text-[10px] text-violet-300" title={`Current ${upgradePerformanceScore.toFixed(1)} · Peak ${upgradePeakPerformanceScore.toFixed(1)}`}>{upgradePerformanceScore.toFixed(1)}</span>
+        <div>
+          <h3 className="font-semibold text-gray-300">Manual Abilities</h3>
+          <p className="text-[10px] text-gray-500">Sprint and controlled jump change only when you enable or disable them.</p>
         </div>
         <UpgradeControl
           title="Sprint"
-          description="Raises top speed and acceleration up to 35%; intensity follows movement-output strength and costs stamina. Role switches appear once active."
+          description="Raises top speed and acceleration up to 35%; the independent Sprint output controls intensity and costs stamina. Horizontal drive and jump remain simultaneous."
           icon={<Zap className="w-4 h-4" />}
           rule={upgradeConfig.sprint}
           active={sprintUpgradeActive}
-          autoUnlocked={sprintAutoUnlocked}
-          performanceScore={upgradePerformanceScore}
-          peakPerformanceScore={upgradePeakPerformanceScore}
           onChange={patch => onUpdateUpgrade('sprint', patch)}
         />
         <SprintAdvancedMenus
@@ -446,15 +412,49 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
         />
         <UpgradeControl
           title="Controlled Jump"
-          description="Jump-output strength controls 45–100% of the original jump impulse and scales its stamina cost. Role switches appear once active."
+          description="The independent Jump output controls 45–100% of the original jump impulse and stamina cost while horizontal drive can remain active at the same time."
           icon={<ArrowUp className="w-4 h-4" />}
           rule={upgradeConfig.controlledJump}
           active={controlledJumpUpgradeActive}
-          autoUnlocked={controlledJumpAutoUnlocked}
-          performanceScore={upgradePerformanceScore}
-          peakPerformanceScore={upgradePeakPerformanceScore}
           onChange={patch => onUpdateUpgrade('controlledJump', patch)}
         />
+      </div>
+
+      <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/10 p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h3 className="text-xs font-bold text-cyan-200">Runner exploration incentive</h3>
+            <p className="mt-0.5 text-[10px] leading-relaxed text-gray-500">
+              Runner-only fitness for SAFE rightward progression. Grounded running banks immediately; airborne distance is banked only after a successful landing. Falls and respawn teleports earn nothing. Progress is tracked per body and averaged across the two Runner slots.
+            </p>
+          </div>
+          <span className="shrink-0 rounded bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
+            +{trainingFitnessConfig.runnerExplorationRewardPerViewport.toFixed(1)}/safe view
+          </span>
+        </div>
+        <div className="mt-3 flex items-center gap-2">
+          <input
+            type="range"
+            min={0}
+            max={MAX_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT}
+            step={1}
+            value={trainingFitnessConfig.runnerExplorationRewardPerViewport}
+            onChange={e => onUpdateTrainingFitnessConfig({ runnerExplorationRewardPerViewport: Number(e.target.value) })}
+            className="min-w-0 flex-1"
+          />
+          <input
+            type="number"
+            min={0}
+            max={MAX_RUNNER_EXPLORATION_REWARD_PER_VIEWPORT}
+            step={1}
+            value={trainingFitnessConfig.runnerExplorationRewardPerViewport}
+            onChange={e => onUpdateTrainingFitnessConfig({ runnerExplorationRewardPerViewport: Number(e.target.value) })}
+            className="w-16 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-right font-mono text-[10px] text-gray-200"
+          />
+        </div>
+        <p className="mt-2 text-[9px] leading-relaxed text-gray-600">
+          One logical viewport = 1200 px. Tags and personal falls remain ±20 event terms; the default +50/safe view deliberately makes successful level progression strong enough to beat the old stationary-jumping local optimum. Changing this setting restarts the current evaluation generation on a new benchmark revision.
+        </p>
       </div>
 
       {chaserElo !== undefined && evaderElo !== undefined && (
@@ -510,7 +510,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
                         <span className="truncate max-w-[150px]" title={agent.lastAction}>
                           {agent.lastAction}
                           {(agent.sprintIntensity || 0) > 0.05 ? ` · sprint ${Math.round((agent.sprintIntensity || 0) * 100)}%` : ''}
-                          {(agent.jumpPower || 0) > 0 && agent.lastAction === 'jump' ? ` · jump ${Math.round((agent.jumpPower || 0) * 100)}%` : ''}
+                          {(agent.jumpPower || 0) > 0 ? ` · jump ${Math.round((agent.jumpPower || 0) * 100)}%` : ''}
                         </span>
                     </div>
                     <div
@@ -554,7 +554,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
 
       <div className="mt-auto bg-gray-700 p-3 rounded-md text-xs text-gray-400">
         <h4 className="font-bold text-gray-300 mb-1">How it works:</h4>
-        <p>Agents keep the original discrete left/right/jump/wait controller and 39-input state including 8 LiDAR rays. Sprint and controlled jump are optional progression upgrades whose intensity reuses the selected action output strength.</p>
+        <p>Agents use four factorized outputs—left drive, right drive, jump, and sprint—on the compact 25-input state. Horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities.</p>
       </div>
     </aside>
   );
