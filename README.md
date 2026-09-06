@@ -301,6 +301,26 @@ The Hall of Fame remains bounded to 12 champions per role, but historical retent
 This keeps the opponent league from filling with many generations of effectively the same strategy while still preserving recent coevolutionary pressure.
 
 
+
+## Temporary architecture experiment runner
+
+The Architecture diagnostics tab includes a temporary **Run experiments** tool for clean architecture comparison. It runs three fresh populations sequentially under the same current gameplay settings and upgrades:
+
+1. **Deep 16→12 feed-forward** — capacity control without recurrence.
+2. **Memory Balanced** — recurrent memory seeded from generation 1.
+3. **Memory Discovery** — starts feed-forward and allows recurrence to emerge.
+
+Before the suite starts, the worker snapshots the user's current run at the latest safe completed-generation boundary. The first experiment establishes a frozen benchmark opponent bank, which is then reused unchanged by the other two experiments so benchmark scores are directly comparable. Each experiment starts from a fresh population and records the normal full analysis history plus deterministic champion probes.
+
+When all three runs reach the chosen target generation, the app automatically downloads one `neat_tag_architecture_experiments_genN.json` report containing:
+
+- the full analysis export for each run;
+- a compact cross-run comparison block with benchmark fitness, pace, falls, tags, interaction metrics and champion complexity;
+- architecture/hypothesis metadata and wall-clock throughput;
+- methodology flags describing the shared frozen benchmark and fixed gameplay settings.
+
+The original run is restored automatically after export. **Cancel & restore** aborts the temporary suite and restores that same snapshot without retaining the temporary populations. Save/load/import/reset and architecture-apply controls are locked while the suite is active to keep comparisons clean. The experiment target is configurable from 50 to 1500 generations per architecture; 500 is the default.
+
 ## Analysis recording and deterministic behavior probes
 
 The Diagnostics → Models tab includes **Export analysis JSON**. This is intentionally smaller and more analysis-oriented than a full evolutionary checkpoint. It contains:

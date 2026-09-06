@@ -1,5 +1,5 @@
 import { LearningAgent, type AgentWeights } from '../learning/agent';
-import { NeatPopulation, DEFAULT_NEAT_CONFIG, DEFAULT_NETWORK_ARCHITECTURE_SUITE, sanitizeNetworkArchitectureSuite, cloneGenome, type NeatGenerationMetrics, type NeatGenomeData, type NeatPopulationCheckpoint, type NetworkArchitectureSuiteConfig } from '../learning/neat';
+import { NeatPopulation, DEFAULT_NEAT_CONFIG, DEFAULT_NETWORK_ARCHITECTURE_SUITE, NETWORK_ARCHITECTURE_PRESETS, NETWORK_ARCHITECTURE_SUITE_PRESETS, sanitizeNetworkArchitectureSuite, cloneGenome, type NeatGenerationMetrics, type NeatGenomeData, type NeatPopulationCheckpoint, type NetworkArchitectureSuiteConfig } from '../learning/neat';
 import { updateEloRatings, createLeaderboardEntries } from '../learning/elo';
 import {
   runTrainingEpisode,
@@ -382,6 +382,40 @@ let lastGenerationBalance: BalanceTelemetry | null = null;
 const MAX_ANALYSIS_HISTORY = 5000;
 const analysisHistory: TrainingGenerationAnalysisRecord[] = [];
 let latestSafeCheckpoint: EvolutionCheckpoint | null = null;
+
+interface ArchitectureExperimentDefinition {
+  id: 'deep_ff' | 'memory_balanced' | 'memory_discovery';
+  label: string;
+  hypothesis: string;
+  architecture: NetworkArchitectureSuiteConfig;
+}
+
+interface ArchitectureExperimentResult {
+  id: ArchitectureExperimentDefinition['id'];
+  label: string;
+  hypothesis: string;
+  startedAt: number;
+  completedAt: number;
+  wallTimeMs: number;
+  targetGeneration: number;
+  architecture: NetworkArchitectureSuiteConfig;
+  analysis: ReturnType<typeof buildAnalysisExport>;
+}
+
+interface ArchitectureExperimentSuiteState {
+  targetGeneration: number;
+  startedAt: number;
+  currentIndex: number;
+  currentStartedAt: number;
+  definitions: ArchitectureExperimentDefinition[];
+  results: ArchitectureExperimentResult[];
+  originalCheckpoint: EvolutionCheckpoint;
+  originalWasRunning: boolean;
+  sharedBenchmarkChaser: NeatGenomeData[] | null;
+  sharedBenchmarkRunner: NeatGenomeData[] | null;
+}
+
+let architectureExperimentSuite: ArchitectureExperimentSuiteState | null = null;
 
 let totalTags = 0;
 let totalFalls = 0;
@@ -1675,7 +1709,12 @@ function maybeFinishParallelGeneration() {
   if (parallelTasksCompleted < parallelTasks.length) return;
   if (activeParallelTasks.size > 0 || parallelRetryTasks.length > 0 || parallelTaskCursor < parallelTasks.length) return;
 
+  const completedEpoch = evaluationEpoch;
   finishGeneration();
+  // A temporary architecture experiment may reset/restore the whole run from inside the generation
+  // boundary. In that case finishGeneration() has already invalidated the old epoch and may have
+  // dispatched the next experiment, so do not clobber its freshly prepared state here.
+  if (evaluationEpoch !== completedEpoch) return;
   parallelGenerationPrepared = false;
   if (isRunning) {
     prepareParallelGeneration();
@@ -1992,6 +2031,255 @@ function evaluateNextMatch(): boolean {
   return evaluationRound >= NEAT_HOF_OPPONENTS_PER_GENOME;
 }
 
+
+function cloneCheckpoint<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function architectureExperimentDefinitions(): ArchitectureExperimentDefinition[] {
+  const discovery: NetworkArchitectureSuiteConfig = sanitizeNetworkArchitectureSuite({
+    linkedRoles: true,
+    chaser: { ...NETWORK_ARCHITECTURE_PRESETS.memory_evolve, hiddenLayers: [...NETWORK_ARCHITECTURE_PRESETS.memory_evolve.hiddenLayers] },
+    runner: { ...NETWORK_ARCHITECTURE_PRESETS.memory_evolve, hiddenLayers: [...NETWORK_ARCHITECTURE_PRESETS.memory_evolve.hiddenLayers] },
+  });
+  return [
+    {
+      id: 'deep_ff',
+      label: 'Deep 16→12 feed-forward',
+      hypothesis: 'Capacity control: deeper feed-forward processing without temporal memory.',
+      architecture: sanitizeNetworkArchitectureSuite(NETWORK_ARCHITECTURE_SUITE_PRESETS.ff_control.config),
+    },
+    {
+      id: 'memory_balanced',
+      label: 'Memory Balanced',
+      hypothesis: 'Tests whether recurrent state available from generation 1 improves pursuit, evasion and traversal.',
+      architecture: sanitizeNetworkArchitectureSuite(NETWORK_ARCHITECTURE_SUITE_PRESETS.balanced_memory.config),
+    },
+    {
+      id: 'memory_discovery',
+      label: 'Memory Discovery',
+      hypothesis: 'Starts feed-forward and tests whether evolution chooses recurrent memory when it is useful.',
+      architecture: discovery,
+    },
+  ];
+}
+
+function installSharedExperimentBenchmark(suite: ArchitectureExperimentSuiteState): void {
+  if (!suite.sharedBenchmarkChaser || !suite.sharedBenchmarkRunner) {
+    suite.sharedBenchmarkChaser = benchmarkChaserReferences.map(ref => cloneGenome(ref.genome));
+    suite.sharedBenchmarkRunner = benchmarkEvaderReferences.map(ref => cloneGenome(ref.genome));
+    benchmarkSuiteRevision = 1;
+    lastCrossGenerationBenchmark = null;
+    return;
+  }
+  benchmarkChaserReferences = suite.sharedBenchmarkChaser.map(genome => ({
+    genome: cloneGenome(genome),
+    controller: new LearningAgent('chaser', genome),
+  }));
+  benchmarkEvaderReferences = suite.sharedBenchmarkRunner.map(genome => ({
+    genome: cloneGenome(genome),
+    controller: new LearningAgent('evader', genome),
+  }));
+  benchmarkSuiteRevision = 1;
+  lastCrossGenerationBenchmark = null;
+}
+
+function postArchitectureExperimentStatus(generation = 0, message?: string): void {
+  const suite = architectureExperimentSuite;
+  if (!suite) return;
+  const current = suite.definitions[suite.currentIndex];
+  self.postMessage({
+    type: 'ARCHITECTURE_EXPERIMENT_STATUS',
+    payload: {
+      running: true,
+      currentIndex: suite.currentIndex,
+      totalExperiments: suite.definitions.length,
+      experimentId: current?.id || null,
+      label: current?.label || 'Preparing experiment',
+      generation,
+      targetGeneration: suite.targetGeneration,
+      completedExperiments: suite.results.length,
+      message: message || null,
+    },
+  });
+}
+
+function startArchitectureExperimentRun(index: number): void {
+  const suite = architectureExperimentSuite;
+  if (!suite) return;
+  suite.currentIndex = index;
+  suite.currentStartedAt = Date.now();
+  const definition = suite.definitions[index];
+
+  // Configure at a clean boundary without allowing resetEntireEvolutionRun() to immediately launch
+  // evaluator work before the shared benchmark bank has been installed.
+  isRunning = false;
+  if (timerId) clearTimeout(timerId);
+  networkArchitecture = sanitizeNetworkArchitectureSuite(definition.architecture);
+  resetEntireEvolutionRun();
+  installSharedExperimentBenchmark(suite);
+  captureSafeCheckpoint();
+  isRunning = true;
+  resetTrainingThroughput();
+  postArchitectureExperimentStatus(0, `Running ${definition.label}`);
+  startTrainingEngine();
+}
+
+function architectureExperimentSummary(result: ArchitectureExperimentResult) {
+  const analysis = result.analysis;
+  const benchmark = analysis.current.benchmark;
+  const balance = analysis.current.balance;
+  const chaserMetrics = analysis.current.chaserMetrics;
+  const runnerMetrics = analysis.current.runnerMetrics;
+  return {
+    id: result.id,
+    label: result.label,
+    targetGeneration: result.targetGeneration,
+    wallTimeMs: result.wallTimeMs,
+    completedEpisodes: analysis.current.completedEpisodes,
+    episodesPerSecondWall: analysis.current.completedEpisodes / Math.max(0.001, result.wallTimeMs / 1000),
+    chaser: {
+      benchmarkFitness: benchmark?.chaser.meanFitness ?? null,
+      benchmarkTagsPerEpisode: benchmark?.chaser.tagsPerEpisode ?? null,
+      benchmarkFallsPerEpisode: benchmark?.chaser.ownFallsPerEpisode ?? null,
+      generalist: analysis.current.generalistChampions.chaser,
+      hiddenLayers: chaserMetrics?.championHiddenLayers ?? null,
+      hiddenNodes: chaserMetrics?.championHiddenNodes ?? null,
+      recurrentConnections: chaserMetrics?.championRecurrentConnections ?? null,
+      totalConnections: chaserMetrics?.championConnections ?? null,
+    },
+    runner: {
+      benchmarkFitness: benchmark?.evader.meanFitness ?? null,
+      benchmarkTagsPerEpisode: benchmark?.evader.tagsPerEpisode ?? null,
+      benchmarkFallsPerEpisode: benchmark?.evader.ownFallsPerEpisode ?? null,
+      benchmarkPaceCompletion: benchmark?.evader.paceCompletion ?? null,
+      generalist: analysis.current.generalistChampions.runner,
+      hiddenLayers: runnerMetrics?.championHiddenLayers ?? null,
+      hiddenNodes: runnerMetrics?.championHiddenNodes ?? null,
+      recurrentConnections: runnerMetrics?.championRecurrentConnections ?? null,
+      totalConnections: runnerMetrics?.championConnections ?? null,
+    },
+    interaction: balance ? {
+      tagRate: balance.tagRate,
+      chaserFallRate: balance.chaserFallRate,
+      runnerFallRate: balance.runnerFallRate,
+      runnerPaceCompletion: balance.runnerPaceCompletion,
+      closeEncountersPerEpisode: balance.closeEncountersPerEpisode,
+      successfulEvadesPerEpisode: balance.successfulEvadesPerEpisode,
+      meanNearestRunnerDistancePx: balance.meanNearestRunnerDistancePx,
+      timeWithin100Pct: balance.timeWithin100Pct,
+      timeWithin200Pct: balance.timeWithin200Pct,
+      timeWithin400Pct: balance.timeWithin400Pct,
+      tagsSoonAfterRunnerFallPerEpisode: balance.tagsSoonAfterRunnerFallPerEpisode,
+      runnerPlatformLandingsPerEpisode: balance.runnerPlatformLandingsPerEpisode,
+      chaserPlatformLandingsPerEpisode: balance.chaserPlatformLandingsPerEpisode,
+      runnerBranchLandingsPerEpisode: balance.runnerBranchLandingsPerEpisode,
+      chaserBranchLandingsPerEpisode: balance.chaserBranchLandingsPerEpisode,
+    } : null,
+  };
+}
+
+function restoreRunAfterArchitectureExperiments(suite: ArchitectureExperimentSuiteState): void {
+  const originalCheckpoint = cloneCheckpoint(suite.originalCheckpoint);
+  const originalWasRunning = suite.originalWasRunning;
+  isRunning = false;
+  if (timerId) clearTimeout(timerId);
+  restoreEvolutionCheckpoint(originalCheckpoint);
+  isRunning = originalWasRunning;
+  if (isRunning) startTrainingEngine();
+  else emitTelemetry(true);
+}
+
+function completeArchitectureExperimentSuite(): void {
+  const suite = architectureExperimentSuite;
+  if (!suite) return;
+  const completedAt = Date.now();
+  const report = {
+    format: 'neat-tag-architecture-experiment-suite',
+    version: 1,
+    generatedAt: completedAt,
+    targetGeneration: suite.targetGeneration,
+    experiments: suite.results,
+    comparison: suite.results.map(architectureExperimentSummary),
+    methodology: {
+      experiments: suite.definitions.map(({ id, label, hypothesis, architecture }) => ({ id, label, hypothesis, architecture })),
+      sameGameplaySettingsAcrossRuns: true,
+      sameUpgradeSettingsAcrossRuns: true,
+      sharedFrozenBenchmarkOpponentBank: true,
+      notes: 'Each architecture starts from a fresh population. The first experiment defines a frozen benchmark opponent bank that is reused by all three runs. The user\'s original run is restored after export.',
+    },
+    suiteWallTimeMs: completedAt - suite.startedAt,
+  };
+  architectureExperimentSuite = null;
+  restoreRunAfterArchitectureExperiments(suite);
+  self.postMessage({ type: 'ARCHITECTURE_EXPERIMENT_COMPLETE', payload: { report } });
+}
+
+function maybeAdvanceArchitectureExperiment(evaluatedGeneration: number): void {
+  const suite = architectureExperimentSuite;
+  if (!suite) return;
+  postArchitectureExperimentStatus(evaluatedGeneration);
+  if (evaluatedGeneration < suite.targetGeneration) return;
+
+  const definition = suite.definitions[suite.currentIndex];
+  const completedAt = Date.now();
+  suite.results.push({
+    id: definition.id,
+    label: definition.label,
+    hypothesis: definition.hypothesis,
+    startedAt: suite.currentStartedAt,
+    completedAt,
+    wallTimeMs: completedAt - suite.currentStartedAt,
+    targetGeneration: suite.targetGeneration,
+    architecture: sanitizeNetworkArchitectureSuite(definition.architecture),
+    analysis: buildAnalysisExport(),
+  });
+
+  const nextIndex = suite.currentIndex + 1;
+  if (nextIndex < suite.definitions.length) {
+    postArchitectureExperimentStatus(evaluatedGeneration, `${definition.label} complete. Starting next experiment…`);
+    startArchitectureExperimentRun(nextIndex);
+  } else {
+    completeArchitectureExperimentSuite();
+  }
+}
+
+function startArchitectureExperimentSuite(targetGeneration: number): void {
+  if (architectureExperimentSuite) throw new Error('An architecture experiment suite is already running.');
+  const target = Math.max(50, Math.min(1500, Math.round(Number(targetGeneration) || 500)));
+  const originalCheckpoint = cloneCheckpoint(latestSafeCheckpoint || buildEvolutionCheckpoint());
+  architectureExperimentSuite = {
+    targetGeneration: target,
+    startedAt: Date.now(),
+    currentIndex: 0,
+    currentStartedAt: Date.now(),
+    definitions: architectureExperimentDefinitions(),
+    results: [],
+    originalCheckpoint,
+    originalWasRunning: isRunning,
+    sharedBenchmarkChaser: null,
+    sharedBenchmarkRunner: null,
+  };
+  startArchitectureExperimentRun(0);
+}
+
+function cancelArchitectureExperimentSuite(): void {
+  const suite = architectureExperimentSuite;
+  if (!suite) return;
+  const completedExperiments = suite.results.length;
+  architectureExperimentSuite = null;
+  isRunning = false;
+  if (timerId) clearTimeout(timerId);
+  restoreEvolutionCheckpoint(cloneCheckpoint(suite.originalCheckpoint));
+  isRunning = suite.originalWasRunning;
+  if (isRunning) startTrainingEngine();
+  else emitTelemetry(true);
+  self.postMessage({
+    type: 'ARCHITECTURE_EXPERIMENT_CANCELLED',
+    payload: { completedExperiments, message: 'Architecture experiment suite cancelled; original run restored.' },
+  });
+}
+
 function finishGeneration() {
   const evaluatedGeneration = chaserPopulation.generation;
   lastGenerationBalance = {
@@ -2070,6 +2358,7 @@ function finishGeneration() {
   resetEvaluationAccumulators();
   refreshControllers();
   captureSafeCheckpoint();
+  maybeAdvanceArchitectureExperiment(evaluatedGeneration);
 }
 
 function average(values: number[]): number {
@@ -2393,6 +2682,11 @@ self.onmessage = (event: MessageEvent) => {
 
   switch (type) {
     case 'START': {
+      if (architectureExperimentSuite) {
+        isRunning = true;
+        startTrainingEngine();
+        break;
+      }
       if (!seededFromStart) {
         if (payload?.networkArchitecture) networkArchitecture = sanitizeNetworkArchitectureSuite(payload.networkArchitecture);
         chaserPopulation = createFreshPopulation('chaser');
@@ -2426,6 +2720,10 @@ self.onmessage = (event: MessageEvent) => {
     }
 
     case 'SET_NETWORK_ARCHITECTURE': {
+      if (architectureExperimentSuite) {
+        postArchitectureExperimentStatus(Math.max(lastChaserMetrics?.generation || 0, lastEvaderMetrics?.generation || 0), 'Architecture controls are locked while the temporary experiment suite is running.');
+        break;
+      }
       networkArchitecture = sanitizeNetworkArchitectureSuite(payload?.networkArchitecture);
       resetEntireEvolutionRun();
       self.postMessage({
@@ -2436,6 +2734,7 @@ self.onmessage = (event: MessageEvent) => {
     }
 
     case 'SET_UPGRADE_CONFIG': {
+      if (architectureExperimentSuite) break;
       const before = activeUpgradeState();
       upgradeConfig = sanitizeUpgradeConfig(payload?.upgradeConfig);
           const after = activeUpgradeState();
@@ -2460,6 +2759,7 @@ self.onmessage = (event: MessageEvent) => {
     }
 
     case 'SET_TRAINING_FITNESS_CONFIG': {
+      if (architectureExperimentSuite) break;
       const next = sanitizeTrainingFitnessConfig(payload?.trainingFitnessConfig);
       const changed =
         next.runnerPaceTargetPxPerWindow !== trainingFitnessConfig.runnerPaceTargetPxPerWindow ||
@@ -2480,6 +2780,22 @@ self.onmessage = (event: MessageEvent) => {
       if (isRunning && changed) startTrainingEngine();
       break;
     }
+
+    case 'START_ARCHITECTURE_EXPERIMENT_SUITE': {
+      try {
+        startArchitectureExperimentSuite(payload?.targetGeneration);
+      } catch (error) {
+        self.postMessage({
+          type: 'ARCHITECTURE_EXPERIMENT_ERROR',
+          payload: { message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+      break;
+    }
+
+    case 'CANCEL_ARCHITECTURE_EXPERIMENT_SUITE':
+      cancelArchitectureExperimentSuite();
+      break;
 
     case 'ANALYSIS_EXPORT_REQUEST': {
       try {
@@ -2516,6 +2832,10 @@ self.onmessage = (event: MessageEvent) => {
     }
 
     case 'PAUSE':
+      if (architectureExperimentSuite) {
+        postArchitectureExperimentStatus(Math.max(lastChaserMetrics?.generation || 0, lastEvaderMetrics?.generation || 0), 'Use Cancel experiments to stop the suite safely.');
+        break;
+      }
       isRunning = false;
       if (timerId) clearTimeout(timerId);
       currentTrainingSpeedX = 0;
@@ -2538,6 +2858,7 @@ self.onmessage = (event: MessageEvent) => {
       break;
 
     case 'SET_WEIGHTS':
+      if (architectureExperimentSuite) break;
       seedPopulations(payload?.chaserWeights, payload?.evaderWeights, true);
       seededFromStart = true;
       if (typeof payload?.chaserElo === 'number') chaserElo = payload.chaserElo;
@@ -2547,6 +2868,10 @@ self.onmessage = (event: MessageEvent) => {
       break;
 
     case 'CHECKPOINT_REQUEST': {
+      if (architectureExperimentSuite) {
+        self.postMessage({ type: 'CHECKPOINT_RESPONSE', payload: { requestId: payload?.requestId ?? null, error: 'Checkpoint capture is disabled while architecture experiments are running.' } });
+        break;
+      }
       const checkpoint = latestSafeCheckpoint || buildEvolutionCheckpoint();
       self.postMessage({
         type: 'CHECKPOINT_RESPONSE',
@@ -2584,6 +2909,7 @@ self.onmessage = (event: MessageEvent) => {
     }
 
     case 'RESET':
+      if (architectureExperimentSuite) break;
       resetEntireEvolutionRun();
       break;
   }
