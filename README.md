@@ -131,9 +131,9 @@ The architecture picker now includes curated feed-forward and recurrent presets,
 
 | Preset | Generation-1 topology | Memory growth | Intended use |
 | --- | --- | --- | --- |
-| Minimal NEAT | direct 25→4 | none | fastest control baseline |
-| Compact 12 | 25→12→4 | none | cheap nonlinear baseline |
-| Deep 16→12 | 25→16→12→4 | none | primary feed-forward control for recurrence experiments |
+| Minimal NEAT | direct 25→3 | none | fastest control baseline |
+| Compact 12 | 25→12→3 | none | cheap nonlinear baseline |
+| Deep 16→12 | 25→16→12→3 | none | primary feed-forward control for recurrence experiments |
 | Wide 24→16 | wider 2-layer + hidden skips | none | capacity-without-memory stress test |
 | Memory Lite | 12 hidden + 4 recurrent | evolves to 16 recurrent | cheapest useful recurrent experiment |
 | **Memory Balanced** | 16→12 + 8 recurrent | evolves to 32 recurrent | **recommended general recurrent preset** |
@@ -303,26 +303,35 @@ This keeps the opponent league from filling with many generations of effectively
 
 
 
-## Temporary architecture experiment runner
+## Temporary pursuit-design experiment runner
 
-The Architecture diagnostics tab includes a temporary **Run experiments** tool for clean architecture comparison. It runs three fresh populations sequentially under the same current gameplay settings and upgrades:
+The Architecture diagnostics tab includes a temporary **Run experiments** tool that now holds neural architecture fixed at **Memory Discovery** (16→12 feed-forward start, recurrence may evolve) and compares the competitive game design instead of comparing architectures:
 
-1. **Deep 16→12 feed-forward** — capacity control without recurrence.
-2. **Memory Balanced** — recurrent memory seeded from generation 1.
-3. **Memory Discovery** — starts feed-forward and allows recurrence to emerge.
+1. **Symmetric control + elite training** — existing equal-role physics, but every genome now sees a stronger historical opponent panel and breeding uses robust matchup aggregation.
+2. **Pursuit asymmetry** — adds fixed role physics: Chaser base/sprint speed `5.4 / 7.8`, Runner `5.0 / 7.5`; the Runner has cheaper sprint endurance (`24/s` versus Chaser `32/s`).
+3. **Full pursuit design** — adds the asymmetry plus pressure-start training, a non-repeatable Chaser closing-distance bootstrap, an episode-level Runner escape-bonus cap, branches beginning around `x = 1200`, and a cross-play quality gate for retained champions.
 
-Before the suite starts, the worker snapshots the user's current run at the latest safe completed-generation boundary. The first experiment establishes a frozen benchmark opponent bank, which is then reused unchanged by the other two experiments so benchmark scores are directly comparable. Each experiment starts from a fresh population and records the normal full analysis history plus deterministic champion probes.
+All three conditions share the same user-facing sprint/jump capability settings, pace/pursuit configuration, fixed architecture, and frozen benchmark opponent bank. Only the pursuit-design profile intentionally differs. Each condition starts from a fresh population. Before the suite starts, the worker snapshots the current run at the latest completed-generation boundary; the original run is restored automatically after export or after **Cancel & restore**.
 
-When all three runs reach the chosen target generation, the app automatically downloads one `neat_tag_architecture_experiments_genN.json` report containing:
+### Elite self-play and robust selection
 
-- the full analysis export for each run;
-- a compact cross-run comparison block with benchmark fitness, pace, falls, tags, interaction metrics and champion complexity;
-- architecture/hypothesis metadata and wall-clock throughput;
-- methodology flags describing the shared frozen benchmark and fixed gameplay settings.
+Once archive opponents are available, every genome is evaluated against common current-population opponents plus a historical panel containing the **retained opposing generalist**, the **strongest archived opponent by frozen-benchmark score**, and a **behaviorally diverse archived opponent**. Breeding fitness is no longer a plain matchup average: it uses **70% mean performance + 30% lower-quartile performance**, making a catastrophic elite matchup costly instead of allowing several easy wins to hide it. This aggregation affects evolution; the frozen benchmark still remains diagnostic/validation data.
 
-The original run is restored automatically after export. **Cancel & restore** aborts the temporary suite and restores that same snapshot without retaining the temporary populations. Save/load/import/reset and architecture-apply controls are locked while the suite is active to keep comparisons clean. The experiment target is configurable from 50 to 1500 generations per architecture; 500 is the default.
+### Full-pursuit learning bridges
 
-The current experiment revision removes the directional-conflict failure at the representation level: the policy has three outputs—one signed horizontal drive plus independent jump and sprint—so left/right contradiction is impossible. Runner pace remains a minimum requirement with a shortfall penalty. A clean pressure escape (enter <=180 px and open beyond 380 px without a tag/fall) earns +3, capped at +6 per 2-second window, adding a small tactical interaction signal without overpowering pace or tag outcomes. Retained-generalist scoring now combines 75% frozen benchmark validation with 25% cross-play against the retained opponent and strong Hall-of-Fame policies.
+The full condition deliberately keeps shaping small relative to the `+20` tag outcome. The Chaser receives `+1` for each new 50px improvement in best proximity during a chase segment, capped at `+6` per segment. Moving away and returning to the same distance does not pay again. A tag, role change, or Chaser fall starts a new segment. Runner pressure-escape shaping remains `+3` for a clean `<=180px → >=380px` escape, but the full condition caps this at **+6 total per episode** so farming repeated pressure cycles cannot dominate survival/platforming.
+
+Full-pursuit fresh starts deliberately contain more immediate pressure: approximately 40% begin with a 220–300px lead, 30% with 140–220px, 20% with 300–380px, and 10% with an unusual 180–360px gap. This is a training curriculum only; the normal visible reset can retain its familiar layout.
+
+### Retained generalists versus showcase pair
+
+Saved/retained Chaser and Runner generalists remain the true best validated models. In the full condition, a challenger must preserve at least **90% of the incumbent frozen-benchmark quality** before stronger cross-play weighting can replace the incumbent. Cross-play itself remains isolated from breeding fitness and Elo.
+
+Separately, every ten generations the worker evaluates a small matrix of retained/strong/diverse archived policies and chooses a **showcase pair** for the visual arena. Showcase scoring favors meaningful Runner pace, nonzero tags, close encounters, successful evades, branch use, and low falls. This pair does **not** breed and is not saved as the best model; it exists only so the watched infinite game can remain informative without intentionally weakening the actual retained champions. Diagnostics record the showcased Chaser/Runner generations and their pair metrics.
+
+When all three conditions reach the chosen target generation, the app downloads `neat_tag_pursuit_design_experiments_genN.json`. The report contains each complete training analysis, deterministic showcase probes, the active pursuit profile/flags, robust-selection and historical-opponent metadata, retained-generalist/cross-play data, showcase-pair telemetry, and a compact cross-condition comparison. The target is configurable from 50 to 1500 generations per condition; 500 remains the recommended serious run.
+
+The policy representation remains the corrected three-output controller: **signed horizontal drive, jump, sprint**. Contradictory left/right commands are impossible by construction and direction-conflict telemetry should remain zero.
 
 ## Analysis recording and deterministic behavior probes
 

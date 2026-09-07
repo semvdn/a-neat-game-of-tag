@@ -1,1 +1,1 @@
-Refine tactical controls and cross-play validation
+Implement pursuit-design experiment suite

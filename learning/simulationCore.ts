@@ -119,6 +119,9 @@ export function stepAgentPhysicsInPlace(
   const sprintEnabledForRole = upgrades.sprint && (isChaserRole ? upgrades.sprintChaser : upgrades.sprintRunner);
   const controlledJumpEnabledForRole = upgrades.controlledJump &&
     (isChaserRole ? upgrades.controlledJumpChaser : upgrades.controlledJumpRunner);
+  const roleBaseMaxSpeed = isChaserRole
+    ? (upgrades.chaserBaseMaxSpeed ?? MAX_SPEED)
+    : (upgrades.runnerBaseMaxSpeed ?? MAX_SPEED);
   const roleSprintMaxSpeed = isChaserRole ? upgrades.sprintChaserMaxSpeed : upgrades.sprintRunnerMaxSpeed;
   const roleSprintStaminaCost = isChaserRole
     ? upgrades.sprintChaserStaminaCostPerSec
@@ -161,7 +164,7 @@ export function stepAgentPhysicsInPlace(
 
   if (Math.abs(accelerationX) < 0.1) velocityX *= FRICTION;
   velocityX += accelerationX;
-  const maxHorizontalSpeed = MAX_SPEED + (roleSprintMaxSpeed - MAX_SPEED) * sprintIntensity;
+  const maxHorizontalSpeed = roleBaseMaxSpeed + (roleSprintMaxSpeed - roleBaseMaxSpeed) * sprintIntensity;
   velocityX = Math.max(-maxHorizontalSpeed, Math.min(maxHorizontalSpeed, velocityX));
   if (sprintIntensity > 0) {
     energy = Math.max(0, energy - roleSprintStaminaCost * sprintIntensity * (deltaTime / 1000));
@@ -433,9 +436,9 @@ function clampPlatformY(y: number, viewportHeight: number): number {
   return Math.min(viewportHeight - 120, Math.max(250, y));
 }
 
-function branchChanceAtX(x: number): number {
-  if (x < BRANCH_STRUCTURE_MIN_X) return 0;
-  const t = Math.max(0, Math.min(1, (x - BRANCH_STRUCTURE_MIN_X) / 10000));
+function branchChanceAtX(x: number, branchMinX = BRANCH_STRUCTURE_MIN_X): number {
+  if (x < branchMinX) return 0;
+  const t = Math.max(0, Math.min(1, (x - branchMinX) / 10000));
   return BRANCH_STRUCTURE_BASE_CHANCE + (BRANCH_STRUCTURE_MAX_CHANCE - BRANCH_STRUCTURE_BASE_CHANCE) * t;
 }
 
@@ -444,10 +447,11 @@ function appendForwardSegment(
   rightmostPlatform: PlatformState,
   viewportHeight: number,
   nextPlatformId: number,
-  rng: () => number
+  rng: () => number,
+  branchMinX = BRANCH_STRUCTURE_MIN_X
 ): { rightmost: PlatformState; nextPlatformId: number } {
   const baseRight = rightmostPlatform.position.x + rightmostPlatform.width;
-  if (rng() >= branchChanceAtX(baseRight)) {
+  if (rng() >= branchChanceAtX(baseRight, branchMinX)) {
     const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng);
     platforms.push(p);
     return { rightmost: p, nextPlatformId };
@@ -494,7 +498,8 @@ export function maintainPlatformsForCameraInPlace(
   cameraX: number,
   viewportSize: { width: number; height: number },
   nextPlatformId: number,
-  rng: () => number
+  rng: () => number,
+  branchMinX = BRANCH_STRUCTURE_MIN_X
 ): number {
   const rightGenerationEdge = cameraX + viewportSize.width + PLATFORM_SPAWN_BUFFER;
   const leftGenerationEdge = cameraX - PLATFORM_SPAWN_BUFFER;
@@ -522,7 +527,7 @@ export function maintainPlatformsForCameraInPlace(
   if (platforms.length > 0) {
     let rightmostPlatform = platforms[platforms.length - 1];
     while (rightmostPlatform.position.x + rightmostPlatform.width < rightGenerationEdge) {
-      const generated = appendForwardSegment(platforms, rightmostPlatform, viewportSize.height, nextPlatformId, rng);
+      const generated = appendForwardSegment(platforms, rightmostPlatform, viewportSize.height, nextPlatformId, rng, branchMinX);
       rightmostPlatform = generated.rightmost;
       nextPlatformId = generated.nextPlatformId;
     }
@@ -557,7 +562,8 @@ export function maintainPlatformsForCamera(
   cameraX: number,
   viewportSize: { width: number; height: number },
   nextPlatformId: number,
-  rng: () => number
+  rng: () => number,
+  branchMinX = BRANCH_STRUCTURE_MIN_X
 ): { platforms: PlatformState[]; nextPlatformId: number } {
   const rightGenerationEdge = cameraX + viewportSize.width + PLATFORM_SPAWN_BUFFER;
   const leftGenerationEdge = cameraX - PLATFORM_SPAWN_BUFFER;
@@ -590,7 +596,7 @@ export function maintainPlatformsForCamera(
   if (retained.length > 0) {
     let rightmostPlatform = retained[retained.length - 1];
     while (rightmostPlatform.position.x + rightmostPlatform.width < rightGenerationEdge) {
-      const generated = appendForwardSegment(retained, rightmostPlatform, viewportSize.height, nextPlatformId, rng);
+      const generated = appendForwardSegment(retained, rightmostPlatform, viewportSize.height, nextPlatformId, rng, branchMinX);
       rightmostPlatform = generated.rightmost;
       nextPlatformId = generated.nextPlatformId;
     }

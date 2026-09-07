@@ -36,6 +36,7 @@ import type {
   SprintUpgradeRule,
   ActiveUpgradeState,
   TrainingFitnessConfig,
+  PursuitDesignConfig,
 } from './types';
 import { AgentStatus } from './types';
 import {
@@ -194,6 +195,7 @@ type ArchitectureExperimentUiState = {
   targetGeneration: number;
   completedExperiments: number;
   message: string | null;
+  pursuitDesign: PursuitDesignConfig | null;
 };
 
 const IDLE_ARCHITECTURE_EXPERIMENT_STATE: ArchitectureExperimentUiState = {
@@ -206,6 +208,7 @@ const IDLE_ARCHITECTURE_EXPERIMENT_STATE: ArchitectureExperimentUiState = {
   targetGeneration: 500,
   completedExperiments: 0,
   message: null,
+  pursuitDesign: null,
 };
 
 export const App: React.FC = () => {
@@ -262,6 +265,7 @@ export const App: React.FC = () => {
     lastCrossGenerationBenchmark: null,
     benchmarkHistory: [],
     benchmarkSuiteRevision: 0,
+    showcasePair: null,
     lastGenerationBalance: null,
     balanceHistory: [],
     trainingSpeedX: 0,
@@ -309,6 +313,7 @@ export const App: React.FC = () => {
   const workerRef = useRef<Worker | null>(null);
   const initializedRef = useRef(false);
   const installedChampionGenerationRef = useRef({ chaser: -1, evader: -1 });
+  const installedChampionGenomeIdRef = useRef<{ chaser: string | null; evader: string | null }>({ chaser: null, evader: null });
   const checkpointRequestCounterRef = useRef(1);
   const analysisRequestCounterRef = useRef(1);
   const pendingCheckpointActionRef = useRef<{ requestId: number; action: 'library' | 'export'; name?: string } | null>(null);
@@ -493,15 +498,19 @@ export const App: React.FC = () => {
           const generation = payload.generation || 0;
           const chaserChampionGeneration = payload.chaserChampionGeneration ?? payload.lastChaserNeatMetrics?.generation ?? generation;
           const evaderChampionGeneration = payload.evaderChampionGeneration ?? payload.lastEvaderNeatMetrics?.generation ?? generation;
-          if (payload.chaserChampionGenome && chaserAgent.current && chaserChampionGeneration !== installedChampionGenerationRef.current.chaser) {
+          const chaserChampionId = payload.chaserChampionGenome?.id ?? null;
+          const evaderChampionId = payload.evaderChampionGenome?.id ?? null;
+          if (payload.chaserChampionGenome && chaserAgent.current && (chaserChampionGeneration !== installedChampionGenerationRef.current.chaser || chaserChampionId !== installedChampionGenomeIdRef.current.chaser)) {
             chaserAgent.current.setWeights(payload.chaserChampionGenome);
             chaserAgent.current.setGeneration(chaserChampionGeneration);
             installedChampionGenerationRef.current.chaser = chaserChampionGeneration;
+            installedChampionGenomeIdRef.current.chaser = chaserChampionId;
           }
-          if (payload.evaderChampionGenome && evaderAgent.current && evaderChampionGeneration !== installedChampionGenerationRef.current.evader) {
+          if (payload.evaderChampionGenome && evaderAgent.current && (evaderChampionGeneration !== installedChampionGenerationRef.current.evader || evaderChampionId !== installedChampionGenomeIdRef.current.evader)) {
             evaderAgent.current.setWeights(payload.evaderChampionGenome);
             evaderAgent.current.setGeneration(evaderChampionGeneration);
             installedChampionGenerationRef.current.evader = evaderChampionGeneration;
+            installedChampionGenomeIdRef.current.evader = evaderChampionId;
           }
 
           const now = Date.now();
@@ -580,6 +589,7 @@ export const App: React.FC = () => {
               benchmarkSuiteRevision: incomingBenchmarkRevision,
               chaserGeneralistChampion: payload.chaserGeneralistChampion !== undefined ? payload.chaserGeneralistChampion : (prev.chaserGeneralistChampion ?? null),
               evaderGeneralistChampion: payload.evaderGeneralistChampion !== undefined ? payload.evaderGeneralistChampion : (prev.evaderGeneralistChampion ?? null),
+              showcasePair: payload.showcasePair !== undefined ? payload.showcasePair : (prev.showcasePair ?? null),
               lastGenerationBalance: balanceMetric || prev.lastGenerationBalance,
               balanceHistory: appendUnique(prev.balanceHistory, balanceMetric),
               trainingSpeedX: typeof payload.trainingSpeedX === 'number' ? payload.trainingSpeedX : prev.trainingSpeedX,
@@ -592,6 +602,10 @@ export const App: React.FC = () => {
               controlledJumpUpgradeActive: typeof payload.controlledJumpUpgradeActive === 'boolean' ? payload.controlledJumpUpgradeActive : prev.controlledJumpUpgradeActive,
               trainingFitnessConfig: payload.trainingFitnessConfig || prev.trainingFitnessConfig,
               networkArchitecture: payload.networkArchitecture || prev.networkArchitecture,
+              pursuitDesign: payload.pursuitDesign !== undefined ? payload.pursuitDesign : (prev.pursuitDesign ?? null),
+              pursuitExperimentFlags: payload.pursuitExperimentFlags || prev.pursuitExperimentFlags,
+              selectionAggregation: payload.selectionAggregation || prev.selectionAggregation,
+              historicalOpponentPanel: payload.historicalOpponentPanel || prev.historicalOpponentPanel,
             };
           });
 
@@ -602,11 +616,12 @@ export const App: React.FC = () => {
             currentIndex: Number(payload?.currentIndex) || 0,
             totalExperiments: Number(payload?.totalExperiments) || 3,
             experimentId: payload?.experimentId || null,
-            label: payload?.label || 'Running architecture experiment',
+            label: payload?.label || 'Running pursuit-design experiment',
             generation: Number(payload?.generation) || 0,
             targetGeneration: Number(payload?.targetGeneration) || 500,
             completedExperiments: Number(payload?.completedExperiments) || 0,
             message: payload?.message || null,
+            pursuitDesign: payload?.pursuitDesign || null,
           });
         } else if (type === 'ARCHITECTURE_EXPERIMENT_COMPLETE') {
           architectureExperimentRunningRef.current = false;
@@ -616,7 +631,7 @@ export const App: React.FC = () => {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `neat_tag_architecture_experiments_gen${report.targetGeneration || 0}.json`;
+            a.download = `neat_tag_pursuit_design_experiments_gen${report.targetGeneration || 0}.json`;
             a.click();
             URL.revokeObjectURL(url);
           }
@@ -1101,7 +1116,20 @@ export const App: React.FC = () => {
           sprintRunnerStaminaCostPerSec: upgradeConfig.sprint.runnerAdvanced.staminaCostOverride
             ? upgradeConfig.sprint.runnerAdvanced.staminaCostPerSec
             : SPRINT_ENERGY_COST_PER_SEC,
+          chaserBaseMaxSpeed: architectureExperimentStatus.running
+            ? architectureExperimentStatus.pursuitDesign?.chaserBaseMaxSpeed
+            : undefined,
+          runnerBaseMaxSpeed: architectureExperimentStatus.running
+            ? architectureExperimentStatus.pursuitDesign?.runnerBaseMaxSpeed
+            : undefined,
         };
+        if (architectureExperimentStatus.running && architectureExperimentStatus.pursuitDesign) {
+          const pursuit = architectureExperimentStatus.pursuitDesign;
+          if (pursuit.chaserSprintMaxSpeed !== undefined) activeUpgrades.sprintChaserMaxSpeed = pursuit.chaserSprintMaxSpeed;
+          if (pursuit.runnerSprintMaxSpeed !== undefined) activeUpgrades.sprintRunnerMaxSpeed = pursuit.runnerSprintMaxSpeed;
+          if (pursuit.chaserSprintStaminaCostPerSec !== undefined) activeUpgrades.sprintChaserStaminaCostPerSec = pursuit.chaserSprintStaminaCostPerSec;
+          if (pursuit.runnerSprintStaminaCostPerSec !== undefined) activeUpgrades.sprintRunnerStaminaCostPerSec = pursuit.runnerSprintStaminaCostPerSec;
+        }
 
         const fallEvents: { [id: number]: boolean } = {};
         const agentsBeforePhysics = newState.agents;
@@ -1225,7 +1253,8 @@ export const App: React.FC = () => {
           newState.cameraPosition.x,
           viewportSize,
           platformIdCounter.current,
-          Math.random
+          Math.random,
+          architectureExperimentStatus.running ? architectureExperimentStatus.pursuitDesign?.branchStructureMinX : undefined
         );
         newState.platforms = platformUpdate.platforms;
         platformIdCounter.current = platformUpdate.nextPlatformId;
@@ -1250,7 +1279,7 @@ export const App: React.FC = () => {
         return newState;
       });
     },
-    [isSimulating, viewportSize, sprintUpgradeActive, controlledJumpUpgradeActive, upgradeConfig]
+    [isSimulating, viewportSize, sprintUpgradeActive, controlledJumpUpgradeActive, upgradeConfig, architectureExperimentStatus]
   );
 
   const updateSimulation = useCallback(
@@ -1369,6 +1398,7 @@ export const App: React.FC = () => {
     setNetworkArchitecture(sanitized);
     localStorage.setItem(NETWORK_ARCHITECTURE_STORAGE_KEY, JSON.stringify(sanitized));
     installedChampionGenerationRef.current = { chaser: -1, evader: -1 };
+    installedChampionGenomeIdRef.current = { chaser: null, evader: null };
     chaserElo.current = INITIAL_ELO;
     evaderElo.current = INITIAL_ELO;
     recentSurvivalTimes.current = [];
@@ -1396,6 +1426,7 @@ export const App: React.FC = () => {
   const handleResetWeights = () => {
     if (architectureExperimentRunningRef.current) return;
     installedChampionGenerationRef.current = { chaser: -1, evader: -1 };
+    installedChampionGenomeIdRef.current = { chaser: null, evader: null };
     if (workerRef.current) {
       workerRef.current.postMessage({ type: 'RESET' });
     }
@@ -1472,6 +1503,7 @@ export const App: React.FC = () => {
         const chaserGeneration = checkpoint.generalistChampions?.chaser?.generation ?? checkpoint.championChaser?.generation ?? checkpoint.lastChaserMetrics?.generation ?? 0;
         const evaderGeneration = checkpoint.generalistChampions?.evader?.generation ?? checkpoint.championEvader?.generation ?? checkpoint.lastEvaderMetrics?.generation ?? 0;
         installedChampionGenerationRef.current = { chaser: chaserGeneration, evader: evaderGeneration };
+        installedChampionGenomeIdRef.current = { chaser: checkpoint.championChaser?.id ?? null, evader: checkpoint.championEvader?.id ?? null };
         chaserAgent.current?.setGeneration(chaserGeneration);
         evaderAgent.current?.setGeneration(evaderGeneration);
         if (typeof checkpoint.chaserElo === 'number') chaserElo.current = checkpoint.chaserElo;
@@ -1655,12 +1687,13 @@ export const App: React.FC = () => {
       running: true,
       currentIndex: 0,
       totalExperiments: 3,
-      experimentId: 'deep_ff',
-      label: 'Preparing Deep 16→12 feed-forward',
+      experimentId: 'symmetric_control',
+      label: 'Preparing symmetric control + elite training',
       generation: 0,
       targetGeneration: target,
       completedExperiments: 0,
       message: 'Current run snapshotted at its last safe generation boundary.',
+      pursuitDesign: null,
     });
     workerRef.current.postMessage({ type: 'START_ARCHITECTURE_EXPERIMENT_SUITE', payload: { targetGeneration: target } });
   };

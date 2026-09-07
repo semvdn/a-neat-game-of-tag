@@ -1,7 +1,7 @@
 import { LearningAgent } from '../learning/agent';
 import { runTrainingEpisode, type TrainingStartMode } from '../learning/trainingEpisode';
 import type { NeatGenomeData } from '../learning/neat';
-import type { ActiveUpgradeState, TrainingFitnessConfig } from '../types';
+import type { ActiveUpgradeState, TrainingFitnessConfig, PursuitDesignConfig } from '../types';
 
 interface ControllerEntry {
   key: string;
@@ -16,6 +16,7 @@ interface LoadEpochMessage {
     controllers: ControllerEntry[];
     upgrades: ActiveUpgradeState;
     fitnessConfig: TrainingFitnessConfig;
+    pursuitDesign?: PursuitDesignConfig;
   };
 }
 
@@ -43,6 +44,7 @@ const controllers = new Map<string, LearningAgent>();
 let loadedEpoch: number | null = null;
 let loadedUpgrades: ActiveUpgradeState | undefined;
 let loadedFitnessConfig: TrainingFitnessConfig | undefined;
+let loadedPursuitDesign: PursuitDesignConfig | undefined;
 
 self.onmessage = (event: MessageEvent<WorkerMessage>) => {
   const { type, payload } = event.data;
@@ -56,6 +58,7 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
       loadedEpoch = payload.epoch;
       loadedUpgrades = payload.upgrades;
       loadedFitnessConfig = payload.fitnessConfig;
+      loadedPursuitDesign = payload.pursuitDesign;
       return;
     }
 
@@ -78,6 +81,7 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
         runnerPaceTargetPxPerWindow: loadedFitnessConfig?.runnerPaceTargetPxPerWindow,
         runnerPaceRewardPerWindow: loadedFitnessConfig?.runnerPaceRewardPerWindow,
         chaserPursuitRewardPerPlatform: loadedFitnessConfig?.chaserPursuitRewardPerPlatform,
+        pursuitDesign: loadedPursuitDesign,
       });
       return { taskId: task.taskId, result };
     });

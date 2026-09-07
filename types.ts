@@ -55,6 +55,27 @@ export interface TrainingFitnessConfig {
   runnerExplorationRewardPerViewport?: number;
 }
 
+export interface PursuitDesignConfig {
+  /** Optional fixed role asymmetry used by temporary pursuit-design experiments. */
+  chaserBaseMaxSpeed?: number;
+  runnerBaseMaxSpeed?: number;
+  chaserSprintMaxSpeed?: number;
+  runnerSprintMaxSpeed?: number;
+  chaserSprintStaminaCostPerSec?: number;
+  runnerSprintStaminaCostPerSec?: number;
+  /** Fresh-start curriculum that places the Chaser behind Runners at controlled gaps. */
+  pressureStartDistribution?: boolean;
+  /** Small non-repeatable reward for reaching a new best proximity within a chase segment. */
+  chaserProximityProgressReward?: boolean;
+  chaserProximityStepPx?: number;
+  chaserProximityRewardPerStep?: number;
+  chaserProximityRewardCapPerSegment?: number;
+  /** Optional total episode cap for the tactical Runner pressure-escape bonus. */
+  runnerPressureEscapeEpisodeCap?: number;
+  /** Allows the full pursuit experiment to expose route choices earlier without changing visual defaults. */
+  branchStructureMinX?: number;
+}
+
 export interface ActiveUpgradeState {
   sprint: boolean;
   controlledJump: boolean;
@@ -66,6 +87,9 @@ export interface ActiveUpgradeState {
   sprintRunnerMaxSpeed: number;
   sprintChaserStaminaCostPerSec: number;
   sprintRunnerStaminaCostPerSec: number;
+  /** Optional role-specific base speeds. Omitted in the normal game, supplied by pursuit experiments. */
+  chaserBaseMaxSpeed?: number;
+  runnerBaseMaxSpeed?: number;
 }
 
 
@@ -197,6 +221,7 @@ export interface BalanceTelemetry {
   runnerPaceBonusPerEpisode?: number;
   runnerPaceShortfallPenaltyPerEpisode?: number;
   runnerPressureEscapeBonusPerEpisode?: number;
+  chaserProximityBonusPerEpisode?: number;
   chaserDirectionConflictShare?: number;
   runnerDirectionConflictShare?: number;
   chaserPursuitBonusPerEpisode?: number;
@@ -275,6 +300,21 @@ export interface HallOfFameTelemetry {
   evaderDiversity?: number;
 }
 
+export interface ShowcasePairTelemetry {
+  selectedAtGeneration: number;
+  chaserGeneration: number;
+  runnerGeneration: number;
+  score: number;
+  matches: number;
+  tagsPerEpisode: number;
+  runnerPaceCompletion: number;
+  closeEncountersPerEpisode: number;
+  successfulEvadesPerEpisode: number;
+  chaserFallsPerEpisode: number;
+  runnerFallsPerEpisode: number;
+  branchLandingsPerEpisode: number;
+}
+
 export interface DiagnosticsState {
   chaserNeatHistory?: NeatGenerationMetrics[];
   evaderNeatHistory?: NeatGenerationMetrics[];
@@ -313,6 +353,11 @@ export interface DiagnosticsState {
   controlledJumpUpgradeActive?: boolean;
   trainingFitnessConfig?: TrainingFitnessConfig;
   networkArchitecture?: NetworkArchitectureSuiteConfig;
+  pursuitDesign?: PursuitDesignConfig | null;
+  pursuitExperimentFlags?: { pressureStarts: boolean; crossPlayGate: boolean };
+  selectionAggregation?: string;
+  historicalOpponentPanel?: string;
+  showcasePair?: ShowcasePairTelemetry | null;
 }
 
 export interface TrainingGenerationAnalysisRecord {
@@ -334,5 +379,10 @@ export interface TrainingGenerationAnalysisRecord {
   };
   fitnessConfig: TrainingFitnessConfig;
   networkArchitecture?: NetworkArchitectureSuiteConfig;
+  pursuitDesign?: PursuitDesignConfig | null;
+  pursuitExperimentFlags?: { pressureStarts: boolean; crossPlayGate: boolean };
+  selectionAggregation?: string;
+  historicalOpponentPanel?: string;
+  showcasePair?: ShowcasePairTelemetry | null;
 }
 

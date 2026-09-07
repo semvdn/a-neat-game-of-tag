@@ -9,7 +9,7 @@ import {
   stepAgentPhysicsInPlace,
   updateRunnerCameraX,
 } from './simulationCore';
-import type { ActiveUpgradeState, AgentState, GameState, PlatformState } from '../types';
+import type { ActiveUpgradeState, AgentState, GameState, PlatformState, PursuitDesignConfig } from '../types';
 import { AgentStatus } from '../types';
 import {
   AGENT_COLORS,
@@ -84,6 +84,8 @@ export interface TrainingEpisodeResult {
   runnerPaceShortfallPenalty: number;
   /** Small capped reward for escaping genuine close pressure without a tag or fall. */
   runnerPressureEscapeFitnessBonus: number;
+  /** Small capped bootstrap for achieving a genuinely new best Chaser proximity. */
+  chaserProximityFitnessBonus: number;
   runnerPaceCompletion: number;
   runnerPaceWindowsSatisfied: number;
   runnerPaceWindowsTotal: number;
@@ -138,6 +140,7 @@ export interface TrainingEpisodeTraceSample {
   runnerPaceFitnessBonus: number;
   runnerPaceShortfallPenalty: number;
   runnerPressureEscapeFitnessBonus: number;
+  chaserProximityFitnessBonus: number;
   chaserPursuitFitnessBonus: number;
   closeEncounters: number;
   successfulEvades: number;
@@ -149,7 +152,7 @@ export interface TrainingEpisodeTraceSample {
   agents: TrainingEpisodeTraceAgent[];
 }
 
-export type TrainingStartMode = 'visual' | 'varied' | 'midgame' | 'mixed';
+export type TrainingStartMode = 'visual' | 'varied' | 'pressure' | 'midgame' | 'mixed';
 
 export interface TrainingEpisodeOptions {
   trackChaserActions?: boolean;
@@ -161,6 +164,7 @@ export interface TrainingEpisodeOptions {
   runnerPaceTargetPxPerWindow?: number;
   runnerPaceRewardPerWindow?: number;
   chaserPursuitRewardPerPlatform?: number;
+  pursuitDesign?: PursuitDesignConfig;
   /** Diagnostic-only trace recording; disabled during normal evolutionary evaluation. */
   recordTrace?: boolean;
   traceIntervalMs?: number;
@@ -216,10 +220,38 @@ function makeAgent(id: number, x: number, isChaser: boolean): AgentState {
 function chooseFreshTrainingStart(
   rng: () => number,
   viewportWidth: number,
-  mode: 'visual' | 'varied'
+  mode: 'visual' | 'varied' | 'pressure'
 ): { positions: number[]; itId: number } {
   const visualPositions = [100, 400, 700];
   if (mode === 'visual') return { positions: visualPositions, itId: 1 };
+
+  if (mode === 'pressure') {
+    // Pressure curriculum: retain random body identity for the Chaser while placing that role
+    // behind both Runners. Gap categories follow the intended 40/30/20/10 chase distribution.
+    const itId = 1 + Math.floor(rng() * 3);
+    const roll = rng();
+    const nearestGap = roll < 0.40
+      ? 220 + rng() * 80
+      : roll < 0.70
+        ? 140 + rng() * 80
+        : roll < 0.90
+          ? 300 + rng() * 80
+          : 180 + rng() * 180;
+    const chaserX = 90 + rng() * 100;
+    const secondGap = 170 + rng() * 110;
+    const runnerXs = [chaserX + nearestGap, chaserX + nearestGap + secondGap];
+    const positions = new Array<number>(3);
+    let runnerCursor = 0;
+    for (let id = 1; id <= 3; id++) {
+      positions[id - 1] = id === itId ? chaserX : runnerXs[runnerCursor++];
+    }
+    const maxX = Math.max(...positions);
+    if (maxX > viewportWidth - 60) {
+      const shift = maxX - (viewportWidth - 60);
+      for (let i = 0; i < positions.length; i++) positions[i] = Math.max(40, positions[i] - shift);
+    }
+    return { positions, itId };
+  }
 
   const scenario = rng();
   let positions: number[];
@@ -313,7 +345,7 @@ function cloneEpisodeStart(start: EpisodeStartState): EpisodeStartState {
 function createFreshEpisodeState(
   rng: () => number,
   viewportSize: { width: number; height: number },
-  mode: 'visual' | 'varied'
+  mode: 'visual' | 'varied' | 'pressure'
 ): EpisodeStartState {
   const groundY = viewportSize.height - 100;
   const platforms: PlatformState[] = [
@@ -658,7 +690,8 @@ export function runTrainingEpisode(
   const gameState = episodeStart.gameState;
   let nextPlatformId = episodeStart.nextPlatformId;
 
-  const upgrades: ActiveUpgradeState = options.upgrades || {
+  const pursuitDesign = options.pursuitDesign;
+  const baseUpgrades: ActiveUpgradeState = options.upgrades || {
     sprint: false,
     controlledJump: false,
     sprintChaser: false,
@@ -669,6 +702,15 @@ export function runTrainingEpisode(
     sprintRunnerMaxSpeed: SPRINT_MAX_SPEED,
     sprintChaserStaminaCostPerSec: SPRINT_ENERGY_COST_PER_SEC,
     sprintRunnerStaminaCostPerSec: SPRINT_ENERGY_COST_PER_SEC,
+  };
+  const upgrades: ActiveUpgradeState = {
+    ...baseUpgrades,
+    chaserBaseMaxSpeed: pursuitDesign?.chaserBaseMaxSpeed ?? baseUpgrades.chaserBaseMaxSpeed,
+    runnerBaseMaxSpeed: pursuitDesign?.runnerBaseMaxSpeed ?? baseUpgrades.runnerBaseMaxSpeed,
+    sprintChaserMaxSpeed: pursuitDesign?.chaserSprintMaxSpeed ?? baseUpgrades.sprintChaserMaxSpeed,
+    sprintRunnerMaxSpeed: pursuitDesign?.runnerSprintMaxSpeed ?? baseUpgrades.sprintRunnerMaxSpeed,
+    sprintChaserStaminaCostPerSec: pursuitDesign?.chaserSprintStaminaCostPerSec ?? baseUpgrades.sprintChaserStaminaCostPerSec,
+    sprintRunnerStaminaCostPerSec: pursuitDesign?.runnerSprintStaminaCostPerSec ?? baseUpgrades.sprintRunnerStaminaCostPerSec,
   };
 
   let chaserFalls = 0;
@@ -724,6 +766,7 @@ export function runTrainingEpisode(
   let runnerPaceFitnessBonus = 0;
   let runnerPaceShortfallPenalty = 0;
   let runnerPressureEscapeFitnessBonus = 0;
+  let chaserProximityFitnessBonus = 0;
   let pressureEscapeBonusThisWindow = 0;
   let runnerPaceCompletionSum = 0;
   let runnerPaceWindowsSatisfied = 0;
@@ -757,6 +800,10 @@ export function runTrainingEpisode(
   let timeWithin400Ms = 0;
   let tagsSoonAfterRunnerFall = 0;
   const lastRunnerFallAtMs = new Array<number>(gameState.agents.length).fill(-Infinity);
+  let proximitySegmentChaserId: number | null = null;
+  let proximitySegmentStartDistance = Infinity;
+  let proximitySegmentBestDistance = Infinity;
+  let proximitySegmentRewardEarned = 0;
 
   const chaserActionCounts = new Array<number>(ACTION_SPACE.length).fill(0);
   const evaderActionCounts = new Array<number>(ACTION_SPACE.length).fill(0);
@@ -791,6 +838,7 @@ export function runTrainingEpisode(
   }));
 
   for (let step = 0; step < maxSteps; step++) {
+    const chaserFallsBeforeStep = chaserFalls;
     gameState.gameTime += DT;
     advanceRoleTimers(gameState.agents, DT);
 
@@ -976,6 +1024,28 @@ export function runTrainingEpisode(
     }
     if (Number.isFinite(nearestRunnerDistance)) {
       nearestRunnerDistanceAccum += nearestRunnerDistance;
+      if (pursuitDesign?.chaserProximityProgressReward && chaserBody) {
+        const resetSegment = proximitySegmentChaserId !== chaserBody.id || chaserFalls > chaserFallsBeforeStep;
+        if (resetSegment || !Number.isFinite(proximitySegmentStartDistance)) {
+          proximitySegmentChaserId = chaserBody.id;
+          proximitySegmentStartDistance = nearestRunnerDistance;
+          proximitySegmentBestDistance = nearestRunnerDistance;
+          proximitySegmentRewardEarned = 0;
+        } else if (nearestRunnerDistance < proximitySegmentBestDistance) {
+          proximitySegmentBestDistance = nearestRunnerDistance;
+          const stepPx = Math.max(1, pursuitDesign.chaserProximityStepPx ?? 50);
+          const rewardPerStep = Math.max(0, pursuitDesign.chaserProximityRewardPerStep ?? 1);
+          const cap = Math.max(0, pursuitDesign.chaserProximityRewardCapPerSegment ?? 6);
+          const earnedTarget = Math.min(
+            cap,
+            Math.floor(Math.max(0, proximitySegmentStartDistance - proximitySegmentBestDistance) / stepPx) * rewardPerStep
+          );
+          if (earnedTarget > proximitySegmentRewardEarned) {
+            chaserProximityFitnessBonus += earnedTarget - proximitySegmentRewardEarned;
+            proximitySegmentRewardEarned = earnedTarget;
+          }
+        }
+      }
       nearestRunnerDistanceSamples++;
       if (nearestRunnerDistance <= 100) timeWithin100Ms += DT;
       if (nearestRunnerDistance <= 200) timeWithin200Ms += DT;
@@ -990,10 +1060,16 @@ export function runTrainingEpisode(
         // Reward only a clean escape from real pressure. The 180px -> 380px hysteresis makes one
         // prolonged chase count once, while the per-window cap prevents oscillation farming. A fall
         // during the encounter invalidates the tactical bonus even if the respawn opens distance.
-        if (evaderFalls === runnerFallsAtEncounterStart && pressureEscapeBonusThisWindow < RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW) {
+        const episodePressureCap = pursuitDesign?.runnerPressureEscapeEpisodeCap ?? Infinity;
+        if (
+          evaderFalls === runnerFallsAtEncounterStart &&
+          pressureEscapeBonusThisWindow < RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW &&
+          runnerPressureEscapeFitnessBonus < episodePressureCap
+        ) {
           const reward = Math.min(
             RUNNER_PRESSURE_ESCAPE_REWARD,
-            RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW - pressureEscapeBonusThisWindow
+            RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW - pressureEscapeBonusThisWindow,
+            episodePressureCap - runnerPressureEscapeFitnessBonus
           );
           pressureEscapeBonusThisWindow += reward;
           runnerPressureEscapeFitnessBonus += reward;
@@ -1053,7 +1129,8 @@ export function runTrainingEpisode(
       gameState.cameraPosition.x,
       viewportSize,
       nextPlatformId,
-      rng
+      rng,
+      pursuitDesign?.branchStructureMinX
     );
 
     if (trace && gameState.gameTime + 1e-6 >= nextTraceAtMs) {
@@ -1072,6 +1149,7 @@ export function runTrainingEpisode(
         runnerPaceFitnessBonus,
         runnerPaceShortfallPenalty,
         runnerPressureEscapeFitnessBonus,
+        chaserProximityFitnessBonus,
         chaserPursuitFitnessBonus,
         closeEncounters,
         successfulEvades,
@@ -1124,7 +1202,7 @@ export function runTrainingEpisode(
   const meanNearestRunnerDistancePx = nearestRunnerDistanceSamples > 0
     ? nearestRunnerDistanceAccum / nearestRunnerDistanceSamples
     : 0;
-  const chaserFitness = FITNESS_BASE + chaserEventScore * FITNESS_PER_EVENT + chaserPursuitFitnessBonus;
+  const chaserFitness = FITNESS_BASE + chaserEventScore * FITNESS_PER_EVENT + chaserPursuitFitnessBonus + chaserProximityFitnessBonus;
   const evaderFitness = FITNESS_BASE + evaderEventScore * FITNESS_PER_EVENT + runnerPaceFitnessBonus - runnerPaceShortfallPenalty + runnerPressureEscapeFitnessBonus;
 
   return {
@@ -1157,6 +1235,7 @@ export function runTrainingEpisode(
     runnerPaceFitnessBonus,
     runnerPaceShortfallPenalty,
     runnerPressureEscapeFitnessBonus,
+    chaserProximityFitnessBonus,
     runnerPaceCompletion,
     runnerPaceWindowsSatisfied,
     runnerPaceWindowsTotal,
