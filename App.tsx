@@ -1796,10 +1796,10 @@ export const App: React.FC = () => {
 
   return (
     <div
-      className="flex flex-col overflow-hidden bg-gray-950 font-sans p-4 gap-3 select-none"
+      className="flex flex-col overflow-hidden bg-gray-950 font-sans p-4 gap-3"
       style={scaledViewportStyle}
     >
-      <header className="flex items-center justify-between bg-gray-900/80 backdrop-blur border border-gray-800 px-5 py-3 rounded-xl shadow-lg">
+      <header className="flex flex-wrap items-center gap-3 bg-gray-900/80 backdrop-blur border border-gray-800 px-5 py-3 rounded-xl shadow-lg">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-cyan-600 to-emerald-500 flex items-center justify-center text-white font-bold shadow-md shadow-cyan-500/20">
             AI
@@ -1815,17 +1815,17 @@ export const App: React.FC = () => {
         </div>
 
         {/* Global Controls & Diagnostics Launcher */}
-        <div className="flex items-center gap-3">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {/* Champion-view controls */}
           <div className="flex items-center gap-1.5">
             <div className="flex items-center gap-1 bg-gray-950 border border-gray-800 rounded-lg p-1" title="Champion game speed">
               <MonitorPlay className="w-3.5 h-3.5 text-cyan-300 ml-1" />
               <span className="text-[10px] uppercase tracking-wider text-cyan-300 mr-1">View</span>
               {[0.5, 1, 2, 5, 10].map(speed => (
-                <button key={speed} onClick={() => setVisualSpeed(speed)} className={`px-2 py-1 text-[11px] font-mono font-semibold rounded ${visualSpeed === speed ? 'bg-cyan-500 text-black' : 'text-gray-400 hover:text-cyan-300 hover:bg-gray-900'}`}>{speed}x</button>
+                <button key={speed} aria-pressed={visualSpeed === speed} onClick={() => setVisualSpeed(speed)} className={`px-2 py-1 text-[11px] font-mono font-semibold rounded ${visualSpeed === speed ? 'bg-cyan-500 text-black' : 'text-gray-400 hover:text-cyan-300 hover:bg-gray-900'}`}>{speed}x</button>
               ))}
             </div>
-            <div className="flex items-center bg-gray-950 border border-gray-800 rounded-lg p-1" title="Preferred visual zoom; the camera automatically zooms out when needed to keep both agents visible. Does not change physics or agent senses.">
+            <div className="flex items-center bg-gray-950 border border-gray-800 rounded-lg p-1" title="Preferred visual zoom. Auto-framing keeps the active chase readable up to the escape boundary without changing physics or agent senses.">
               <button
                 onClick={() => changeCameraZoom(-0.25)}
                 disabled={cameraZoom <= 0.5}
@@ -1846,17 +1846,17 @@ export const App: React.FC = () => {
                 onClick={() => changeCameraZoom(0.25)}
                 disabled={cameraZoom >= 2}
                 className="p-1.5 rounded text-cyan-200 hover:bg-gray-900 disabled:text-gray-700 disabled:hover:bg-transparent"
-                title="Raise preferred camera zoom (auto-framing still keeps both agents visible)"
+                title="Raise preferred camera zoom (auto-framing still protects the active chase frame)"
                 aria-label="Zoom camera in"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
             </div>
-            <button onClick={() => setIsVisualPaused(p => !p)} className="p-2 rounded-lg border border-gray-700 text-cyan-200 hover:bg-gray-800" title={isVisualPaused ? 'Resume champion game' : 'Pause champion game'}>
+            <button onClick={() => setIsVisualPaused(p => !p)} className="p-2 rounded-lg border border-gray-700 text-cyan-200 hover:bg-gray-800" aria-label={isVisualPaused ? 'Resume champion game' : 'Pause champion game'} title={isVisualPaused ? 'Resume champion game' : 'Pause champion game'}>
               {isVisualPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
             </button>
             <button onClick={handleResetChampionGame} className="px-2.5 py-2 rounded-lg border border-gray-700 text-cyan-200 hover:bg-gray-800 flex items-center gap-1.5 text-[11px] font-semibold" title="Reset champion game only">
-              <RotateCcw className="w-3.5 h-3.5" />Reset view
+              <RotateCcw className="w-3.5 h-3.5" />Reset arena
             </button>
           </div>
 
@@ -1873,13 +1873,13 @@ export const App: React.FC = () => {
                 {formatTrainingRate(diagnosticsState.trainingEpisodesPerSecond)} ep/s
               </span>
               <span className="text-[9px] font-mono text-gray-600" title={diagnosticsState.trainingBackend || 'CPU training'}>
-                {diagnosticsState.trainingWorkerCount || 1}w
+                {diagnosticsState.trainingWorkerCount || 1} worker{(diagnosticsState.trainingWorkerCount || 1) === 1 ? '' : 's'}
               </span>
               <span
                 className={`text-[9px] font-mono ${trainingWakeLockActive ? 'text-emerald-400' : 'text-gray-600'}`}
                 title={trainingWakeLockActive ? 'Screen wake lock active while training' : 'Screen wake lock unavailable or inactive'}
               >
-                {trainingWakeLockActive ? 'awake' : 'guard'}
+                {trainingWakeLockActive ? 'wake locked' : isTrainingPaused ? 'wake off' : 'wake n/a'}
               </span>
               {(diagnosticsState.trainingRecoveryCount || 0) > 0 && (
                 <span className="text-[9px] font-mono text-orange-300" title={diagnosticsState.trainingLastRecoveryReason || 'Recovered stalled evaluator'}>
@@ -1887,7 +1887,7 @@ export const App: React.FC = () => {
                 </span>
               )}
             </div>
-            <button onClick={() => setIsTrainingPaused(p => !p)} className="p-2 rounded-lg border border-gray-700 text-amber-200 hover:bg-gray-800" title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>
+            <button onClick={() => setIsTrainingPaused(p => !p)} className="p-2 rounded-lg border border-gray-700 text-amber-200 hover:bg-gray-800" aria-label={isTrainingPaused ? 'Resume background training' : 'Pause background training'} title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>
               {isTrainingPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
             </button>
           </div>
@@ -1936,7 +1936,6 @@ export const App: React.FC = () => {
           {isSimulating && (
             <GameCanvas
               gameState={gameState}
-              onFrameReady={() => {}}
               showTrails={showTrails}
               showSenses={showSenses}
               cameraZoom={cameraZoom}
@@ -1961,6 +1960,7 @@ export const App: React.FC = () => {
           onUpdateTrainingFitnessConfig={updateTrainingFitnessConfig}
           terrainVarietyConfig={terrainVarietyConfig}
           onUpdateTerrainVarietyConfig={updateTerrainVarietyConfig}
+          settingsLocked={architectureExperimentStatus.running}
         />
       </div>
 

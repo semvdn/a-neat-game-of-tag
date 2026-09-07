@@ -341,7 +341,7 @@ The two camera-boundary inputs remain removed from the policy state, keeping the
 
 ## Analysis recording and deterministic behavior probes
 
-The Diagnostics → Models tab includes **Export analysis JSON**. This is intentionally smaller and more analysis-oriented than a full evolutionary checkpoint. It contains:
+The Diagnostics → **Runs & data** tab includes **Export analysis JSON**. This is intentionally smaller and more analysis-oriented than a full evolutionary checkpoint. It contains:
 
 - a retained per-generation record (up to 2000 generations) with population fitness/species metrics, balance, fixed benchmark, Hall-of-Fame state, role Elo, action shares, pace/pursuit shaping, landings, chase-interaction metrics and Chaser escape rate;
 - the exploration reward configuration used for each generation, so later retuning is visible in the history;

@@ -78,6 +78,8 @@ const formatTrainingRate = (value: number | undefined) => {
   return safe.toFixed(2);
 };
 
+const DISPLAY_ACTIONS = [...ACTION_SPACE, 'idle'] as const;
+
 const formatBytes = (bytes: number) => {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -244,7 +246,7 @@ const NetworkGraph: React.FC<{ genome?: NeatGenomeData | null }> = ({ genome }) 
         })}
         <text x="8" y="12" className="fill-gray-500 text-[8px]">{STATE_VECTOR_SIZE} INPUTS</text>
         <text x="140" y="12" className="fill-gray-500 text-[8px]">{layout.hiddenLayers} HIDDEN LAYERS</text>
-        <text x="314" y="12" className="fill-gray-500 text-[8px]">4 OUTPUTS</text>
+        <text x="314" y="12" className="fill-gray-500 text-[8px]">{POLICY_OUTPUT_SPACE.length} OUTPUTS</text>
       </svg>
       <div className={`mb-3 rounded-lg border px-3 py-2 text-xs ${hoveredNode ? 'border-violet-500/30 bg-violet-950/15 text-violet-100' : 'border-gray-800 bg-black/20 text-gray-500'}`}>
         {hoveredNode ? nodeLabel(hoveredNode) : 'Hover an input or output node to see the exact sense or action it represents.'}
@@ -483,22 +485,22 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex flex-col text-gray-200">
-      <header className="border-b border-gray-800 bg-gray-950 px-5 py-3 flex items-center gap-4">
+      <header className="flex flex-wrap items-center gap-3 border-b border-gray-800 bg-gray-950 px-5 py-3">
         <div className="w-10 h-10 rounded-xl bg-violet-500/20 border border-violet-400/30 flex items-center justify-center"><Brain className="w-5 h-5 text-violet-300" /></div>
         <div>
           <div className="flex items-center gap-2"><h2 className="font-bold text-lg text-white">NEAT Evolution Diagnostics</h2><span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/30">population based</span></div>
-          <p className="text-xs text-gray-500">Fitness, speciation and topology growth replace PPO loss, critic and gradient telemetry.</p>
+          <p className="text-xs text-gray-500">Population fitness, speciation, topology growth, retention and behavior probes in one place.</p>
         </div>
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <div className="flex items-center gap-1 rounded-lg border border-gray-800 bg-black/30 p-1" title="Champion-view speed">
             <MonitorPlay className="w-3.5 h-3.5 text-cyan-300 ml-1" />
             <span className="text-[10px] uppercase tracking-wider text-cyan-300 mr-1">View</span>
             {[0.5, 1, 2, 5, 10].map(speed => (
-              <button key={speed} onClick={() => onSetVisualSpeed(speed)} className={`px-2 py-1 rounded text-xs font-mono ${visualSpeed === speed ? 'bg-cyan-500 text-black' : 'text-gray-500 hover:text-white'}`}>{speed}x</button>
+              <button key={speed} aria-pressed={visualSpeed === speed} onClick={() => onSetVisualSpeed(speed)} className={`px-2 py-1 rounded text-xs font-mono ${visualSpeed === speed ? 'bg-cyan-500 text-black' : 'text-gray-500 hover:text-white'}`}>{speed}x</button>
             ))}
-            <button onClick={onToggleVisualPause} className="p-1.5 rounded hover:bg-gray-900 text-cyan-200" title={isVisualPaused ? 'Resume champion view' : 'Pause champion view'}>{isVisualPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}</button>
-            <button onClick={onStepFrame} className="p-1.5 rounded hover:bg-gray-900 text-cyan-200" title="Step champion view"><FastForward className="w-4 h-4" /></button>
-            <button onClick={onResetChampionGame} className="p-1.5 rounded hover:bg-gray-900 text-cyan-200" title="Reset champion game only"><RotateCcw className="w-4 h-4" /></button>
+            <button onClick={onToggleVisualPause} aria-label={isVisualPaused ? 'Resume champion view' : 'Pause champion view'} className="p-1.5 rounded hover:bg-gray-900 text-cyan-200" title={isVisualPaused ? 'Resume champion view' : 'Pause champion view'}>{isVisualPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}</button>
+            <button onClick={onStepFrame} disabled={!isVisualPaused} aria-label="Step champion view one frame" className="p-1.5 rounded hover:bg-gray-900 text-cyan-200 disabled:cursor-not-allowed disabled:text-gray-700 disabled:hover:bg-transparent" title={isVisualPaused ? "Step champion view one frame" : "Pause the champion view to step frames"}><FastForward className="w-4 h-4" /></button>
+            <button onClick={onResetChampionGame} aria-label="Reset champion arena" className="p-1.5 rounded hover:bg-gray-900 text-cyan-200" title="Reset champion game only"><RotateCcw className="w-4 h-4" /></button>
           </div>
           <div className="flex items-center gap-1.5 rounded-lg border border-gray-800 bg-black/30 px-2 py-1.5" title="Background training always runs as fast as this device can process it">
             <Cpu className="w-3.5 h-3.5 text-amber-300 ml-1" />
@@ -511,45 +513,45 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               {formatTrainingRate(diagnostics.trainingEpisodesPerSecond)} ep/s
             </span>
             <span className="text-[10px] font-mono text-gray-600" title={diagnostics.trainingBackend || 'CPU training'}>
-              {diagnostics.trainingWorkerCount || 1} workers
+              {diagnostics.trainingWorkerCount || 1} worker{(diagnostics.trainingWorkerCount || 1) === 1 ? '' : 's'}
             </span>
             {(diagnostics.trainingRecoveryCount || 0) > 0 && (
               <span className="text-[10px] font-mono text-orange-300" title={diagnostics.trainingLastRecoveryReason || 'Recovered stalled evaluator batch'}>
                 {diagnostics.trainingRecoveryCount} recovered
               </span>
             )}
-            <button onClick={onToggleTrainingPause} className="p-1.5 rounded hover:bg-gray-900 text-amber-200" title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>{isTrainingPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}</button>
+            <button onClick={onToggleTrainingPause} aria-label={isTrainingPaused ? 'Resume background training' : 'Pause background training'} className="p-1.5 rounded hover:bg-gray-900 text-amber-200" title={isTrainingPaused ? 'Resume background training' : 'Pause background training'}>{isTrainingPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}</button>
           </div>
-          <button onClick={onClose} className="p-2 rounded border border-gray-800 hover:bg-gray-900"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} aria-label="Close diagnostics" title="Close diagnostics" className="p-2 rounded border border-gray-800 hover:bg-gray-900"><X className="w-4 h-4" /></button>
         </div>
       </header>
 
-      <div className="px-5 pt-3 flex gap-2 border-b border-gray-900 bg-gray-950">
+      <div className="flex gap-2 overflow-x-auto border-b border-gray-900 bg-gray-950 px-5 pt-3">
         {[
           ['overview', Activity, 'Overview'],
           ['fitness', Trophy, 'Fitness'],
           ['network', Network, 'Topology'],
           ['architecture', Brain, 'Architecture'],
           ['actions', BarChart3, 'Actions'],
-          ['models', HardDrive, 'Models'],
+          ['models', HardDrive, 'Runs & data'],
         ].map(([id, Icon, label]) => {
           const C = Icon as React.FC<{ className?: string }>;
-          return <button key={String(id)} onClick={() => setTab(id as typeof tab)} className={`flex items-center gap-2 px-3 py-2 text-xs border-b-2 ${tab === id ? 'border-violet-400 text-violet-200' : 'border-transparent text-gray-500 hover:text-gray-300'}`}><C className="w-4 h-4" />{String(label)}</button>;
+          return <button key={String(id)} aria-pressed={tab === id} onClick={() => setTab(id as typeof tab)} className={`flex shrink-0 items-center gap-2 px-3 py-2 text-xs border-b-2 ${tab === id ? 'border-violet-400 text-violet-200' : 'border-transparent text-gray-500 hover:text-gray-300'}`}><C className="w-4 h-4" />{String(label)}</button>;
         })}
       </div>
 
       <main className="flex-1 overflow-auto p-5">
         {tab === 'overview' && (
           <div className="max-w-7xl mx-auto space-y-5">
-            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-10 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
               <MetricCard label="Generation" value={generation} hint="one full population evaluation" />
-              <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} hint="tags − own falls − escape failures; no exploration shaping" />
-              <MetricCard label="Runner best" value={fmt(evaderMetrics?.bestFitness)} hint="−tags − own falls + capped pace-window reward" />
+              <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} hint="tags − own falls − escape failures + capped follow shaping" />
+              <MetricCard label="Runner best" value={fmt(evaderMetrics?.bestFitness)} hint="−tags − own falls + capped pace/escape shaping" />
               <MetricCard label="Species C / R" value={`${chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.speciesCount ?? '—'}`} hint={`reproducing ${chaserMetrics?.reproductiveSpeciesCount ?? chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.reproductiveSpeciesCount ?? evaderMetrics?.speciesCount ?? '—'}`} />
               <MetricCard label="Tag rate" value={balance ? `${(balance.tagRate * 100).toFixed(1)}%` : '—'} hint="contact tags only" />
               <MetricCard label="Runner clean survival" value={balance ? `${(balance.survivalRate * 100).toFixed(1)}%` : '—'} hint="no tag and no runner fall" />
               <MetricCard label="Chaser fall rate" value={balance?.chaserFallRate != null ? `${(balance.chaserFallRate * 100).toFixed(1)}%` : '—'} hint={balance?.chaserFalls != null ? `${balance.chaserFalls} matches with chaser fall` : 'population matches'} />
-              <MetricCard label="Chaser escape rate" value={balance?.chaserEscapeRate != null ? `${(balance.chaserEscapeRate * 100).toFixed(1)}%` : '—'} hint={balance?.chaserEscapes != null ? `${balance.chaserEscapes} matches exceeded the 50% camera envelope` : 'terminal chase-separation failures'} />
+              <MetricCard label="Chaser escape rate" value={balance?.chaserEscapeRate != null ? `${(balance.chaserEscapeRate * 100).toFixed(1)}%` : '—'} hint={balance?.chaserEscapes != null ? `${balance.chaserEscapes} matches lost every Runner beyond the 50% camera envelope` : 'terminal chase-separation failures'} />
               <MetricCard label="Runner fall rate" value={balance?.runnerFallRate != null ? `${(balance.runnerFallRate * 100).toFixed(1)}%` : '—'} hint={balance?.runnerFalls != null ? `${balance.runnerFalls} matches with runner fall` : 'population matches'} />
               <MetricCard label="Avg tag time" value={balance?.avgTagTimeMs != null ? `${(balance.avgTagTimeMs / 1000).toFixed(2)}s` : '—'} hint="when a contact tag occurs" />
               <MetricCard label="Matches" value={balance?.matches ?? '—'} hint="last completed generation" />
@@ -557,13 +559,13 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
 
             <div className="grid lg:grid-cols-2 gap-4">
               <FitnessSummary title="Chaser population" metrics={chaserMetrics} />
-              <FitnessSummary title="Evader population" metrics={evaderMetrics} />
+              <FitnessSummary title="Runner population" metrics={evaderMetrics} />
             </div>
             <div className="grid md:grid-cols-2 xl:grid-cols-5 gap-3">
-              <MetricCard label="Hall of Fame C / E" value={`${diagnostics.hallOfFame?.chaserSize ?? 0} / ${diagnostics.hallOfFame?.evaderSize ?? 0}`} hint={`max ${diagnostics.hallOfFame?.maxSize ?? 0} champions per role`} />
-              <MetricCard label="Recent C / E" value={`${diagnostics.hallOfFame?.chaserRecentSize ?? 0} / ${diagnostics.hallOfFame?.evaderRecentSize ?? 0}`} hint="always retained to track current coevolution" />
-              <MetricCard label="Diverse history C / E" value={`${diagnostics.hallOfFame?.chaserDiverseSize ?? 0} / ${diagnostics.hallOfFame?.evaderDiverseSize ?? 0}`} hint="behaviorally distinct older champions" />
-              <MetricCard label="Archive diversity C / E" value={`${fmt(diagnostics.hallOfFame?.chaserDiversity, 3)} / ${fmt(diagnostics.hallOfFame?.evaderDiversity, 3)}`} hint="mean behavioral descriptor distance" />
+              <MetricCard label="Hall of Fame C / R" value={`${diagnostics.hallOfFame?.chaserSize ?? 0} / ${diagnostics.hallOfFame?.evaderSize ?? 0}`} hint={`max ${diagnostics.hallOfFame?.maxSize ?? 0} champions per role`} />
+              <MetricCard label="Recent C / R" value={`${diagnostics.hallOfFame?.chaserRecentSize ?? 0} / ${diagnostics.hallOfFame?.evaderRecentSize ?? 0}`} hint="always retained to track current coevolution" />
+              <MetricCard label="Diverse history C / R" value={`${diagnostics.hallOfFame?.chaserDiverseSize ?? 0} / ${diagnostics.hallOfFame?.evaderDiverseSize ?? 0}`} hint="behaviorally distinct older champions" />
+              <MetricCard label="Archive diversity C / R" value={`${fmt(diagnostics.hallOfFame?.chaserDiversity, 3)} / ${fmt(diagnostics.hallOfFame?.evaderDiversity, 3)}`} hint="mean behavioral descriptor distance" />
               <MetricCard label="Elite seeds C / R" value={`${diagnostics.eliteSeeding?.chaserInjected ?? 0} / ${diagnostics.eliteSeeding?.runnerInjected ?? 0}`} hint={diagnostics.eliteSeeding ? `generation ${diagnostics.eliteSeeding.generation} · sources C [${diagnostics.eliteSeeding.chaserSourceGenerations.join(', ') || '—'}] / R [${diagnostics.eliteSeeding.runnerSourceGenerations.join(', ') || '—'}]` : 'validated retained/recent lineages injected with zero fitness'} />
             </div>
 
@@ -629,7 +631,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
               <div className="flex items-center gap-2 mb-3"><Trophy className="w-4 h-4 text-amber-300" /><h3 className="font-semibold text-white">Best fitness by generation</h3></div>
-              <LineChart series={[{ label: 'Chaser', values: chaserHistory.map(m => m.bestFitness) }, { label: 'Evader', values: evaderHistory.map(m => m.bestFitness) }]} />
+              <LineChart series={[{ label: 'Chaser', values: chaserHistory.map(m => m.bestFitness) }, { label: 'Runner', values: evaderHistory.map(m => m.bestFitness) }]} />
             </div>
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
@@ -677,11 +679,11 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                 ]}
                 emptyLabel="Complete generations to populate the failure-rate chart."
               />
-              <p className="mt-2 text-xs text-gray-500">Failure telemetry covers current-population matches only. Fall rates count matches containing the corresponding fall; escape rate counts matches terminated because the complete chase group would require less than 50% reference zoom to remain readable. Falls/tags normally continue; an escape ends the chase immediately. Hall-of-Fame tests are excluded.</p>
+              <p className="mt-2 text-xs text-gray-500">Failure telemetry covers current-population matches only. Fall rates count matches containing the corresponding fall; escape rate counts matches terminated because the Chaser is outside the 50% readable camera envelope of every Runner. Falls/tags normally continue; an escape ends the chase immediately. Hall-of-Fame tests are excluded.</p>
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> persistent NEAT species now carry lineage age and progress across generations, with conservative stagnation pruning and protected young/top lineages. The compact 23-input world-relative policy now has a signed horizontal-drive output plus independent jump and sprint outputs, so horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities. Every genome is evaluated against common opponent panels plus Hall of Fame champions. Recent champions are retained alongside a strength-aware behaviorally diverse historical archive, while a separate fixed benchmark tracks cross-generation progress and now gates only visible/generalist champion retention, never population breeding. Runner shaping is a capped 2-second pace requirement plus a small capped clean pressure-escape bonus, and Chaser shaping gives a small capped signal for safely following Runner-used terrain. A chase now also terminates as a Chaser failure if the group exceeds the minimum useful 50% camera framing envelope, preventing runaway separation from becoming an unwatchable strategy. Jump requires a release before it can fire again, and later procedural terrain can branch into upper/lower routes that reconnect. The worker pool preloads genomes and batches episodes for lower messaging overhead.
+              <strong className="text-violet-200">Training architecture:</strong> persistent NEAT species now carry lineage age and progress across generations, with conservative stagnation pruning and protected young/top lineages. The compact 23-input world-relative policy now has a signed horizontal-drive output plus independent jump and sprint outputs, so horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities. Every genome is evaluated against common opponent panels plus Hall of Fame champions. Recent champions are retained alongside a strength-aware behaviorally diverse historical archive, while a separate fixed benchmark tracks cross-generation progress and now gates only visible/generalist champion retention, never population breeding. Runner shaping is a capped 2-second pace requirement plus a small capped clean pressure-escape bonus, and Chaser shaping gives a small capped signal for safely following Runner-used terrain. A chase terminates as a Chaser failure only when the Chaser is outside the minimum useful 50% camera envelope of every Runner, preventing runaway separation without penalizing Runner–Runner divergence. Jump requires a release before it can fire again, and procedural terrain can create route-locked recursive forks and moving platforms that reconnect at explicit merges. The worker pool preloads genomes and batches episodes for lower messaging overhead.
             </div>
           </div>
         )}
@@ -692,7 +694,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <h3 className="font-semibold text-white mb-3">Population fitness — best vs mean</h3>
               <LineChart series={[
                 { label: 'Chaser best', values: chaserHistory.map(m => m.bestFitness) },
-                { label: 'Evader best', values: evaderHistory.map(m => m.bestFitness) },
+                { label: 'Runner best', values: evaderHistory.map(m => m.bestFitness) },
                 { label: 'Chaser mean', values: chaserHistory.map(m => m.averageFitness) },
                 { label: 'Runner mean', values: evaderHistory.map(m => m.averageFitness) },
               ]} />
@@ -701,13 +703,14 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <h3 className="font-semibold text-white mb-3">Topology complexity</h3>
               <LineChart series={[
                 { label: 'Chaser avg nodes', values: chaserHistory.map(m => m.averageNodes) },
-                { label: 'Evader avg nodes', values: evaderHistory.map(m => m.averageNodes) },
+                { label: 'Runner avg nodes', values: evaderHistory.map(m => m.averageNodes) },
                 { label: 'Chaser avg links', values: chaserHistory.map(m => m.averageConnections) },
+                { label: 'Runner avg links', values: evaderHistory.map(m => m.averageConnections) },
               ]} />
             </div>
             <div className="grid md:grid-cols-2 gap-4">
-              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4"><h3 className="font-semibold text-white mb-3">Species count</h3><LineChart series={[{ label: 'Chaser active', values: chaserHistory.map(m => m.speciesCount) }, { label: 'Evader active', values: evaderHistory.map(m => m.speciesCount) }, { label: 'Chaser reproducing', values: chaserHistory.map(m => m.reproductiveSpeciesCount ?? m.speciesCount) }, { label: 'Evader reproducing', values: evaderHistory.map(m => m.reproductiveSpeciesCount ?? m.speciesCount) }]} /></div>
-              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4"><h3 className="font-semibold text-white mb-3">Species longevity</h3><LineChart series={[{ label: 'Chaser oldest age', values: chaserHistory.map(m => m.oldestSpeciesAge ?? 0) }, { label: 'Evader oldest age', values: evaderHistory.map(m => m.oldestSpeciesAge ?? 0) }, { label: 'Chaser stagnant', values: chaserHistory.map(m => m.stagnantSpeciesCount ?? 0) }, { label: 'Evader stagnant', values: evaderHistory.map(m => m.stagnantSpeciesCount ?? 0) }]} /></div>
+              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4"><h3 className="font-semibold text-white mb-3">Species count</h3><LineChart series={[{ label: 'Chaser active', values: chaserHistory.map(m => m.speciesCount) }, { label: 'Runner active', values: evaderHistory.map(m => m.speciesCount) }, { label: 'Chaser reproducing', values: chaserHistory.map(m => m.reproductiveSpeciesCount ?? m.speciesCount) }, { label: 'Runner reproducing', values: evaderHistory.map(m => m.reproductiveSpeciesCount ?? m.speciesCount) }]} /></div>
+              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4"><h3 className="font-semibold text-white mb-3">Species longevity</h3><LineChart series={[{ label: 'Chaser oldest age', values: chaserHistory.map(m => m.oldestSpeciesAge ?? 0) }, { label: 'Runner oldest age', values: evaderHistory.map(m => m.oldestSpeciesAge ?? 0) }, { label: 'Chaser stagnant', values: chaserHistory.map(m => m.stagnantSpeciesCount ?? 0) }, { label: 'Runner stagnant', values: evaderHistory.map(m => m.stagnantSpeciesCount ?? 0) }]} /></div>
             </div>
           </div>
         )}
@@ -717,9 +720,9 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             <div className="space-y-3">
               <div className="flex rounded-lg border border-gray-800 overflow-hidden">
                 <button onClick={() => setRole('chaser')} className={`flex-1 py-2 text-xs font-semibold ${role === 'chaser' ? 'bg-red-500/20 text-red-200' : 'bg-gray-950 text-gray-500'}`}>Chaser champion</button>
-                <button onClick={() => setRole('evader')} className={`flex-1 py-2 text-xs font-semibold ${role === 'evader' ? 'bg-cyan-500/20 text-cyan-200' : 'bg-gray-950 text-gray-500'}`}>Evader champion</button>
+                <button onClick={() => setRole('evader')} className={`flex-1 py-2 text-xs font-semibold ${role === 'evader' ? 'bg-cyan-500/20 text-cyan-200' : 'bg-gray-950 text-gray-500'}`}>Runner champion</button>
               </div>
-              <FitnessSummary title={`${role === 'chaser' ? 'Chaser' : 'Evader'} champion`} metrics={selectedMetrics} />
+              <FitnessSummary title={`${role === 'chaser' ? 'Chaser' : 'Runner'} champion`} metrics={selectedMetrics} />
               <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4 text-xs text-gray-400 leading-relaxed">
                 Green/red links are feed-forward weights; recurrent links are one-step delayed memory edges. The Architecture tab controls starting size plus independent evolution switches and hard caps for layers, nodes and recurrent connections.
               </div>
@@ -736,16 +739,16 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                   <div className="flex items-center gap-2"><Brain className="h-4 w-4 text-violet-300" /><h3 className="font-semibold text-white">Network architecture experiment suite</h3></div>
                   <p className="mt-1 text-xs leading-relaxed text-gray-500">Configure generation-1 depth/width/memory and independently decide whether hidden layers, hidden nodes, and recurrent connections may evolve afterward. Applying a new architecture intentionally starts both populations at generation 1 so benchmark comparisons are clean. The settings are stored in full checkpoints and analysis exports.</p>
                 </div>
-                <label className="flex items-center gap-2 rounded border border-gray-700 bg-black/20 px-3 py-2 text-xs text-gray-300"><input type="checkbox" checked={architectureDraft.linkedRoles} onChange={e => setArchitectureDraft(prev => ({ ...prev, linkedRoles: e.target.checked, runner: e.target.checked ? { ...prev.chaser, hiddenLayers: [...prev.chaser.hiddenLayers] } : prev.runner }))} />Use same architecture for both roles</label>
+                <label className={`flex items-center gap-2 rounded border border-gray-700 bg-black/20 px-3 py-2 text-xs text-gray-300 ${architectureExperimentStatus.running ? 'opacity-45' : ''}`}><input type="checkbox" disabled={architectureExperimentStatus.running} checked={architectureDraft.linkedRoles} onChange={e => setArchitectureDraft(prev => ({ ...prev, linkedRoles: e.target.checked, runner: e.target.checked ? { ...prev.chaser, hiddenLayers: [...prev.chaser.hiddenLayers] } : prev.runner }))} />Use same architecture for both roles</label>
               </div>
               <div className="mt-4">
                 <div className="flex items-center justify-between gap-3"><div><div className="text-xs font-semibold text-white">Experiment recipes</div><div className="text-[10px] text-gray-500">Whole-suite presets make role comparisons reproducible. Selecting one only edits the draft; Apply architecture & restart still controls when it takes effect.</div></div></div>
-                <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+                <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-6">
                   {(Object.entries(NETWORK_ARCHITECTURE_SUITE_PRESETS) as [NetworkArchitectureSuitePreset, typeof NETWORK_ARCHITECTURE_SUITE_PRESETS[NetworkArchitectureSuitePreset]][]).map(([id, recipe]) => {
                     const selected = selectedSuitePreset === id;
                     return (
-                      <button key={id} type="button" aria-pressed={selected} onClick={() => setArchitectureDraft(sanitizeNetworkArchitectureSuite(recipe.config))} className={`rounded-lg border px-3 py-2 text-left transition-colors ${selected ? 'border-violet-400 bg-violet-500/20 ring-1 ring-violet-400/35' : 'border-gray-800 bg-black/20 hover:border-gray-700'}`}>
-                        <div className={`flex flex-wrap items-center gap-1.5 text-[11px] font-semibold ${selected ? 'text-violet-100' : 'text-gray-200'}`}><span>{recipe.label}</span>{selected && <span className="rounded-full bg-violet-400 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-black">selected</span>}{id === 'ff_control' && <span className="rounded-full border border-fuchsia-500/35 px-1.5 py-0.5 text-[8px] uppercase tracking-wide text-fuchsia-300">recommended</span>}</div>
+                      <button key={id} type="button" disabled={architectureExperimentStatus.running} aria-pressed={selected} onClick={() => setArchitectureDraft(sanitizeNetworkArchitectureSuite(recipe.config))} className={`rounded-lg border px-3 py-2 text-left transition-colors ${selected ? 'border-violet-400 bg-violet-500/20 ring-1 ring-violet-400/35' : 'border-gray-800 bg-black/20 hover:border-gray-700'} ${architectureExperimentStatus.running ? 'cursor-not-allowed opacity-45' : ''}`}>
+                        <div className={`flex flex-wrap items-center gap-1.5 text-[11px] font-semibold ${selected ? 'text-violet-100' : 'text-gray-200'}`}><span>{recipe.label}</span>{selected && <span className="rounded-full bg-violet-400 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-black">selected</span>}{id === 'memory_discovery' && <span className="rounded-full border border-emerald-500/35 px-1.5 py-0.5 text-[8px] uppercase tracking-wide text-emerald-300">default</span>}{id === 'ff_control' && <span className="rounded-full border border-fuchsia-500/35 px-1.5 py-0.5 text-[8px] uppercase tracking-wide text-fuchsia-300">control</span>}</div>
                         <div className={`mt-1 text-[9px] leading-relaxed ${selected ? 'text-violet-200/70' : 'text-gray-600'}`}>{recipe.summary}</div>
                       </button>
                     );
@@ -754,7 +757,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                 <div className="mt-2 text-[10px] text-gray-500">Draft recipe: <span className={selectedSuitePreset ? 'font-semibold text-violet-300' : 'font-semibold text-gray-300'}>{selectedSuitePreset ? NETWORK_ARCHITECTURE_SUITE_PRESETS[selectedSuitePreset].label : 'Custom / modified'}</span></div>
               </div>
               <div className="mt-3 rounded-lg border border-gray-800 bg-black/20 px-3 py-2 text-[10px] leading-relaxed text-gray-500">
-                <span className="text-gray-300">Suggested sequence:</span> FF control → Memory Lite → Balanced Memory. Use Memory Discovery to test whether recurrence emerges without being seeded; Fixed Memory Control isolates recurrent state from structural growth; Deep Memory is a later high-capacity stress test.
+                <span className="text-gray-300">Suggested sequence:</span> FF control → Memory Discovery → Balanced Memory. Use the role editors for Memory Lite, Fixed Memory Control, Deep Memory, or asymmetric variants when you want a targeted follow-up.
               </div>
             </div>
 
@@ -762,13 +765,13 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="max-w-3xl">
                   <div className="flex items-center gap-2"><Play className="h-4 w-4 text-cyan-300" /><h3 className="font-semibold text-white">Temporary pursuit-design experiment runner</h3></div>
-                  <p className="mt-1 text-xs leading-relaxed text-gray-500">Runs a fresh validation of the integrated hybrid design: camera-decoupled B physics, Memory Discovery, pressure starts, soft multi-distance Chaser retention, the 50/20/15/15 opponent league, earlier recurring branches and light elite seeding. The current run is restored automatically after export.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-gray-500">Runs a fresh validation of the integrated hybrid design using the current terrain settings: camera-decoupled physics, Memory Discovery, pressure starts, soft multi-distance Chaser retention, the 50/20/15/15 opponent league and light elite seeding. The current run is restored automatically after export.</p>
                 </div>
                 <span className="rounded-full border border-cyan-500/25 bg-black/25 px-2.5 py-1 text-[10px] font-mono text-cyan-200">temporary tool</span>
               </div>
               <div className="mt-3 grid gap-2 md:grid-cols-2 text-[10px]">
                 <div className="rounded border border-amber-500/20 bg-black/20 px-3 py-2"><span className="font-semibold text-amber-200">Permanent B physics</span><div className="mt-1 text-gray-600">23 world-relative inputs; Chaser 5.7 / 7.9 at 28/s; Runner 5.0 / 7.5 at 24/s; 900ms post-fall protection; pressure starts and proximity bootstrap.</div></div>
-                <div className="rounded border border-cyan-500/25 bg-black/20 px-3 py-2"><span className="font-semibold text-cyan-200">D · Hybrid soft-pursuit league</span><div className="mt-1 text-gray-600">70/30 benchmark+pursuit retention, 50/20/15/15 current/recent/strong/diverse league, early recurring branches, and up to two zero-fitness elite seed clones per role.</div></div>
+                <div className="rounded border border-cyan-500/25 bg-black/20 px-3 py-2"><span className="font-semibold text-cyan-200">D · Hybrid soft-pursuit league</span><div className="mt-1 text-gray-600">70/30 benchmark+pursuit retention, 50/20/15/15 current/recent/strong/diverse league, current recursive terrain settings, and up to two zero-fitness elite seed clones per role.</div></div>
               </div>
               <div className="mt-4 grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-end">
                 <label className="block">
@@ -786,8 +789,8 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <p className="mt-3 text-[10px] leading-relaxed text-gray-600">The default is 275 generations for one fresh validation run. Cancelling discards the temporary population and restores the snapshotted run.</p>
             </div>
 
-            <ArchitectureRoleEditor role="chaser" config={architectureDraft.chaser} onChange={next => setArchitectureDraft(prev => ({ ...prev, chaser: next, runner: prev.linkedRoles ? { ...next, hiddenLayers: [...next.hiddenLayers] } : prev.runner }))} />
-            <ArchitectureRoleEditor role="runner" config={architectureDraft.linkedRoles ? architectureDraft.chaser : architectureDraft.runner} disabled={architectureDraft.linkedRoles} onChange={next => setArchitectureDraft(prev => ({ ...prev, runner: next }))} />
+            <ArchitectureRoleEditor role="chaser" config={architectureDraft.chaser} disabled={architectureExperimentStatus.running} onChange={next => setArchitectureDraft(prev => ({ ...prev, chaser: next, runner: prev.linkedRoles ? { ...next, hiddenLayers: [...next.hiddenLayers] } : prev.runner }))} />
+            <ArchitectureRoleEditor role="runner" config={architectureDraft.linkedRoles ? architectureDraft.chaser : architectureDraft.runner} disabled={architectureExperimentStatus.running || architectureDraft.linkedRoles} onChange={next => setArchitectureDraft(prev => ({ ...prev, runner: next }))} />
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -806,12 +809,12 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               const total = Object.values(counts).reduce((a, b) => a + Number(b || 0), 0) || 1;
               return (
                 <div key={r} className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-                  <h3 className={`font-semibold mb-4 ${r === 'chaser' ? 'text-red-300' : 'text-cyan-300'}`}>{r === 'chaser' ? 'Chaser' : 'Evader'} action distribution</h3>
+                  <h3 className={`font-semibold mb-4 ${r === 'chaser' ? 'text-red-300' : 'text-cyan-300'}`}>{r === 'chaser' ? 'Chaser' : 'Runner'} action distribution</h3>
                   <div className="space-y-3">
-                    {ACTION_SPACE.map(action => {
+                    {DISPLAY_ACTIONS.map(action => {
                       const n = counts[action] || 0;
                       const pct = (n / total) * 100;
-                      return <div key={action}><div className="flex justify-between text-xs mb-1"><span className="font-mono text-gray-300">{action}</span><span className="text-gray-500">{pct.toFixed(1)}%</span></div><div className="h-2 rounded bg-gray-800 overflow-hidden"><div className={`h-full ${r === 'chaser' ? 'bg-red-400/70' : 'bg-cyan-400/70'}`} style={{ width: `${pct}%` }} /></div></div>;
+                      return <div key={action}><div className="flex justify-between text-xs mb-1"><span className="font-mono text-gray-300">{action.replace(/_/g, ' ')}</span><span className="text-gray-500">{pct.toFixed(1)}%</span></div><div className="h-2 rounded bg-gray-800 overflow-hidden"><div className={`h-full ${r === 'chaser' ? 'bg-red-400/70' : 'bg-cyan-400/70'}`} style={{ width: `${pct}%` }} /></div></div>;
                     })}
                   </div>
                 </div>
@@ -829,13 +832,13 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                   <div className="flex items-center gap-2"><Database className="w-4 h-4 text-violet-300" /><h3 className="font-semibold text-white">Checkpoint library</h3></div>
                   <p className="mt-1 text-xs leading-relaxed text-gray-500">Named full-run checkpoints are stored in IndexedDB rather than the old single localStorage slot, so large evolved populations can be kept without immediately hitting localStorage quota limits. Saves are captured only at a completed-generation boundary.</p>
                 </div>
-                <label className="px-3 py-2 rounded border border-violet-500/40 text-violet-200 text-xs flex items-center gap-1 cursor-pointer hover:bg-violet-950/30"><Upload className="w-3.5 h-3.5" />Import JSON & load<input type="file" accept="application/json,.json" className="hidden" onChange={upload} disabled={checkpointLibraryBusy || architectureExperimentStatus.running} /></label>
+                <label className={`px-3 py-2 rounded border border-violet-500/40 text-violet-200 text-xs flex items-center gap-1 ${checkpointLibraryBusy || architectureExperimentStatus.running ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:bg-violet-950/30'}`}><Upload className="w-3.5 h-3.5" />Import run JSON & load<input type="file" accept="application/json,.json" aria-label="Import checkpoint JSON and load it" className="hidden" onChange={upload} disabled={checkpointLibraryBusy || architectureExperimentStatus.running} /></label>
               </div>
 
               <div className="mt-4 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto]">
-                <input value={saveName} onChange={e => setSaveName(e.target.value)} disabled={checkpointLibraryBusy || architectureExperimentStatus.running} placeholder={`Checkpoint gen ${generation}`} className="min-w-0 rounded border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 disabled:opacity-50" />
+                <input aria-label="Checkpoint name" value={saveName} onChange={e => setSaveName(e.target.value)} disabled={checkpointLibraryBusy || architectureExperimentStatus.running} placeholder={`Checkpoint gen ${generation}`} className="min-w-0 rounded border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 disabled:opacity-50" />
                 <button disabled={checkpointLibraryBusy || architectureExperimentStatus.running} onClick={() => { onSaveCheckpoint(saveName.trim() || `Checkpoint gen ${generation}`); setSaveName(''); }} className="px-3 py-2 rounded bg-violet-400 text-black text-xs font-bold flex items-center justify-center gap-1 disabled:opacity-40"><Save className="w-3.5 h-3.5" />Save current run</button>
-                <button disabled={checkpointLibraryBusy || architectureExperimentStatus.running} onClick={onExportModels} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center justify-center gap-1 disabled:opacity-40"><Download className="w-3.5 h-3.5" />Export current</button>
+                <button disabled={checkpointLibraryBusy || architectureExperimentStatus.running} onClick={onExportModels} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center justify-center gap-1 disabled:opacity-40"><Download className="w-3.5 h-3.5" />Export full run</button>
               </div>
               {(checkpointLibraryMessage || status) && <div className="mt-3 rounded border border-violet-500/20 bg-black/20 px-3 py-2 text-xs text-violet-200">{checkpointLibraryMessage || status}</div>}
             </div>
@@ -885,7 +888,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="rounded-xl border border-red-500/20 bg-red-950/10 p-4">
-              {!confirmReset ? <button disabled={architectureExperimentStatus.running} onClick={() => setConfirmReset(true)} className="px-3 py-2 rounded border border-red-500/40 text-red-300 text-xs flex items-center gap-1"><RotateCcw className="w-3.5 h-3.5" />Reset both populations</button> : <div className="flex items-center gap-2"><span className="text-xs text-red-300">Delete all evolved genomes, Hall of Fame entries, and restart at generation 1?</span><button onClick={() => { onResetWeights(); setConfirmReset(false); }} className="px-3 py-1.5 bg-red-500 text-black rounded text-xs font-bold">Reset</button><button onClick={() => setConfirmReset(false)} className="px-3 py-1.5 border border-gray-700 rounded text-xs">Cancel</button></div>}
+              {!confirmReset ? <button disabled={architectureExperimentStatus.running} onClick={() => setConfirmReset(true)} className="px-3 py-2 rounded border border-red-500/40 text-red-300 text-xs flex items-center gap-1"><RotateCcw className="w-3.5 h-3.5" />Reset both populations</button> : <div className="flex items-center gap-2"><span className="text-xs text-red-300">Delete all evolved genomes, Hall of Fame entries, and restart at generation 1?</span><button disabled={architectureExperimentStatus.running} onClick={() => { onResetWeights(); setConfirmReset(false); }} className="px-3 py-1.5 bg-red-500 text-black rounded text-xs font-bold disabled:cursor-not-allowed disabled:opacity-40">Reset</button><button onClick={() => setConfirmReset(false)} className="px-3 py-1.5 border border-gray-700 rounded text-xs">Cancel</button></div>}
             </div>
           </div>
         )}

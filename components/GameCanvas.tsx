@@ -6,7 +6,6 @@ import { cameraRelevantAgents } from '../learning/cameraFraming';
 
 interface GameCanvasProps {
   gameState: GameState;
-  onFrameReady: (dataUrl: string) => void;
   showTrails: boolean;
   showSenses: boolean;
   cameraZoom: number;
@@ -84,7 +83,6 @@ const getActivePlatformY = (gameState: GameState, framingAgents: typeof gameStat
  */
 export const GameCanvas: React.FC<GameCanvasProps> = ({
   gameState,
-  onFrameReady,
   showTrails,
   showSenses,
   cameraZoom,
@@ -313,8 +311,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Kept for the existing API. Capture is intentionally opt-in elsewhere; do not create
     // a data URL every animation frame because it would stall the visual simulation.
-    void onFrameReady;
-  }, [gameState, canvasSize, onFrameReady, showTrails, showSenses, cameraZoom]);
+  }, [gameState, canvasSize, showTrails, showSenses, cameraZoom]);
 
   return (
     <canvas

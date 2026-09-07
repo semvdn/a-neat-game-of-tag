@@ -218,13 +218,18 @@ export const NETWORK_ARCHITECTURE_PRESET_INFO: Record<Exclude<NetworkArchitectur
   memory_deep: { label: 'Deep Memory', summary: '20→16→12 with 12 recurrent links, evolving to 48.', use: 'High-capacity temporal experiment; slower and harder to evolve.' },
 };
 
-export type NetworkArchitectureSuitePreset = 'ff_control' | 'balanced_memory' | 'chaser_memory' | 'runner_memory' | 'tactical_asymmetric';
+export type NetworkArchitectureSuitePreset = 'ff_control' | 'memory_discovery' | 'balanced_memory' | 'chaser_memory' | 'runner_memory' | 'tactical_asymmetric';
 
 export const NETWORK_ARCHITECTURE_SUITE_PRESETS: Record<NetworkArchitectureSuitePreset, { label: string; summary: string; config: NetworkArchitectureSuiteConfig }> = {
   ff_control: {
     label: 'FF control',
     summary: 'Deep feed-forward 16→12 for both roles; no recurrence.',
     config: { linkedRoles: true, chaser: { ...NETWORK_ARCHITECTURE_PRESETS.deep, hiddenLayers: [16, 12] }, runner: { ...NETWORK_ARCHITECTURE_PRESETS.deep, hiddenLayers: [16, 12] } },
+  },
+  memory_discovery: {
+    label: 'Memory Discovery',
+    summary: 'Default 16→12 feed-forward start; recurrence may evolve when useful.',
+    config: { linkedRoles: true, chaser: { ...NETWORK_ARCHITECTURE_PRESETS.memory_evolve, hiddenLayers: [16, 12] }, runner: { ...NETWORK_ARCHITECTURE_PRESETS.memory_evolve, hiddenLayers: [16, 12] } },
   },
   balanced_memory: {
     label: 'Balanced memory',
