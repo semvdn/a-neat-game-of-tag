@@ -1,3 +1,4 @@
+import { BASELINE_PURSUIT_DESIGN } from '../learning/pursuitConfig';
 import { LearningAgent, type AgentWeights } from '../learning/agent';
 import { NeatPopulation, DEFAULT_NEAT_CONFIG, DEFAULT_NETWORK_ARCHITECTURE_SUITE, NETWORK_ARCHITECTURE_PRESETS, NETWORK_ARCHITECTURE_SUITE_PRESETS, sanitizeNetworkArchitectureSuite, cloneGenome, type NeatGenerationMetrics, type NeatGenomeData, type NeatPopulationCheckpoint, type NetworkArchitectureSuiteConfig } from '../learning/neat';
 import { updateEloRatings, createLeaderboardEntries } from '../learning/elo';
@@ -133,22 +134,6 @@ interface PursuitDesignRuntimeFlags {
 // Permanent camera-decoupled pursuit design. Physics, curriculum, soft multi-distance retention,
 // league opponents and clean-tag showcase behavior are the normal training rules and are shared
 // with the visible simulation.
-const BASELINE_PURSUIT_DESIGN: PursuitDesignConfig = {
-  chaserBaseMaxSpeed: 5.7,
-  runnerBaseMaxSpeed: 5.0,
-  chaserSprintMaxSpeed: 7.9,
-  runnerSprintMaxSpeed: 7.5,
-  chaserSprintStaminaCostPerSec: 28,
-  runnerSprintStaminaCostPerSec: 24,
-  pressureStartDistribution: true,
-  chaserProximityProgressReward: true,
-  chaserProximityStepPx: 50,
-  chaserProximityRewardPerStep: 1,
-  chaserProximityRewardCapPerSegment: 6,
-  runnerPressureEscapeEpisodeCap: 6,
-  postFallRunnerTagProtectionMs: 900,
-  branchStructureMinX: 650,
-};
 const BASELINE_PURSUIT_FLAGS: PursuitDesignRuntimeFlags = {
   pressureStarts: true,
   crossPlayGate: false,
@@ -274,7 +259,7 @@ interface EvolutionCheckpoint {
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   /** Fitness semantics marker for compatibility with checkpoints created before right-only exploration. */
   explorationRewardMode?: 'safe-per-runner-right-frontier';
-  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5' | 'hybrid-soft-pursuit-v6' | 'hybrid-soft-pursuit-terrain-v7' | 'hybrid-soft-pursuit-terrain-escape-v8' | 'hybrid-soft-pursuit-terrain-natural-v9';
+  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5' | 'hybrid-soft-pursuit-v6' | 'hybrid-soft-pursuit-terrain-v7' | 'hybrid-soft-pursuit-terrain-escape-v8' | 'hybrid-soft-pursuit-terrain-natural-v9' | 'clean-encounters-v10';
   actionSchema?: 'signed-horizontal-controls-v2';
   stateSchema?: 'world-relative-senses-v3';
   horizontalControlResolution?: 'signed-axis-v2';
@@ -1593,7 +1578,7 @@ function buildEvolutionCheckpoint(analysisHistoryLimit = 0): EvolutionCheckpoint
     terrainVarietyConfig: sanitizeTerrainVarietyConfig(terrainVarietyConfig),
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     explorationRewardMode: 'safe-per-runner-right-frontier',
-    gameplayObjectiveVersion: 'hybrid-soft-pursuit-terrain-natural-v9',
+    gameplayObjectiveVersion: 'clean-encounters-v10',
     actionSchema: 'signed-horizontal-controls-v2',
     stateSchema: 'world-relative-senses-v3',
     horizontalControlResolution: 'signed-axis-v2',
@@ -1680,7 +1665,7 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
   upgradeConfig = sanitizeUpgradeConfig(checkpoint.upgradeConfig);
   const migratedExplorationFitness = !checkpoint.trainingFitnessConfig;
   const migratedExplorationRewardMode = checkpoint.explorationRewardMode !== 'safe-per-runner-right-frontier';
-  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'hybrid-soft-pursuit-terrain-natural-v9';
+  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'clean-encounters-v10';
   const migratedHorizontalControl = checkpoint.horizontalControlResolution !== 'signed-axis-v2';
   trainingFitnessConfig = sanitizeTrainingFitnessConfig(checkpoint.trainingFitnessConfig);
   terrainVarietyConfig = sanitizeTerrainVarietyConfig(checkpoint.terrainVarietyConfig);
@@ -2997,7 +2982,7 @@ function buildAnalysisExport(historyStride = 1) {
     policyOutputSpace: [...POLICY_OUTPUT_SPACE],
     actionSchema: 'signed-horizontal-controls-v2',
     horizontalControlResolution: 'signed-axis-v2',
-    gameplayObjectiveVersion: 'hybrid-soft-pursuit-terrain-natural-v9',
+    gameplayObjectiveVersion: 'clean-encounters-v10',
     stateSchema: 'world-relative-senses-v3',
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     pursuitDesign: activePursuitDesign ? { ...activePursuitDesign } : null,

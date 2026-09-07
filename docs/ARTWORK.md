@@ -1,0 +1,29 @@
+# An evolving painting
+
+The work is a relationship between three bodies and a landscape: approach, pursuit, reversal, contact, release. Evolution should produce a changing vocabulary of those relationships, while the presentation makes them legible from across a room.
+
+Interesting does not mean maximum tags. A stream of catches after falls is busy but shallow. Endless running is movement without interaction. Look for sustained pursuit, clean reversals, occasional escapes, traversable route choices, and quiet intervals between events. Keep these as separate observations rather than inventing one aesthetic fitness score that evolution can exploit.
+
+## Exhibition operation
+
+1. Run the app, start the simulation, and import a saved full checkpoint through Diagnostics → Runs & data when using trained policies. Fresh populations initially behave poorly.
+2. Choose terrain, trails, preferred zoom, and playback speed in the studio. Start at 1×; watch a long continuous passage before adjusting it.
+3. Use **Exhibit** or **G** to fill the page with the arena. Senses, status panels, diagnostic windows, and gameplay sounds are suppressed. Studio overlay preferences are restored on exit.
+4. Press **F** in exhibition mode for browser fullscreen, when supported. Move the pointer to reveal the exit control; **G** or **Escape** returns to the studio. Browser fullscreen can also be exited with the browser's own controls.
+5. Training remains independently controllable. Pause it before exhibiting a curated pair, or leave it active to let retained champions change. Exhibition mode requests a screen wake lock even with training paused, where supported.
+
+Exhibition does not reset the world, change policy inputs, or alter game speed. It uses the same canvas and world-relative camera rules. Export checkpoints before an installation: browser storage is not an archival copy.
+
+## Installation limits
+
+This is an exhibition view, not yet a fully unattended kiosk appliance. Reload still requires starting the simulation and restoring a checkpoint; autoplay/resume and automatic archival recovery are future work. Screen wake locks cannot prevent operating-system suspension. Test fullscreen, sleep recovery, frame rate, and memory on the actual display computer for several hours.
+
+The current HTML still loads Tailwind from a CDN. A network-independent installation needs locally built CSS before deployment. The JavaScript production build alone does not establish offline readiness. Avoid exposing the development server publicly.
+
+## Development direction
+
+First improve the policies' reliability on ordinary terrain. Then assess branch commitment, recovery, and tactical reversals against several saved opponents. Only promote a configuration after repeated training runs and held-out evaluation agree that it improves interaction without increasing falls or losing traversal.
+
+Curate presentation separately: tempo, trail persistence, color, negative space, and transitions between champion pairs need human viewing. Inspect a continuous 10–20 minute passage as well as short episode traces. Evaluate portrait and landscape framing on the intended wall; the current reference world is landscape and a narrow display gives more vertical negative space.
+
+Future experiments should test slower champion turnover, a repertoire of complementary policy pairs, and longer validation episodes. These are hypotheses, not changes made to breeding or champion retention in this revision.

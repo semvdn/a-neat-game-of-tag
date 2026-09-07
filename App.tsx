@@ -1,3 +1,4 @@
+import { useExhibitionMode } from './hooks/useExhibitionMode';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { InfoPanel } from './components/InfoPanel';
@@ -194,6 +195,7 @@ const loadNetworkArchitecture = (): NetworkArchitectureSuiteConfig => {
 };
 
 export const App: React.FC = () => {
+  const { exhibition, setExhibition, controlsVisible, revealControls } = useExhibitionMode();
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSimulating, setIsSimulating] = useState(false);
@@ -746,7 +748,7 @@ export const App: React.FC = () => {
     };
 
     const requestWakeLock = async () => {
-      if (cancelled || !isSimulating || isTrainingPaused || document.visibilityState !== 'visible') return;
+      if (cancelled || !isSimulating || (isTrainingPaused && !exhibition) || document.visibilityState !== 'visible') return;
       if (wakeLockRef.current) return;
       const wakeLockApi = (navigator as any).wakeLock;
       if (!wakeLockApi?.request) return;
@@ -776,7 +778,7 @@ export const App: React.FC = () => {
       }
     };
 
-    if (isSimulating && !isTrainingPaused) void requestWakeLock();
+    if (isSimulating && (!isTrainingPaused || exhibition)) void requestWakeLock();
     else void releaseWakeLock();
     document.addEventListener('visibilitychange', onVisibilityChange);
 
@@ -785,7 +787,7 @@ export const App: React.FC = () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       void releaseWakeLock();
     };
-  }, [isSimulating, isTrainingPaused]);
+  }, [isSimulating, isTrainingPaused, exhibition]);
 
   // Main-thread health monitor. A healthy trainer emits telemetry several times per second. If
   // telemetry goes quiet while the page is visible, ask the training worker to recover any stalled
@@ -973,10 +975,10 @@ export const App: React.FC = () => {
             activeUpgrades
           );
 
-          if (physics.jumped) playDynamicJumpSound(physics.jumpVelocity);
+          if (physics.jumped && !exhibition) playDynamicJumpSound(physics.jumpVelocity);
           if (physics.fell) {
             visualFallsRef.current++;
-            playFallSound();
+            if (!exhibition) playFallSound();
           }
 
           const newTrajectory = physics.fell
@@ -1038,7 +1040,7 @@ export const App: React.FC = () => {
           if (newTagger) newTagger.elo = chaserElo.current;
           if (oldTagger) oldTagger.elo = evaderElo.current;
 
-          playTagSound();
+          if (!exhibition) playTagSound();
           const effectLife = 500;
           newState.tagEffects.push({
             position: { ...tagTransition.position },
@@ -1103,14 +1105,14 @@ export const App: React.FC = () => {
         // Attach only the live policy input vector needed by the optional senses overlay.
         newState.agents = newState.agents.map(agent => ({
           ...agent,
-          stateVector: showSenses ? getAgentStateVector(agent, newState, viewportSize) : undefined,
+          stateVector: showSenses && !exhibition ? getAgentStateVector(agent, newState, viewportSize) : undefined,
           rewardBreakdown: undefined,
         }));
 
         return newState;
       });
     },
-    [isSimulating, viewportSize, sprintUpgradeActive, controlledJumpUpgradeActive, upgradeConfig, terrainVarietyConfig, showSenses]
+    [isSimulating, viewportSize, sprintUpgradeActive, controlledJumpUpgradeActive, upgradeConfig, terrainVarietyConfig, showSenses, exhibition]
   );
 
   const updateSimulation = useCallback(
@@ -1153,6 +1155,7 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (exhibition) return;
       if (event.key.toLowerCase() !== 's' || event.repeat) return;
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
@@ -1163,7 +1166,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [exhibition]);
 
 
   const handleResetChampionGame = useCallback(() => {
@@ -1537,10 +1540,11 @@ export const App: React.FC = () => {
 
   return (
     <div
-      className="flex flex-col overflow-hidden bg-gray-950 font-sans p-4 gap-3"
-      style={scaledViewportStyle}
+      className={`flex flex-col overflow-hidden bg-gray-950 font-sans ${exhibition ? "" : "p-4 gap-3"}`}
+      onPointerMove={exhibition ? revealControls : undefined}
+      style={exhibition ? { width: '100vw', height: '100vh', cursor: controlsVisible ? 'default' : 'none' } : scaledViewportStyle}
     >
-      <header className="flex flex-wrap items-center gap-3 bg-gray-900/80 backdrop-blur border border-gray-800 px-5 py-3 rounded-xl shadow-lg">
+      <header style={exhibition ? { display: "none" } : undefined} className="flex flex-wrap items-center gap-3 bg-gray-900/80 backdrop-blur border border-gray-800 px-5 py-3 rounded-xl shadow-lg">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-cyan-600 to-emerald-500 flex items-center justify-center text-white font-bold shadow-md shadow-cyan-500/20">
             AI
@@ -1633,6 +1637,7 @@ export const App: React.FC = () => {
             </button>
           </div>
 
+          <button onClick={() => setExhibition(true)} className="px-3 py-2 rounded-lg border border-gray-700 text-cyan-200" title="Exhibition mode (G). F toggles fullscreen; Escape returns to the studio.">Exhibit</button>
           {/* Diagnostics Button */}
           <button
             onClick={() => setIsDiagnosticsOpen(true)}
@@ -1649,7 +1654,7 @@ export const App: React.FC = () => {
 
       <div className="flex flex-1 gap-4 min-h-0">
         <main
-          className="flex-grow bg-[#1a202c] rounded-xl border border-gray-800 shadow-2xl overflow-hidden relative"
+          className={`flex-grow bg-[#1a202c] overflow-hidden relative ${exhibition ? "" : "rounded-xl border border-gray-800 shadow-2xl"}`}
         >
           {!isSimulating && (
             <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center gap-4">
@@ -1668,7 +1673,7 @@ export const App: React.FC = () => {
               </div>
             </div>
           )}
-          {isSimulating && (
+          {isSimulating && !exhibition && (
             <div className="absolute top-3 left-3 z-[5] pointer-events-none rounded-lg border border-cyan-500/25 bg-black/65 backdrop-blur px-3 py-2 text-[11px] text-gray-400 shadow-lg">
               <div className="font-semibold text-cyan-200">Champion arena · continuous game</div>
               <div className="font-mono mt-0.5">Chaser G{installedChampionGenerationRef.current.chaser} · Runner G{installedChampionGenerationRef.current.evader}</div>
@@ -1678,16 +1683,16 @@ export const App: React.FC = () => {
             <GameCanvas
               gameState={gameState}
               showTrails={showTrails}
-              showSenses={showSenses}
+              showSenses={showSenses && !exhibition}
               cameraZoom={cameraZoom}
             />
           )}
         </main>
-        <InfoPanel
+        {!exhibition && <InfoPanel
           agents={gameState.agents}
             showTrails={showTrails}
           onToggleTrails={handleToggleTrails}
-          showSenses={showSenses}
+          showSenses={showSenses && !exhibition}
           onToggleSenses={handleToggleSenses}
           onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
           upgradeConfig={upgradeConfig}
@@ -1698,12 +1703,13 @@ export const App: React.FC = () => {
           onUpdateTrainingFitnessConfig={updateTrainingFitnessConfig}
           terrainVarietyConfig={terrainVarietyConfig}
           onUpdateTerrainVarietyConfig={updateTerrainVarietyConfig}
-        />
+        />}
       </div>
 
+      {exhibition && <button onClick={() => setExhibition(false)} onFocus={revealControls} aria-label="Return to studio" style={{ opacity: controlsVisible ? 1 : 0 }} className="fixed top-4 right-4 z-50 px-3 py-2 rounded-lg bg-black/70 text-gray-300 text-xs focus:!opacity-100">Return to studio · G / Esc</button>}
       {/* Full Screen Interactive Performance Diagnostics Suite */}
       <PerformanceDiagnostics
-        isOpen={isDiagnosticsOpen}
+        isOpen={isDiagnosticsOpen && !exhibition}
         onClose={() => setIsDiagnosticsOpen(false)}
         diagnostics={diagnosticsState}
         visualSpeed={visualSpeed}

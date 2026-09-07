@@ -1,0 +1,681 @@
+{
+  "source": "untrained scripted controls",
+  "seeds": 32,
+  "modes": [
+    "visual",
+    "varied",
+    "pressure_close",
+    "pressure_normal",
+    "pressure_long",
+    "midgame"
+  ],
+  "verified": true,
+  "episodes": 2304,
+  "conditions": [
+    {
+      "name": "baseline"
+    },
+    {
+      "name": "simple-terrain",
+      "terrainConfig": {
+        "trainingBranchingEnabled": false,
+        "trainingMovingPlatformsEnabled": false
+      }
+    },
+    {
+      "name": "slower-motion",
+      "terrainConfig": {
+        "movingPlatformMaxSpeed": 40
+      }
+    }
+  ],
+  "summary": [
+    {
+      "condition": "baseline",
+      "mean": {
+        "cleanTags": 2.1184895833333335,
+        "tags": 2.1432291666666665,
+        "evades": 0.34765625,
+        "chaserFalls": 0.18098958333333334,
+        "runnerFalls": 3.640625,
+        "escapes": 0.32421875,
+        "pace": 0.47629960602690674,
+        "distance": 359.37731099074426,
+        "near200": 0.4748168728959737,
+        "runnerLandings": 3.95703125,
+        "chaserLandings": 1.4075520833333333,
+        "branchLandings": 2.4453125,
+        "pressureBonus": 0.859375,
+        "elapsedMs": 9560.527174479248
+      },
+      "byStart": {
+        "visual": {
+          "cleanTags": 2.1328125,
+          "tags": 2.1640625,
+          "evades": 0.2109375,
+          "chaserFalls": 0.28125,
+          "runnerFalls": 3.9296875,
+          "escapes": 0.2265625,
+          "pace": 0.5186538163195465,
+          "distance": 377.5986789370417,
+          "near200": 0.4554830833888192,
+          "runnerLandings": 4.8046875,
+          "chaserLandings": 1.609375,
+          "branchLandings": 3.1953125,
+          "pressureBonus": 0.6328125,
+          "elapsedMs": 10312.869453125042
+        },
+        "varied": {
+          "cleanTags": 2.828125,
+          "tags": 2.84375,
+          "evades": 0.5078125,
+          "chaserFalls": 0.1640625,
+          "runnerFalls": 3.5703125,
+          "escapes": 0.3046875,
+          "pace": 0.5361393437276161,
+          "distance": 290.44804835880313,
+          "near200": 0.5949070516085737,
+          "runnerLandings": 3.625,
+          "chaserLandings": 1.4375,
+          "branchLandings": 2.328125,
+          "pressureBonus": 1.359375,
+          "elapsedMs": 9899.635781250045
+        },
+        "pressure_close": {
+          "cleanTags": 2.3046875,
+          "tags": 2.3046875,
+          "evades": 0.484375,
+          "chaserFalls": 0.15625,
+          "runnerFalls": 3.5078125,
+          "escapes": 0.328125,
+          "pace": 0.5430309771045778,
+          "distance": 328.5960689375824,
+          "near200": 0.6903669758563802,
+          "runnerLandings": 3.1328125,
+          "chaserLandings": 1.0390625,
+          "branchLandings": 1.8359375,
+          "pressureBonus": 1.453125,
+          "elapsedMs": 9519.611875000035
+        },
+        "pressure_normal": {
+          "cleanTags": 2.125,
+          "tags": 2.1640625,
+          "evades": 0.390625,
+          "chaserFalls": 0.3046875,
+          "runnerFalls": 3.9765625,
+          "escapes": 0.2421875,
+          "pace": 0.5059484804840227,
+          "distance": 375.5963469845325,
+          "near200": 0.44201977889023397,
+          "runnerLandings": 4.5078125,
+          "chaserLandings": 1.6015625,
+          "branchLandings": 3.0078125,
+          "pressureBonus": 0.75,
+          "elapsedMs": 10249.966250000047
+        },
+        "pressure_long": {
+          "cleanTags": 1.8046875,
+          "tags": 1.8125,
+          "evades": 0.1171875,
+          "chaserFalls": 0.0703125,
+          "runnerFalls": 3.6953125,
+          "escapes": 0.34375,
+          "pace": 0.5133021376152342,
+          "distance": 421.8394206703616,
+          "near200": 0.35452730191057147,
+          "runnerLandings": 4.3671875,
+          "chaserLandings": 1.484375,
+          "branchLandings": 2.9140625,
+          "pressureBonus": 0.3515625,
+          "elapsedMs": 9733.717187500042
+        },
+        "midgame": {
+          "cleanTags": 1.515625,
+          "tags": 1.5703125,
+          "evades": 0.375,
+          "chaserFalls": 0.109375,
+          "runnerFalls": 3.1640625,
+          "escapes": 0.5,
+          "pace": 0.24072288091044,
+          "distance": 362.18530205614303,
+          "near200": 0.31159704572127206,
+          "runnerLandings": 3.3046875,
+          "chaserLandings": 1.2734375,
+          "branchLandings": 1.390625,
+          "pressureBonus": 0.609375,
+          "elapsedMs": 7647.362500000021
+        }
+      },
+      "pairedDelta": {
+        "cleanTags": {
+          "mean": 0,
+          "seedStandardError": 0
+        },
+        "tags": {
+          "mean": 0,
+          "seedStandardError": 0
+        },
+        "evades": {
+          "mean": 0,
+          "seedStandardError": 0
+        },
+        "chaserFalls": {
+          "mean": 0,
+          "seedStandardError": 0
+        },
+        "runnerFalls": {
+          "mean": 0,
+          "seedStandardError": 0
+        },
+        "escapes": {
+          "mean": 0,
+          "seedStandardError": 0
+        },
+        "pace": {
+          "mean": 0,
+          "seedStandardError": 0
+        },
+        "distance": {
+          "mean": 0,
+          "seedStandardError": 0
+        },
+        "near200": {
+          "mean": 0,
+          "seedStandardError": 0
+        },
+        "runnerLandings": {
+          "mean": 0,
+          "seedStandardError": 0
+        },
+        "chaserLandings": {
+          "mean": 0,
+          "seedStandardError": 0
+        },
+        "branchLandings": {
+          "mean": 0,
+          "seedStandardError": 0
+        },
+        "pressureBonus": {
+          "mean": 0,
+          "seedStandardError": 0
+        },
+        "elapsedMs": {
+          "mean": 0,
+          "seedStandardError": 0
+        }
+      }
+    },
+    {
+      "condition": "simple-terrain",
+      "mean": {
+        "cleanTags": 2.2057291666666665,
+        "tags": 2.25,
+        "evades": 0.3671875,
+        "chaserFalls": 0.32421875,
+        "runnerFalls": 4.049479166666667,
+        "escapes": 0.2890625,
+        "pace": 0.4425500284545374,
+        "distance": 354.2417687044687,
+        "near200": 0.5094606926226066,
+        "runnerLandings": 3.10546875,
+        "chaserLandings": 1.2018229166666667,
+        "branchLandings": 0,
+        "pressureBonus": 0.84375,
+        "elapsedMs": 9846.804036458416
+      },
+      "byStart": {
+        "visual": {
+          "cleanTags": 2.0078125,
+          "tags": 2.078125,
+          "evades": 0.1796875,
+          "chaserFalls": 0.6328125,
+          "runnerFalls": 4.7265625,
+          "escapes": 0.1953125,
+          "pace": 0.45630405670416196,
+          "distance": 374.1347089467929,
+          "near200": 0.4688349748951839,
+          "runnerLandings": 3.1328125,
+          "chaserLandings": 1.046875,
+          "branchLandings": 0,
+          "pressureBonus": 0.5390625,
+          "elapsedMs": 10570.863750000048
+        },
+        "varied": {
+          "cleanTags": 2.8203125,
+          "tags": 2.8515625,
+          "evades": 0.484375,
+          "chaserFalls": 0.2265625,
+          "runnerFalls": 3.8984375,
+          "escapes": 0.296875,
+          "pace": 0.5092198649592014,
+          "distance": 286.9238480094901,
+          "near200": 0.6021700443466614,
+          "runnerLandings": 2.7890625,
+          "chaserLandings": 1.15625,
+          "branchLandings": 0,
+          "pressureBonus": 1.2890625,
+          "elapsedMs": 10002.781406250044
+        },
+        "pressure_close": {
+          "cleanTags": 2.21875,
+          "tags": 2.21875,
+          "evades": 0.53125,
+          "chaserFalls": 0.328125,
+          "runnerFalls": 3.9765625,
+          "escapes": 0.3203125,
+          "pace": 0.4931002858265623,
+          "distance": 334.5456113798027,
+          "near200": 0.6785425324937027,
+          "runnerLandings": 2.2734375,
+          "chaserLandings": 0.796875,
+          "branchLandings": 0,
+          "pressureBonus": 1.453125,
+          "elapsedMs": 9656.097500000036
+        },
+        "pressure_normal": {
+          "cleanTags": 2.03125,
+          "tags": 2.1015625,
+          "evades": 0.4375,
+          "chaserFalls": 0.4453125,
+          "runnerFalls": 4.6875,
+          "escapes": 0.234375,
+          "pace": 0.4416779856433348,
+          "distance": 374.97943772023103,
+          "near200": 0.4503571107262199,
+          "runnerLandings": 2.9765625,
+          "chaserLandings": 1.03125,
+          "branchLandings": 0,
+          "pressureBonus": 0.8671875,
+          "elapsedMs": 10386.712343750045
+        },
+        "pressure_long": {
+          "cleanTags": 1.8515625,
+          "tags": 1.890625,
+          "evades": 0.09375,
+          "chaserFalls": 0.234375,
+          "runnerFalls": 4.359375,
+          "escapes": 0.296875,
+          "pace": 0.45483752832844127,
+          "distance": 407.48161469635255,
+          "near200": 0.3950378482330786,
+          "runnerLandings": 3.1953125,
+          "chaserLandings": 1.2421875,
+          "branchLandings": 0,
+          "pressureBonus": 0.234375,
+          "elapsedMs": 10022.316562500044
+        },
+        "midgame": {
+          "cleanTags": 2.3046875,
+          "tags": 2.359375,
+          "evades": 0.4765625,
+          "chaserFalls": 0.078125,
+          "runnerFalls": 2.6484375,
+          "escapes": 0.390625,
+          "pace": 0.30016044926552155,
+          "distance": 347.38539147413906,
+          "near200": 0.4618216450408005,
+          "runnerLandings": 4.265625,
+          "chaserLandings": 1.9375,
+          "branchLandings": 0,
+          "pressureBonus": 0.6796875,
+          "elapsedMs": 8442.052656250024
+        }
+      },
+      "pairedDelta": {
+        "cleanTags": {
+          "mean": 0.08723958333333333,
+          "seedStandardError": 0.0483674222445461
+        },
+        "tags": {
+          "mean": 0.10677083333333334,
+          "seedStandardError": 0.04806172162398544
+        },
+        "evades": {
+          "mean": 0.01953125,
+          "seedStandardError": 0.022371350943784223
+        },
+        "chaserFalls": {
+          "mean": 0.14322916666666669,
+          "seedStandardError": 0.042537008021384035
+        },
+        "runnerFalls": {
+          "mean": 0.4088541666666667,
+          "seedStandardError": 0.14372318273893192
+        },
+        "escapes": {
+          "mean": -0.03515625,
+          "seedStandardError": 0.010765232439417476
+        },
+        "pace": {
+          "mean": -0.03374957757236905,
+          "seedStandardError": 0.01275721493184458
+        },
+        "distance": {
+          "mean": -5.135542286276013,
+          "seedStandardError": 4.89267149831868
+        },
+        "near200": {
+          "mean": 0.03464381972663271,
+          "seedStandardError": 0.007504050243428282
+        },
+        "runnerLandings": {
+          "mean": -0.8515625000000002,
+          "seedStandardError": 0.22595142997803178
+        },
+        "chaserLandings": {
+          "mean": -0.20572916666666666,
+          "seedStandardError": 0.07204591209264237
+        },
+        "branchLandings": {
+          "mean": -2.4453125,
+          "seedStandardError": 0.425944412668052
+        },
+        "pressureBonus": {
+          "mean": -0.015625,
+          "seedStandardError": 0.051056751117530184
+        },
+        "elapsedMs": {
+          "mean": 286.27686197916785,
+          "seedStandardError": 74.1600853451591
+        }
+      }
+    },
+    {
+      "condition": "slower-motion",
+      "mean": {
+        "cleanTags": 2.0950520833333335,
+        "tags": 2.12109375,
+        "evades": 0.3489583333333333,
+        "chaserFalls": 0.19401041666666666,
+        "runnerFalls": 3.6653645833333335,
+        "escapes": 0.3255208333333333,
+        "pace": 0.473687442182049,
+        "distance": 358.20837055504995,
+        "near200": 0.4717217030593215,
+        "runnerLandings": 3.9322916666666665,
+        "chaserLandings": 1.3880208333333333,
+        "branchLandings": 2.43359375,
+        "pressureBonus": 0.86328125,
+        "elapsedMs": 9563.240390625082
+      },
+      "byStart": {
+        "visual": {
+          "cleanTags": 2.1171875,
+          "tags": 2.1484375,
+          "evades": 0.2265625,
+          "chaserFalls": 0.3125,
+          "runnerFalls": 3.9765625,
+          "escapes": 0.234375,
+          "pace": 0.514058078822125,
+          "distance": 377.4968567221694,
+          "near200": 0.4568334957039157,
+          "runnerLandings": 4.7265625,
+          "chaserLandings": 1.5546875,
+          "branchLandings": 3.1953125,
+          "pressureBonus": 0.6796875,
+          "elapsedMs": 10314.171796875042
+        },
+        "varied": {
+          "cleanTags": 2.8515625,
+          "tags": 2.875,
+          "evades": 0.4921875,
+          "chaserFalls": 0.1640625,
+          "runnerFalls": 3.5703125,
+          "escapes": 0.2890625,
+          "pace": 0.5361331772839406,
+          "distance": 289.0228349321704,
+          "near200": 0.5967835485027358,
+          "runnerLandings": 3.6953125,
+          "chaserLandings": 1.4765625,
+          "branchLandings": 2.328125,
+          "pressureBonus": 1.3125,
+          "elapsedMs": 9949.255078125045
+        },
+        "pressure_close": {
+          "cleanTags": 2.25,
+          "tags": 2.25,
+          "evades": 0.5234375,
+          "chaserFalls": 0.234375,
+          "runnerFalls": 3.6484375,
+          "escapes": 0.328125,
+          "pace": 0.5246980163774173,
+          "distance": 331.0155626203945,
+          "near200": 0.686111120020593,
+          "runnerLandings": 3,
+          "chaserLandings": 0.9453125,
+          "branchLandings": 1.8359375,
+          "pressureBonus": 1.5,
+          "elapsedMs": 9548.393671875036
+        },
+        "pressure_normal": {
+          "cleanTags": 2.1171875,
+          "tags": 2.1484375,
+          "evades": 0.34375,
+          "chaserFalls": 0.25,
+          "runnerFalls": 3.8984375,
+          "escapes": 0.2578125,
+          "pace": 0.5079130507933975,
+          "distance": 377.26924563805386,
+          "near200": 0.43407950796721534,
+          "runnerLandings": 4.453125,
+          "chaserLandings": 1.609375,
+          "branchLandings": 3.015625,
+          "pressureBonus": 0.6796875,
+          "elapsedMs": 10130.801796875045
+        },
+        "pressure_long": {
+          "cleanTags": 1.8125,
+          "tags": 1.828125,
+          "evades": 0.125,
+          "chaserFalls": 0.09375,
+          "runnerFalls": 3.71875,
+          "escapes": 0.3359375,
+          "pace": 0.5123302636218723,
+          "distance": 418.55535034356944,
+          "near200": 0.36053074464712265,
+          "runnerLandings": 4.4765625,
+          "chaserLandings": 1.515625,
+          "branchLandings": 2.8984375,
+          "pressureBonus": 0.375,
+          "elapsedMs": 9825.532421875045
+        },
+        "midgame": {
+          "cleanTags": 1.421875,
+          "tags": 1.4765625,
+          "evades": 0.3828125,
+          "chaserFalls": 0.109375,
+          "runnerFalls": 3.1796875,
+          "escapes": 0.5078125,
+          "pace": 0.24699206619353914,
+          "distance": 355.89037307393977,
+          "near200": 0.29599180151435456,
+          "runnerLandings": 3.2421875,
+          "chaserLandings": 1.2265625,
+          "branchLandings": 1.328125,
+          "pressureBonus": 0.6328125,
+          "elapsedMs": 7611.28757812502
+        }
+      },
+      "pairedDelta": {
+        "cleanTags": {
+          "mean": -0.0234375,
+          "seedStandardError": 0.012817634909488531
+        },
+        "tags": {
+          "mean": -0.02213541666666667,
+          "seedStandardError": 0.012122488094526082
+        },
+        "evades": {
+          "mean": 0.0013020833333333328,
+          "seedStandardError": 0.00476411220406971
+        },
+        "chaserFalls": {
+          "mean": 0.013020833333333334,
+          "seedStandardError": 0.015589958466766992
+        },
+        "runnerFalls": {
+          "mean": 0.024739583333333332,
+          "seedStandardError": 0.038289706750054275
+        },
+        "escapes": {
+          "mean": 0.0013020833333333337,
+          "seedStandardError": 0.003961857779412596
+        },
+        "pace": {
+          "mean": -0.002612163844857588,
+          "seedStandardError": 0.004806205681817428
+        },
+        "distance": {
+          "mean": -1.1689404356944895,
+          "seedStandardError": 3.1732934070932886
+        },
+        "near200": {
+          "mean": -0.0030951698366522666,
+          "seedStandardError": 0.002094457652687541
+        },
+        "runnerLandings": {
+          "mean": -0.024739583333333336,
+          "seedStandardError": 0.0376443688591592
+        },
+        "chaserLandings": {
+          "mean": -0.01953125,
+          "seedStandardError": 0.019798242311011113
+        },
+        "branchLandings": {
+          "mean": -0.01171875,
+          "seedStandardError": 0.01312750325484131
+        },
+        "pressureBonus": {
+          "mean": 0.00390625,
+          "seedStandardError": 0.01429233661220913
+        },
+        "elapsedMs": {
+          "mean": 2.713216145833347,
+          "seedStandardError": 18.973214925445546
+        }
+      }
+    }
+  ],
+  "accountingComparison": {
+    "episodes": 288,
+    "physicalMetricsIdentical": true,
+    "before": [
+      {
+        "condition": "baseline",
+        "mean": {
+          "cleanTags": 1.9583333333333333,
+          "tags": 1.9791666666666667,
+          "evades": 0.4895833333333333,
+          "chaserFalls": 0.17708333333333334,
+          "runnerFalls": 3.8645833333333335,
+          "escapes": 0.3541666666666667,
+          "pace": 0.4378081756034872,
+          "distance": 384.06201536365256,
+          "near200": 0.4564394062524732,
+          "runnerLandings": 3.46875,
+          "chaserLandings": 1.2708333333333333,
+          "branchLandings": 3.15625,
+          "pressureBonus": 0.90625,
+          "elapsedMs": 9316.446250000025
+        }
+      },
+      {
+        "condition": "simple-terrain",
+        "mean": {
+          "cleanTags": 2.09375,
+          "tags": 2.1354166666666665,
+          "evades": 0.625,
+          "chaserFalls": 0.3125,
+          "runnerFalls": 4.364583333333333,
+          "escapes": 0.3020833333333333,
+          "pace": 0.410941742340101,
+          "distance": 359.5600122662327,
+          "near200": 0.5107334706442083,
+          "runnerLandings": 2.65625,
+          "chaserLandings": 1.1354166666666667,
+          "branchLandings": 0,
+          "pressureBonus": 0.84375,
+          "elapsedMs": 9816.546250000023
+        }
+      },
+      {
+        "condition": "slower-motion",
+        "mean": {
+          "cleanTags": 1.9583333333333333,
+          "tags": 1.9791666666666667,
+          "evades": 0.4895833333333333,
+          "chaserFalls": 0.17708333333333334,
+          "runnerFalls": 3.8645833333333335,
+          "escapes": 0.3541666666666667,
+          "pace": 0.4378081756034872,
+          "distance": 384.06201536365256,
+          "near200": 0.4564394062524732,
+          "runnerLandings": 3.46875,
+          "chaserLandings": 1.2708333333333333,
+          "branchLandings": 3.15625,
+          "pressureBonus": 0.90625,
+          "elapsedMs": 9316.446250000025
+        }
+      }
+    ],
+    "after": [
+      {
+        "condition": "baseline",
+        "mean": {
+          "cleanTags": 1.9583333333333333,
+          "tags": 1.9791666666666667,
+          "evades": 0.3645833333333333,
+          "chaserFalls": 0.17708333333333334,
+          "runnerFalls": 3.8645833333333335,
+          "escapes": 0.3541666666666667,
+          "pace": 0.4378081756034872,
+          "distance": 384.06201536365256,
+          "near200": 0.4564394062524732,
+          "runnerLandings": 3.46875,
+          "chaserLandings": 1.2708333333333333,
+          "branchLandings": 3.15625,
+          "pressureBonus": 1,
+          "elapsedMs": 9316.446250000025
+        }
+      },
+      {
+        "condition": "simple-terrain",
+        "mean": {
+          "cleanTags": 2.09375,
+          "tags": 2.1354166666666665,
+          "evades": 0.40625,
+          "chaserFalls": 0.3125,
+          "runnerFalls": 4.364583333333333,
+          "escapes": 0.3020833333333333,
+          "pace": 0.410941742340101,
+          "distance": 359.5600122662327,
+          "near200": 0.5107334706442083,
+          "runnerLandings": 2.65625,
+          "chaserLandings": 1.1354166666666667,
+          "branchLandings": 0,
+          "pressureBonus": 1,
+          "elapsedMs": 9816.546250000023
+        }
+      },
+      {
+        "condition": "slower-motion",
+        "mean": {
+          "cleanTags": 1.9583333333333333,
+          "tags": 1.9791666666666667,
+          "evades": 0.3645833333333333,
+          "chaserFalls": 0.17708333333333334,
+          "runnerFalls": 3.8645833333333335,
+          "escapes": 0.3541666666666667,
+          "pace": 0.4378081756034872,
+          "distance": 384.06201536365256,
+          "near200": 0.4564394062524732,
+          "runnerLandings": 3.46875,
+          "chaserLandings": 1.2708333333333333,
+          "branchLandings": 3.15625,
+          "pressureBonus": 1,
+          "elapsedMs": 9316.446250000025
+        }
+      }
+    ]
+  }
+}

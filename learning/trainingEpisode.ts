@@ -1,4 +1,5 @@
-import { LearningAgent } from './agent';
+import { EncounterTracker } from './encounters';
+import type { LearningAgent } from './agent';
 import { writeAgentStateVector } from './state';
 import {
   advanceRoleTimers,
@@ -37,8 +38,6 @@ import {
   CHASER_PURSUIT_REWARD_CAP_PER_WINDOW,
   RUNNER_PRESSURE_ESCAPE_REWARD,
   RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW,
-  CLOSE_ENCOUNTER_ENTER_PX,
-  CLOSE_ENCOUNTER_EXIT_PX,
   TAG_AFTER_RUNNER_FALL_WINDOW_MS,
 } from '../constants';
 
@@ -109,6 +108,7 @@ export interface TrainingEpisodeResult {
   runnerBranchLandings: number;
   chaserBranchLandings: number;
   closeEncounters: number;
+  /** Pressure exits without an intervening tag or either role falling (objective v10). */
   successfulEvades: number;
   meanNearestRunnerDistancePx: number;
   initialNearestRunnerDistancePx: number;
@@ -714,8 +714,8 @@ function createEpisodeState(
  * Fitness remains sparse: tags are competitive, falls are self-penalties, Runner progress is capped by pace windows, and Chaser traversal shaping is small and capped.
  */
 export function runTrainingEpisode(
-  chaser: LearningAgent,
-  evader: LearningAgent,
+  chaser: Pick<LearningAgent, 'chooseActionInto' | 'resetState'>,
+  evader: Pick<LearningAgent, 'chooseActionInto' | 'resetState'>,
   seed: number,
   options: TrainingEpisodeOptions = {}
 ): TrainingEpisodeResult {
@@ -834,10 +834,9 @@ export function runTrainingEpisode(
   let chaserBranchLandings = 0;
 
   // Interaction diagnostics use distance hysteresis so one prolonged chase counts as one encounter.
-  let closeEncounterActive = false;
+  const encounterTracker = new EncounterTracker();
   let closeEncounters = 0;
   let successfulEvades = 0;
-  let runnerFallsAtEncounterStart = 0;
   let nearestRunnerDistanceAccum = 0;
   let nearestRunnerDistanceSamples = 0;
   let initialNearestRunnerDistancePx = Infinity;
@@ -1068,7 +1067,7 @@ export function runTrainingEpisode(
       if (chaserFalls === chaserFallsBeforeStep) chaserEscapePenaltyEvents++;
       escapeRequiredZoom = escapeEvaluation.requiredReferenceZoom;
       escapeMaxSeparationPx = escapeEvaluation.maxChaserRunnerDistancePx;
-      closeEncounterActive = false;
+      encounterTracker.reset();
       break;
     }
 
@@ -1116,51 +1115,19 @@ export function runTrainingEpisode(
       if (nearestRunnerDistance <= 100) timeWithin100Ms += DT;
       if (nearestRunnerDistance <= 200) timeWithin200Ms += DT;
       if (nearestRunnerDistance <= 400) timeWithin400Ms += DT;
-      if (!closeEncounterActive && nearestRunnerDistance <= CLOSE_ENCOUNTER_ENTER_PX) {
-        closeEncounterActive = true;
-        closeEncounters++;
-        runnerFallsAtEncounterStart = evaderFalls;
-      } else if (closeEncounterActive && nearestRunnerDistance >= CLOSE_ENCOUNTER_EXIT_PX) {
-        closeEncounterActive = false;
-        successfulEvades++;
-        // Reward only a clean escape from real pressure. The 180px -> 380px hysteresis makes one
-        // prolonged chase count once, while the per-window cap prevents oscillation farming. A fall
-        // during the encounter invalidates the tactical bonus even if the respawn opens distance.
-        const episodePressureCap = pursuitDesign?.runnerPressureEscapeEpisodeCap ?? Infinity;
-        if (
-          evaderFalls === runnerFallsAtEncounterStart &&
-          pressureEscapeBonusThisWindow < RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW &&
-          runnerPressureEscapeFitnessBonus < episodePressureCap
-        ) {
-          const reward = Math.min(
-            RUNNER_PRESSURE_ESCAPE_REWARD,
-            RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW - pressureEscapeBonusThisWindow,
-            episodePressureCap - runnerPressureEscapeFitnessBonus
-          );
-          pressureEscapeBonusThisWindow += reward;
-          runnerPressureEscapeFitnessBonus += reward;
-        }
-      }
-    } else if (closeEncounterActive) {
-      // Diverging onto mutually exclusive sibling routes is a genuine escape from physical tag
-      // pressure. Do not let impossible cross-route proximity farm the Chaser pursuit score, and
-      // close the Runner encounter cleanly when route commitment removes physical interaction.
-      closeEncounterActive = false;
+    }
+    const encounter = encounterTracker.step(nearestRunnerDistance, chaserFalls + evaderFalls);
+    if (encounter === 'entered') closeEncounters++;
+    if (encounter === 'evaded') {
       successfulEvades++;
       const episodePressureCap = pursuitDesign?.runnerPressureEscapeEpisodeCap ?? Infinity;
-      if (
-        evaderFalls === runnerFallsAtEncounterStart &&
-        pressureEscapeBonusThisWindow < RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW &&
-        runnerPressureEscapeFitnessBonus < episodePressureCap
-      ) {
-        const reward = Math.min(
-          RUNNER_PRESSURE_ESCAPE_REWARD,
-          RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW - pressureEscapeBonusThisWindow,
-          episodePressureCap - runnerPressureEscapeFitnessBonus
-        );
-        pressureEscapeBonusThisWindow += reward;
-        runnerPressureEscapeFitnessBonus += reward;
-      }
+      const reward = Math.max(0, Math.min(
+        RUNNER_PRESSURE_ESCAPE_REWARD,
+        RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW - pressureEscapeBonusThisWindow,
+        episodePressureCap - runnerPressureEscapeFitnessBonus
+      ));
+      pressureEscapeBonusThisWindow += reward;
+      runnerPressureEscapeFitnessBonus += reward;
     }
 
     const tagTransition = resolveTagSwap(gameState.agents);
@@ -1176,7 +1143,7 @@ export function runTrainingEpisode(
         // Attribute at most one subsequent tag to a particular fall/respawn.
         lastRunnerFallAtMs[taggedIndex] = -Infinity;
       }
-      closeEncounterActive = false;
+      encounterTracker.reset();
     }
 
     // Settle the capped pace window after all safe progress for this frame has been banked.

@@ -1,0 +1,6 @@
+[
+  { "name": "baseline" },
+  { "name": "equal-base-speed", "pursuitDesign": { "chaserBaseMaxSpeed": 5.0 } },
+  { "name": "slower-motion", "terrainConfig": { "movingPlatformMaxSpeed": 40 } },
+  { "name": "simple-terrain", "terrainConfig": { "trainingBranchingEnabled": false, "trainingMovingPlatformsEnabled": false } }
+]
