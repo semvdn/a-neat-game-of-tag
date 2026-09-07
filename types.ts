@@ -72,6 +72,8 @@ export interface PursuitDesignConfig {
   chaserProximityRewardCapPerSegment?: number;
   /** Optional total episode cap for the tactical Runner pressure-escape bonus. */
   runnerPressureEscapeEpisodeCap?: number;
+  /** Tag immunity granted immediately after a Runner is fairly respawned from a fall. */
+  postFallRunnerTagProtectionMs?: number;
   /** Allows the full pursuit experiment to expose route choices earlier without changing visual defaults. */
   branchStructureMinX?: number;
 }
@@ -90,6 +92,8 @@ export interface ActiveUpgradeState {
   /** Optional role-specific base speeds. Omitted in the normal game, supplied by pursuit experiments. */
   chaserBaseMaxSpeed?: number;
   runnerBaseMaxSpeed?: number;
+  /** Optional Runner-only post-fall tag protection used by pursuit-balance experiments. */
+  postFallRunnerTagProtectionMs?: number;
 }
 
 
@@ -237,6 +241,7 @@ export interface BalanceTelemetry {
   timeWithin200Pct?: number;
   timeWithin400Pct?: number;
   tagsSoonAfterRunnerFallPerEpisode?: number;
+  cleanTagsPerEpisode?: number;
 }
 
 export interface BenchmarkRoleTelemetry {
@@ -273,9 +278,15 @@ export interface GeneralistChampionTelemetry {
   /** Generalization score used only for retention/display, never population selection. */
   score: number;
   benchmark: BenchmarkRoleTelemetry;
-  /** Mean role fitness against retained/Hall-of-Fame cross-play panel used for 25% of retention. */
+  /** Mean role fitness against the retained/Hall-of-Fame cross-play validation panel. */
   crossPlayMeanFitness?: number;
   crossPlayMatches?: number;
+  /** Direct matchup diagnostics against the current retained opposing champion. */
+  contemporaryCleanTagsPerEpisode?: number;
+  contemporaryPaceCompletion?: number;
+  contemporaryTimeWithin200Pct?: number;
+  contemporaryCloseEncountersPerEpisode?: number;
+  contemporaryFailureEventsPerEpisode?: number;
 }
 
 export interface CrossGenerationBenchmarkTelemetry {
@@ -307,6 +318,8 @@ export interface ShowcasePairTelemetry {
   score: number;
   matches: number;
   tagsPerEpisode: number;
+  cleanTagsPerEpisode?: number;
+  postFallTagsPerEpisode?: number;
   runnerPaceCompletion: number;
   closeEncountersPerEpisode: number;
   successfulEvadesPerEpisode: number;
@@ -354,7 +367,7 @@ export interface DiagnosticsState {
   trainingFitnessConfig?: TrainingFitnessConfig;
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   pursuitDesign?: PursuitDesignConfig | null;
-  pursuitExperimentFlags?: { pressureStarts: boolean; crossPlayGate: boolean };
+  pursuitExperimentFlags?: { pressureStarts: boolean; crossPlayGate: boolean; strictContemporaryGate?: boolean; cleanTagShowcase?: boolean };
   selectionAggregation?: string;
   historicalOpponentPanel?: string;
   showcasePair?: ShowcasePairTelemetry | null;
@@ -380,7 +393,7 @@ export interface TrainingGenerationAnalysisRecord {
   fitnessConfig: TrainingFitnessConfig;
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   pursuitDesign?: PursuitDesignConfig | null;
-  pursuitExperimentFlags?: { pressureStarts: boolean; crossPlayGate: boolean };
+  pursuitExperimentFlags?: { pressureStarts: boolean; crossPlayGate: boolean; strictContemporaryGate?: boolean; cleanTagShowcase?: boolean };
   selectionAggregation?: string;
   historicalOpponentPanel?: string;
   showcasePair?: ShowcasePairTelemetry | null;

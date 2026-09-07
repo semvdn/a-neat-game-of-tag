@@ -305,31 +305,44 @@ This keeps the opponent league from filling with many generations of effectively
 
 ## Temporary pursuit-design experiment runner
 
-The Architecture diagnostics tab includes a temporary **Run experiments** tool that now holds neural architecture fixed at **Memory Discovery** (16→12 feed-forward start, recurrence may evolve) and compares the competitive game design instead of comparing architectures:
+The Architecture diagnostics tab includes a temporary **Run experiments** tool that holds neural architecture fixed at **Memory Discovery** (16→12 feed-forward start, recurrence may evolve) and now tests only the final Full Pursuit balance questions:
 
-1. **Symmetric control + elite training** — existing equal-role physics, but every genome now sees a stronger historical opponent panel and breeding uses robust matchup aggregation.
-2. **Pursuit asymmetry** — adds fixed role physics: Chaser base/sprint speed `5.4 / 7.8`, Runner `5.0 / 7.5`; the Runner has cheaper sprint endurance (`24/s` versus Chaser `32/s`).
-3. **Full pursuit design** — adds the asymmetry plus pressure-start training, a non-repeatable Chaser closing-distance bootstrap, an episode-level Runner escape-bonus cap, branches beginning around `x = 1200`, and a cross-play quality gate for retained champions.
+1. **Current Full Pursuit control** — the previous Full Pursuit condition unchanged: Chaser base/sprint speed `5.4 / 7.8`, Runner `5.0 / 7.5`, Chaser sprint drain `32/s`, Runner `24/s`, pressure-start curriculum, non-repeatable Chaser proximity bootstrap, Runner escape cap, branches from about `x = 1200`, elite self-play, robust 70/30 breeding selection, and the existing retained-champion cross-play gate.
+2. **Stronger pursuit + fall protection** — keeps the entire Full Pursuit framework but changes only pursuit/fairness physics: Chaser base/sprint speed `5.7 / 7.9`, Chaser sprint drain `28/s`, and **900 ms Runner tag immunity after a fair fall respawn**. Runner speed/endurance remains `5.0 / 7.5` and `24/s`.
+3. **Strict cross-play + clean-tag showcase** — uses exactly the same physics as condition 2, then adds a direct contemporary retained-opponent gate and makes showcase scoring value **clean pursuit tags** rather than tags that occur within two seconds of a Runner fall.
 
-All three conditions share the same user-facing sprint/jump capability settings, pace/pursuit configuration, fixed architecture, and frozen benchmark opponent bank. Only the pursuit-design profile intentionally differs. Each condition starts from a fresh population. Before the suite starts, the worker snapshots the current run at the latest completed-generation boundary; the original run is restored automatically after export or after **Cancel & restore**.
+All three conditions share the same user-facing sprint/jump capability settings, pace/pursuit configuration, Memory Discovery architecture, pressure-start curriculum, early branching, elite opponent panel, robust breeding aggregation, and frozen benchmark opponent bank. Each condition starts from a fresh population. Before the suite starts, the worker snapshots the current run at the latest completed-generation boundary; the original run is restored automatically after export or after **Cancel & restore**.
 
 ### Elite self-play and robust selection
 
-Once archive opponents are available, every genome is evaluated against common current-population opponents plus a historical panel containing the **retained opposing generalist**, the **strongest archived opponent by frozen-benchmark score**, and a **behaviorally diverse archived opponent**. Breeding fitness is no longer a plain matchup average: it uses **70% mean performance + 30% lower-quartile performance**, making a catastrophic elite matchup costly instead of allowing several easy wins to hide it. This aggregation affects evolution; the frozen benchmark still remains diagnostic/validation data.
+Every genome is evaluated against common current-population opponents plus a historical panel containing the **retained opposing generalist**, the **strongest archived opponent by frozen-benchmark score**, and a **behaviorally diverse archived opponent**. Breeding fitness uses **70% mean performance + 30% lower-quartile performance**, making catastrophic elite matchups costly instead of allowing several easy wins to hide them. This aggregation affects evolution; frozen benchmark and champion-retention evaluation remain separate.
 
 ### Full-pursuit learning bridges
 
-The full condition deliberately keeps shaping small relative to the `+20` tag outcome. The Chaser receives `+1` for each new 50px improvement in best proximity during a chase segment, capped at `+6` per segment. Moving away and returning to the same distance does not pay again. A tag, role change, or Chaser fall starts a new segment. Runner pressure-escape shaping remains `+3` for a clean `<=180px → >=380px` escape, but the full condition caps this at **+6 total per episode** so farming repeated pressure cycles cannot dominate survival/platforming.
+All three conditions retain the small Full Pursuit learning bridges. The Chaser receives `+1` for each new 50px improvement in best proximity during a chase segment, capped at `+6` per segment. Moving away and returning to the same distance does not pay again. Runner pressure-escape shaping remains `+3` for a clean `<=180px → >=380px` escape, capped at **+6 total per episode**. Fresh training starts deliberately contain more immediate pressure, and branch structures can begin around `x = 1200`.
 
-Full-pursuit fresh starts deliberately contain more immediate pressure: approximately 40% begin with a 220–300px lead, 30% with 140–220px, 20% with 300–380px, and 10% with an unusual 180–360px gap. This is a training curriculum only; the normal visible reset can retain its familiar layout.
+### Post-fall fairness and clean tags
+
+Conditions 2 and 3 grant a Runner **900 ms of tag immunity immediately after a fall respawn**. The fall itself still receives the normal competitive penalty; the protection only prevents the Chaser from turning the same mistake into a second immediate tag event. The protection is implemented in the shared physics state, so headless training and the visible arena use the same rule.
+
+Analysis now records both total tags and **clean tags**. A clean tag is a tag that is not attributable to a Runner fall in the previous two seconds. `tagsSoonAfterRunnerFall` remains exported explicitly so the experiment can verify whether catches are coming from actual pursuit or from fall cleanup.
+
+### Strict contemporary retained-champion gate
+
+Condition 3 keeps the existing 90% frozen-benchmark quality floor, but a retained challenger must also prove itself directly against the **current retained opposing champion** over fixed pressure/varied/mid-game seeds.
+
+- A Chaser challenger must either average at least one clean tag per three contemporary matches, or demonstrate sustained engagement (at least 12% of time within 200px and at least one close encounter per episode).
+- A Runner challenger must maintain at least 55% pace completion while averaging no more than two combined tag/fall failures per episode.
+
+Condition 3's retention score also gives contemporary direct-match fitness an explicit 30% weight, alongside frozen benchmark quality and the broader retained/Hall-of-Fame cross-play panel.
 
 ### Retained generalists versus showcase pair
 
-Saved/retained Chaser and Runner generalists remain the true best validated models. In the full condition, a challenger must preserve at least **90% of the incumbent frozen-benchmark quality** before stronger cross-play weighting can replace the incumbent. Cross-play itself remains isolated from breeding fitness and Elo.
+Saved/retained Chaser and Runner generalists remain the true best validated models. The non-breeding **showcase pair** remains separate and exists only to choose an informative visible matchup from retained/strong/diverse archive candidates.
 
-Separately, every ten generations the worker evaluates a small matrix of retained/strong/diverse archived policies and chooses a **showcase pair** for the visual arena. Showcase scoring favors meaningful Runner pace, nonzero tags, close encounters, successful evades, branch use, and low falls. This pair does **not** breed and is not saved as the best model; it exists only so the watched infinite game can remain informative without intentionally weakening the actual retained champions. Diagnostics record the showcased Chaser/Runner generations and their pair metrics.
+In condition 3, showcase scoring uses **clean tags** for the positive tag term and additionally penalizes post-fall tags. Diagnostics and exported reports include total tags, clean tags, post-fall tags, close encounters, successful evades, pace, falls, branch use, and contemporary retained-opponent metrics.
 
-When all three conditions reach the chosen target generation, the app downloads `neat_tag_pursuit_design_experiments_genN.json`. The report contains each complete training analysis, deterministic showcase probes, the active pursuit profile/flags, robust-selection and historical-opponent metadata, retained-generalist/cross-play data, showcase-pair telemetry, and a compact cross-condition comparison. The target is configurable from 50 to 1500 generations per condition; 500 remains the recommended serious run.
+When all three conditions reach the chosen target generation, the app downloads `neat_tag_pursuit_design_experiments_genN.json`. The default is now **350 generations per condition** (1,050 total), with 50–1500 configurable. The report samples trend history every five generations while retaining full final state, retained/showcase metadata, and deterministic probes.
 
 The policy representation remains the corrected three-output controller: **signed horizontal drive, jump, sprint**. Contradictory left/right commands are impossible by construction and direction-conflict telemetry should remain zero.
 
@@ -337,7 +350,7 @@ The policy representation remains the corrected three-output controller: **signe
 
 The Diagnostics → Models tab includes **Export analysis JSON**. This is intentionally smaller and more analysis-oriented than a full evolutionary checkpoint. It contains:
 
-- a retained per-generation record (up to 5000 generations) with population fitness/species metrics, balance, fixed benchmark, Hall-of-Fame state, role Elo, action shares, pace/pursuit shaping, landings and chase-interaction metrics;
+- a retained per-generation record (up to 2000 generations) with population fitness/species metrics, balance, fixed benchmark, Hall-of-Fame state, role Elo, action shares, pace/pursuit shaping, landings and chase-interaction metrics;
 - the exploration reward configuration used for each generation, so later retuning is visible in the history;
 - Runner pace completion/reward, safe rightward progression, raw left/right envelopes, platform/branch landings and Chaser pursuit traversal;
 - the current run totals/configuration;

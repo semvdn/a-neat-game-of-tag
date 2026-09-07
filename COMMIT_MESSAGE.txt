@@ -1,1 +1,1 @@
-Reduce browser memory pressure during long training and experiment export
+Refine Full Pursuit balance experiment

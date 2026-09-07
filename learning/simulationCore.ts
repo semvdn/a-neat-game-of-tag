@@ -255,6 +255,12 @@ export function stepAgentPhysicsInPlace(
     checkpointX = positionX;
     checkpointY = positionY;
     checkpointEnergy = energy;
+    // In pursuit-balance experiments, a Runner fall is already a full competitive failure.
+    // Give the fairly-respawned Runner a brief non-stacking recovery window so the Chaser cannot
+    // immediately turn the same mistake into a second event simply by standing on the checkpoint.
+    if (roleAtStep === 'evader' && (upgrades.postFallRunnerTagProtectionMs || 0) > 0) {
+      cooldownTimer = Math.max(cooldownTimer, upgrades.postFallRunnerTagProtectionMs || 0);
+    }
   }
 
   // Mutate existing nested objects rather than replacing them; these are the hot allocations

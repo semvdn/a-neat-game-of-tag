@@ -205,7 +205,7 @@ const IDLE_ARCHITECTURE_EXPERIMENT_STATE: ArchitectureExperimentUiState = {
   experimentId: null,
   label: 'Ready',
   generation: 0,
-  targetGeneration: 500,
+  targetGeneration: 350,
   completedExperiments: 0,
   message: null,
   pursuitDesign: null,
@@ -618,7 +618,7 @@ export const App: React.FC = () => {
             experimentId: payload?.experimentId || null,
             label: payload?.label || 'Running pursuit-design experiment',
             generation: Number(payload?.generation) || 0,
-            targetGeneration: Number(payload?.targetGeneration) || 500,
+            targetGeneration: Number(payload?.targetGeneration) || 350,
             completedExperiments: Number(payload?.completedExperiments) || 0,
             message: payload?.message || null,
             pursuitDesign: payload?.pursuitDesign || null,
@@ -1123,6 +1123,9 @@ export const App: React.FC = () => {
             : undefined,
           runnerBaseMaxSpeed: architectureExperimentStatus.running
             ? architectureExperimentStatus.pursuitDesign?.runnerBaseMaxSpeed
+            : undefined,
+          postFallRunnerTagProtectionMs: architectureExperimentStatus.running
+            ? architectureExperimentStatus.pursuitDesign?.postFallRunnerTagProtectionMs
             : undefined,
         };
         if (architectureExperimentStatus.running && architectureExperimentStatus.pursuitDesign) {
@@ -1677,7 +1680,7 @@ export const App: React.FC = () => {
 
   const handleRunArchitectureExperiments = (targetGeneration: number) => {
     if (!workerRef.current || architectureExperimentRunningRef.current) return;
-    const target = Math.max(50, Math.min(1500, Math.round(Number(targetGeneration) || 500)));
+    const target = Math.max(50, Math.min(1500, Math.round(Number(targetGeneration) || 350)));
     architectureExperimentDiagnosticsSnapshotRef.current = JSON.parse(JSON.stringify(diagnosticsStateRef.current)) as DiagnosticsState;
     architectureExperimentArchitectureSnapshotRef.current = sanitizeNetworkArchitectureSuite(networkArchitecture);
     architectureExperimentPreviousPauseRef.current = isTrainingPaused;
@@ -1689,8 +1692,8 @@ export const App: React.FC = () => {
       running: true,
       currentIndex: 0,
       totalExperiments: 3,
-      experimentId: 'symmetric_control',
-      label: 'Preparing symmetric control + elite training',
+      experimentId: 'full_pursuit_control',
+      label: 'Preparing Current Full Pursuit control',
       generation: 0,
       targetGeneration: target,
       completedExperiments: 0,

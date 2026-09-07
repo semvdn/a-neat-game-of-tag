@@ -711,6 +711,7 @@ export function runTrainingEpisode(
     sprintRunnerMaxSpeed: pursuitDesign?.runnerSprintMaxSpeed ?? baseUpgrades.sprintRunnerMaxSpeed,
     sprintChaserStaminaCostPerSec: pursuitDesign?.chaserSprintStaminaCostPerSec ?? baseUpgrades.sprintChaserStaminaCostPerSec,
     sprintRunnerStaminaCostPerSec: pursuitDesign?.runnerSprintStaminaCostPerSec ?? baseUpgrades.sprintRunnerStaminaCostPerSec,
+    postFallRunnerTagProtectionMs: pursuitDesign?.postFallRunnerTagProtectionMs ?? baseUpgrades.postFallRunnerTagProtectionMs,
   };
 
   let chaserFalls = 0;

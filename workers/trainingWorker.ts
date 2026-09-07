@@ -123,9 +123,16 @@ let trainingFitnessConfig: TrainingFitnessConfig = { ...DEFAULT_TRAINING_FITNESS
 interface PursuitExperimentRuntimeFlags {
   pressureStarts: boolean;
   crossPlayGate: boolean;
+  strictContemporaryGate: boolean;
+  cleanTagShowcase: boolean;
 }
 let activePursuitDesign: PursuitDesignConfig | null = null;
-let activePursuitExperimentFlags: PursuitExperimentRuntimeFlags = { pressureStarts: false, crossPlayGate: false };
+let activePursuitExperimentFlags: PursuitExperimentRuntimeFlags = {
+  pressureStarts: false,
+  crossPlayGate: false,
+  strictContemporaryGate: false,
+  cleanTagShowcase: false,
+};
 
 
 function sanitizeTrainingFitnessConfig(value?: Partial<TrainingFitnessConfig>): TrainingFitnessConfig {
@@ -186,6 +193,9 @@ function activeUpgradeState(): ActiveUpgradeState {
     sprintRunnerMaxSpeed: sprintRunner && runnerAdvanced.maxSpeedOverride ? runnerAdvanced.maxSpeed : SPRINT_MAX_SPEED,
     sprintChaserStaminaCostPerSec: sprintChaser && chaserAdvanced.staminaCostOverride ? chaserAdvanced.staminaCostPerSec : SPRINT_ENERGY_COST_PER_SEC,
     sprintRunnerStaminaCostPerSec: sprintRunner && runnerAdvanced.staminaCostOverride ? runnerAdvanced.staminaCostPerSec : SPRINT_ENERGY_COST_PER_SEC,
+    chaserBaseMaxSpeed: activePursuitDesign?.chaserBaseMaxSpeed,
+    runnerBaseMaxSpeed: activePursuitDesign?.runnerBaseMaxSpeed,
+    postFallRunnerTagProtectionMs: activePursuitDesign?.postFallRunnerTagProtectionMs,
   };
 }
 
@@ -415,13 +425,15 @@ const analysisHistory: TrainingGenerationAnalysisRecord[] = [];
 let latestSafeCheckpoint: EvolutionCheckpoint | null = null;
 
 interface ArchitectureExperimentDefinition {
-  id: 'symmetric_control' | 'pursuit_asymmetry' | 'full_pursuit';
+  id: 'full_pursuit_control' | 'stronger_pursuit_protection' | 'strict_clean_crossplay';
   label: string;
   hypothesis: string;
   architecture: NetworkArchitectureSuiteConfig;
   pursuitDesign: PursuitDesignConfig;
   pressureStarts: boolean;
   crossPlayGate: boolean;
+  strictContemporaryGate: boolean;
+  cleanTagShowcase: boolean;
 }
 
 interface ArchitectureExperimentResult {
@@ -436,6 +448,8 @@ interface ArchitectureExperimentResult {
   pursuitDesign: PursuitDesignConfig;
   pressureStarts: boolean;
   crossPlayGate: boolean;
+  strictContemporaryGate: boolean;
+  cleanTagShowcase: boolean;
   analysis: ReturnType<typeof buildAnalysisExport>;
 }
 
@@ -745,7 +759,18 @@ interface GeneralistCandidateEvaluation {
   benchmarkScore: number;
   crossPlayMeanFitness: number;
   crossPlayMatches: number;
+  contemporary: ContemporaryMatchupEvaluation;
   score: number;
+}
+
+interface ContemporaryMatchupEvaluation {
+  meanFitness: number;
+  matches: number;
+  cleanTagsPerEpisode: number;
+  paceCompletion: number;
+  timeWithin200Pct: number;
+  closeEncountersPerEpisode: number;
+  failureEventsPerEpisode: number;
 }
 
 function generalistCrossPlayOpponents(role: 'chaser' | 'evader'): NeatGenomeData[] {
@@ -796,7 +821,7 @@ function evaluateGeneralistCrossPlay(genome: NeatGenomeData, role: 'chaser' | 'e
         runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
         runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
         chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
-    pursuitDesign: activePursuitDesign || undefined,
+        pursuitDesign: activePursuitDesign || undefined,
       };
       const result = role === 'chaser'
         ? runTrainingEpisode(candidate, opponent, seed, episodeOptions)
@@ -808,6 +833,81 @@ function evaluateGeneralistCrossPlay(genome: NeatGenomeData, role: 'chaser' | 'e
   return { meanFitness: fitnessTotal / Math.max(1, matches), matches };
 }
 
+function evaluateContemporaryMatchup(genome: NeatGenomeData, role: 'chaser' | 'evader'): ContemporaryMatchupEvaluation {
+  const opposingRetained = role === 'chaser' ? retainedEvaderGeneralist : retainedChaserGeneralist;
+  if (!opposingRetained) {
+    return {
+      meanFitness: 100,
+      matches: 0,
+      cleanTagsPerEpisode: 0,
+      paceCompletion: 0,
+      timeWithin200Pct: 0,
+      closeEncountersPerEpisode: 0,
+      failureEventsPerEpisode: 0,
+    };
+  }
+
+  const candidate = new LearningAgent(role, genome);
+  const opponentRole = role === 'chaser' ? 'evader' : 'chaser';
+  const opponent = new LearningAgent(opponentRole, opposingRetained.genome);
+  const modes: TrainingStartMode[] = ['pressure', 'varied', 'midgame'];
+  let fitness = 0;
+  let cleanTags = 0;
+  let pace = 0;
+  let within200 = 0;
+  let close = 0;
+  let failures = 0;
+  let matches = 0;
+  for (let i = 0; i < modes.length; i++) {
+    const seed = (0x4c11db7 ^ Math.imul(i + 1, 0x9e3779b1) ^ (role === 'chaser' ? 0x5137a91d : 0x2a6f5c31)) >>> 0;
+    const options = {
+      trackChaserActions: false,
+      trackEvaderActions: false,
+      viewportSize,
+      upgrades: activeUpgradeState(),
+      startMode: modes[i],
+      runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
+      runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
+      chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+      pursuitDesign: activePursuitDesign || undefined,
+    } as const;
+    const result = role === 'chaser'
+      ? runTrainingEpisode(candidate, opponent, seed, options)
+      : runTrainingEpisode(opponent, candidate, seed, options);
+    fitness += role === 'chaser' ? result.chaserFitness : result.evaderFitness;
+    cleanTags += Math.max(0, result.tags - result.tagsSoonAfterRunnerFall);
+    pace += result.runnerPaceCompletion;
+    within200 += result.timeWithin200Ms / Math.max(1, result.elapsedMs);
+    close += result.closeEncounters;
+    failures += result.tags + result.evaderFalls;
+    matches++;
+  }
+  const denom = Math.max(1, matches);
+  return {
+    meanFitness: fitness / denom,
+    matches,
+    cleanTagsPerEpisode: cleanTags / denom,
+    paceCompletion: pace / denom,
+    timeWithin200Pct: within200 / denom,
+    closeEncountersPerEpisode: close / denom,
+    failureEventsPerEpisode: failures / denom,
+  };
+}
+
+function passesStrictContemporaryGate(role: 'chaser' | 'evader', evaluation: ContemporaryMatchupEvaluation): boolean {
+  if (evaluation.matches === 0) return true;
+  if (role === 'chaser') {
+    // A retained Chaser must prove it can actually engage the current elite Runner: preferably a
+    // clean catch, otherwise sustained close pursuit. This blocks high frozen-benchmark specialists
+    // whose contemporary matchup simply runs out of interaction range.
+    return evaluation.cleanTagsPerEpisode >= 1 / 3 ||
+      (evaluation.timeWithin200Pct >= 0.12 && evaluation.closeEncountersPerEpisode >= 1);
+  }
+  // A retained Runner must remain a progressing survivor against the current elite Chaser rather
+  // than winning only by camping or by repeatedly falling through the course.
+  return evaluation.paceCompletion >= 0.55 && evaluation.failureEventsPerEpisode <= 2;
+}
+
 function evaluateGeneralistCandidate(
   genome: NeatGenomeData,
   role: 'chaser' | 'evader',
@@ -816,18 +916,24 @@ function evaluateGeneralistCandidate(
   const benchmark = cachedBenchmark || evaluateFixedBenchmark(genome, role);
   const benchmarkScore = generalistValidationScore(role, benchmark.telemetry);
   const crossPlay = evaluateGeneralistCrossPlay(genome, role);
-  // Frozen benchmark remains the main generalization criterion, while cross-play prevents two
-  // independently strong policies from being retained if their actual matchup is pathological.
-  const score = crossPlay.matches > 0
-    ? activePursuitExperimentFlags.crossPlayGate
-      ? 0.40 * benchmarkScore + 0.60 * crossPlay.meanFitness
-      : 0.75 * benchmarkScore + 0.25 * crossPlay.meanFitness
-    : benchmarkScore;
+  const contemporary = activePursuitExperimentFlags.strictContemporaryGate
+    ? evaluateContemporaryMatchup(genome, role)
+    : { meanFitness: 100, matches: 0, cleanTagsPerEpisode: 0, paceCompletion: 0, timeWithin200Pct: 0, closeEncountersPerEpisode: 0, failureEventsPerEpisode: 0 };
+  // Frozen benchmark anchors generalization, while broader cross-play and (only in condition C)
+  // the direct contemporary matchup prevent retained policies from looking strong only on paper.
+  const score = activePursuitExperimentFlags.strictContemporaryGate && contemporary.matches > 0
+    ? 0.35 * benchmarkScore + 0.35 * crossPlay.meanFitness + 0.30 * contemporary.meanFitness
+    : crossPlay.matches > 0
+      ? activePursuitExperimentFlags.crossPlayGate
+        ? 0.40 * benchmarkScore + 0.60 * crossPlay.meanFitness
+        : 0.75 * benchmarkScore + 0.25 * crossPlay.meanFitness
+      : benchmarkScore;
   return {
     benchmark,
     benchmarkScore,
     crossPlayMeanFitness: crossPlay.meanFitness,
     crossPlayMatches: crossPlay.matches,
+    contemporary,
     score,
   };
 }
@@ -856,6 +962,11 @@ function revalidateRetainedGeneralist(role: 'chaser' | 'evader'): void {
     benchmark: { ...evaluation.benchmark.telemetry },
     crossPlayMeanFitness: evaluation.crossPlayMeanFitness,
     crossPlayMatches: evaluation.crossPlayMatches,
+    contemporaryCleanTagsPerEpisode: evaluation.contemporary.cleanTagsPerEpisode,
+    contemporaryPaceCompletion: evaluation.contemporary.paceCompletion,
+    contemporaryTimeWithin200Pct: evaluation.contemporary.timeWithin200Pct,
+    contemporaryCloseEncountersPerEpisode: evaluation.contemporary.closeEncountersPerEpisode,
+    contemporaryFailureEventsPerEpisode: evaluation.contemporary.failureEventsPerEpisode,
   };
 }
 
@@ -889,6 +1000,11 @@ function restoreRetainedGeneralist(
       benchmark: { ...evaluation.benchmark.telemetry },
       crossPlayMeanFitness: evaluation.crossPlayMeanFitness,
       crossPlayMatches: evaluation.crossPlayMatches,
+      contemporaryCleanTagsPerEpisode: evaluation.contemporary.cleanTagsPerEpisode,
+      contemporaryPaceCompletion: evaluation.contemporary.paceCompletion,
+      contemporaryTimeWithin200Pct: evaluation.contemporary.timeWithin200Pct,
+      contemporaryCloseEncountersPerEpisode: evaluation.contemporary.closeEncountersPerEpisode,
+      contemporaryFailureEventsPerEpisode: evaluation.contemporary.failureEventsPerEpisode,
     };
   }
   setRetainedGeneralist(role, { genome: storedGenome, controller, telemetry });
@@ -913,7 +1029,7 @@ function considerRetainedGeneralistCandidates(
   for (const candidate of candidates) unique.set(candidate.id, candidate);
 
   // Re-score the incumbent on the same current cross-play panel as challengers. Its frozen benchmark
-  // result remains stable, but the 25% matchup component evolves as the opposing HOF improves.
+  // result remains stable, while the matchup components evolve as the opposing archive improves.
   let incumbentScore = -Infinity;
   let incumbentBenchmarkScore = -Infinity;
   if (incumbent) {
@@ -925,6 +1041,11 @@ function considerRetainedGeneralistCandidates(
     incumbent.telemetry.score = current.score;
     incumbent.telemetry.crossPlayMeanFitness = current.crossPlayMeanFitness;
     incumbent.telemetry.crossPlayMatches = current.crossPlayMatches;
+    incumbent.telemetry.contemporaryCleanTagsPerEpisode = current.contemporary.cleanTagsPerEpisode;
+    incumbent.telemetry.contemporaryPaceCompletion = current.contemporary.paceCompletion;
+    incumbent.telemetry.contemporaryTimeWithin200Pct = current.contemporary.timeWithin200Pct;
+    incumbent.telemetry.contemporaryCloseEncountersPerEpisode = current.contemporary.closeEncountersPerEpisode;
+    incumbent.telemetry.contemporaryFailureEventsPerEpisode = current.contemporary.failureEventsPerEpisode;
     incumbentScore = current.score;
     incumbentBenchmarkScore = current.benchmarkScore;
   }
@@ -939,6 +1060,9 @@ function considerRetainedGeneralistCandidates(
         ? incumbentBenchmarkScore * 0.90
         : incumbentBenchmarkScore - Math.max(5, Math.abs(incumbentBenchmarkScore) * 0.10);
       if (evaluation.benchmarkScore < benchmarkFloor) continue;
+    }
+    if (incumbent && activePursuitExperimentFlags.strictContemporaryGate && !passesStrictContemporaryGate(role, evaluation.contemporary)) {
+      continue;
     }
     if (evaluation.score > bestScore) {
       bestGenome = genome;
@@ -964,6 +1088,11 @@ function considerRetainedGeneralistCandidates(
       benchmark: { ...bestEvaluation.benchmark.telemetry },
       crossPlayMeanFitness: bestEvaluation.crossPlayMeanFitness,
       crossPlayMatches: bestEvaluation.crossPlayMatches,
+      contemporaryCleanTagsPerEpisode: bestEvaluation.contemporary.cleanTagsPerEpisode,
+      contemporaryPaceCompletion: bestEvaluation.contemporary.paceCompletion,
+      contemporaryTimeWithin200Pct: bestEvaluation.contemporary.timeWithin200Pct,
+      contemporaryCloseEncountersPerEpisode: bestEvaluation.contemporary.closeEncountersPerEpisode,
+      contemporaryFailureEventsPerEpisode: bestEvaluation.contemporary.failureEventsPerEpisode,
     },
   };
   setRetainedGeneralist(role, retained);
@@ -1001,6 +1130,7 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
     ? ['pressure', 'varied', 'midgame']
     : ['visual', 'varied', 'midgame'];
   let tags = 0;
+  let postFallTags = 0;
   let pace = 0;
   let close = 0;
   let evades = 0;
@@ -1021,6 +1151,7 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
       pursuitDesign: activePursuitDesign || undefined,
     });
     tags += result.tags;
+    postFallTags += result.tagsSoonAfterRunnerFall;
     pace += result.runnerPaceCompletion;
     close += result.closeEncounters;
     evades += result.successfulEvades;
@@ -1031,21 +1162,25 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
   }
   const denom = Math.max(1, matches);
   const tagsPerEpisode = tags / denom;
+  const postFallTagsPerEpisode = postFallTags / denom;
+  const cleanTagsPerEpisode = Math.max(0, tags - postFallTags) / denom;
   const runnerPaceCompletion = pace / denom;
   const closeEncountersPerEpisode = close / denom;
   const successfulEvadesPerEpisode = evades / denom;
   const chaserFallsPerEpisode = chaserFalls / denom;
   const runnerFallsPerEpisode = runnerFalls / denom;
   const branchLandingsPerEpisode = branches / denom;
+  const showcaseTagRate = activePursuitExperimentFlags.cleanTagShowcase ? cleanTagsPerEpisode : tagsPerEpisode;
   const score =
     18 * Math.min(1, runnerPaceCompletion / 0.65) +
-    8 * Math.min(3, tagsPerEpisode) +
+    8 * Math.min(3, showcaseTagRate) +
     4 * Math.min(4, closeEncountersPerEpisode) +
     4 * Math.min(2, successfulEvadesPerEpisode) +
     1.5 * Math.min(3, branchLandingsPerEpisode) -
     6 * (chaserFallsPerEpisode + runnerFallsPerEpisode) -
-    3 * Math.max(0, tagsPerEpisode - 3) -
-    (tagsPerEpisode < 0.15 ? 15 : 0) -
+    3 * Math.max(0, showcaseTagRate - 3) -
+    (showcaseTagRate < 0.15 ? 15 : 0) -
+    (activePursuitExperimentFlags.cleanTagShowcase ? 5 * postFallTagsPerEpisode : 0) -
     (closeEncountersPerEpisode < 0.75 ? 10 : 0) -
     (runnerPaceCompletion < 0.35 ? 12 : 0);
   return {
@@ -1055,6 +1190,8 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
     score,
     matches,
     tagsPerEpisode,
+    cleanTagsPerEpisode,
+    postFallTagsPerEpisode,
     runnerPaceCompletion,
     closeEncountersPerEpisode,
     successfulEvadesPerEpisode,
@@ -2407,50 +2544,61 @@ function architectureExperimentDefinitions(): ArchitectureExperimentDefinition[]
     chaser: { ...NETWORK_ARCHITECTURE_PRESETS.memory_evolve, hiddenLayers: [...NETWORK_ARCHITECTURE_PRESETS.memory_evolve.hiddenLayers] },
     runner: { ...NETWORK_ARCHITECTURE_PRESETS.memory_evolve, hiddenLayers: [...NETWORK_ARCHITECTURE_PRESETS.memory_evolve.hiddenLayers] },
   });
-  const asymmetricPhysics: PursuitDesignConfig = {
+  const currentFullPursuit: PursuitDesignConfig = {
     chaserBaseMaxSpeed: 5.4,
     runnerBaseMaxSpeed: 5.0,
     chaserSprintMaxSpeed: 7.8,
     runnerSprintMaxSpeed: 7.5,
     chaserSprintStaminaCostPerSec: 32,
     runnerSprintStaminaCostPerSec: 24,
+    pressureStartDistribution: true,
+    chaserProximityProgressReward: true,
+    chaserProximityStepPx: 50,
+    chaserProximityRewardPerStep: 1,
+    chaserProximityRewardCapPerSegment: 6,
+    runnerPressureEscapeEpisodeCap: 6,
+    branchStructureMinX: 1200,
+  };
+  const strongerPursuit: PursuitDesignConfig = {
+    ...currentFullPursuit,
+    chaserBaseMaxSpeed: 5.7,
+    chaserSprintMaxSpeed: 7.9,
+    chaserSprintStaminaCostPerSec: 28,
+    postFallRunnerTagProtectionMs: 900,
   };
   return [
     {
-      id: 'symmetric_control',
-      label: 'Symmetric control + elite training',
-      hypothesis: 'Tests whether stronger opponent panels and robust selection alone are enough to restore active pursuit.',
+      id: 'full_pursuit_control',
+      label: 'Current Full Pursuit control',
+      hypothesis: 'Re-runs the previous Full Pursuit condition unchanged as the baseline for clean-tag and pursuit-balance comparison.',
       architecture: fixedArchitecture,
-      pursuitDesign: {},
-      pressureStarts: false,
-      crossPlayGate: false,
-    },
-    {
-      id: 'pursuit_asymmetry',
-      label: 'Pursuit asymmetry',
-      hypothesis: 'Adds a small sustained Chaser speed advantage while preserving better Runner sprint economy.',
-      architecture: fixedArchitecture,
-      pursuitDesign: { ...asymmetricPhysics },
-      pressureStarts: false,
-      crossPlayGate: false,
-    },
-    {
-      id: 'full_pursuit',
-      label: 'Full pursuit design',
-      hypothesis: 'Adds pursuit asymmetry, pressure-start curriculum, non-repeatable proximity bootstrap, earlier branches, and gated cross-play retention.',
-      architecture: fixedArchitecture,
-      pursuitDesign: {
-        ...asymmetricPhysics,
-        pressureStartDistribution: true,
-        chaserProximityProgressReward: true,
-        chaserProximityStepPx: 50,
-        chaserProximityRewardPerStep: 1,
-        chaserProximityRewardCapPerSegment: 6,
-        runnerPressureEscapeEpisodeCap: 6,
-        branchStructureMinX: 1200,
-      },
+      pursuitDesign: { ...currentFullPursuit },
       pressureStarts: true,
       crossPlayGate: true,
+      strictContemporaryGate: false,
+      cleanTagShowcase: false,
+    },
+    {
+      id: 'stronger_pursuit_protection',
+      label: 'Stronger pursuit + fall protection',
+      hypothesis: 'Tests whether a 5.7 base / 7.9 sprint Chaser with lower sprint drain plus 900ms Runner post-fall protection creates clean catches without selection changes.',
+      architecture: fixedArchitecture,
+      pursuitDesign: { ...strongerPursuit },
+      pressureStarts: true,
+      crossPlayGate: true,
+      strictContemporaryGate: false,
+      cleanTagShowcase: false,
+    },
+    {
+      id: 'strict_clean_crossplay',
+      label: 'Strict cross-play + clean-tag showcase',
+      hypothesis: 'Adds a direct retained-opponent engagement gate and scores showcase tags only when they are not attributable to a recent Runner fall.',
+      architecture: fixedArchitecture,
+      pursuitDesign: { ...strongerPursuit },
+      pressureStarts: true,
+      crossPlayGate: true,
+      strictContemporaryGate: true,
+      cleanTagShowcase: true,
     },
   ];
 }
@@ -2493,6 +2641,8 @@ function postArchitectureExperimentStatus(generation = 0, message?: string): voi
       pursuitDesign: current ? { ...current.pursuitDesign } : null,
       pressureStarts: current?.pressureStarts || false,
       crossPlayGate: current?.crossPlayGate || false,
+      strictContemporaryGate: current?.strictContemporaryGate || false,
+      cleanTagShowcase: current?.cleanTagShowcase || false,
       message: message || null,
     },
   });
@@ -2511,7 +2661,12 @@ function startArchitectureExperimentRun(index: number): void {
   if (timerId) clearTimeout(timerId);
   networkArchitecture = sanitizeNetworkArchitectureSuite(definition.architecture);
   activePursuitDesign = { ...definition.pursuitDesign };
-  activePursuitExperimentFlags = { pressureStarts: definition.pressureStarts, crossPlayGate: definition.crossPlayGate };
+  activePursuitExperimentFlags = {
+    pressureStarts: definition.pressureStarts,
+    crossPlayGate: definition.crossPlayGate,
+    strictContemporaryGate: definition.strictContemporaryGate,
+    cleanTagShowcase: definition.cleanTagShowcase,
+  };
   resetEntireEvolutionRun();
   installSharedExperimentBenchmark(suite);
   captureSafeCheckpoint();
@@ -2574,6 +2729,7 @@ function architectureExperimentSummary(result: ArchitectureExperimentResult) {
       timeWithin200Pct: balance.timeWithin200Pct,
       timeWithin400Pct: balance.timeWithin400Pct,
       tagsSoonAfterRunnerFallPerEpisode: balance.tagsSoonAfterRunnerFallPerEpisode,
+      cleanTagsPerEpisode: balance.cleanTagsPerEpisode,
       runnerPlatformLandingsPerEpisode: balance.runnerPlatformLandingsPerEpisode,
       chaserPlatformLandingsPerEpisode: balance.chaserPlatformLandingsPerEpisode,
       runnerBranchLandingsPerEpisode: balance.runnerBranchLandingsPerEpisode,
@@ -2588,7 +2744,7 @@ function restoreRunAfterArchitectureExperiments(suite: ArchitectureExperimentSui
   const originalCheckpoint = suite.originalCheckpoint;
   const originalWasRunning = suite.originalWasRunning;
   activePursuitDesign = null;
-  activePursuitExperimentFlags = { pressureStarts: false, crossPlayGate: false };
+  activePursuitExperimentFlags = { pressureStarts: false, crossPlayGate: false, strictContemporaryGate: false, cleanTagShowcase: false };
   isRunning = false;
   if (timerId) clearTimeout(timerId);
   restoreEvolutionCheckpoint(originalCheckpoint);
@@ -2603,13 +2759,15 @@ function completeArchitectureExperimentSuite(): void {
   const completedAt = Date.now();
   const report = {
     format: 'neat-tag-pursuit-design-experiment-suite',
-    version: 1,
+    version: 2,
     generatedAt: completedAt,
     targetGeneration: suite.targetGeneration,
     experiments: suite.results,
     comparison: suite.results.map(architectureExperimentSummary),
     methodology: {
-      experiments: suite.definitions.map(({ id, label, hypothesis, architecture, pursuitDesign, pressureStarts, crossPlayGate }) => ({ id, label, hypothesis, architecture, pursuitDesign, pressureStarts, crossPlayGate })),
+      experiments: suite.definitions.map(({ id, label, hypothesis, architecture, pursuitDesign, pressureStarts, crossPlayGate, strictContemporaryGate, cleanTagShowcase }) => ({
+        id, label, hypothesis, architecture, pursuitDesign, pressureStarts, crossPlayGate, strictContemporaryGate, cleanTagShowcase,
+      })),
       controlledGameSettingsAcrossRuns: true,
       deliberatePursuitDesignDifferencesAcrossRuns: true,
       sameUpgradeSettingsAcrossRuns: true,
@@ -2620,10 +2778,14 @@ function completeArchitectureExperimentSuite(): void {
         directionConflictTelemetry: true,
       },
       fixedArchitectureAcrossRuns: 'Memory Discovery (16→12 feed-forward start, recurrence may evolve)',
+      fullPursuitFrameworkAcrossRuns: 'pressure starts + proximity bootstrap + early branching + existing benchmark/cross-play retention gate',
       eliteOpponentTrainingAcrossRuns: true,
       robustSelectionAcrossRuns: '70% mean fitness + 30% lower-quartile fitness',
+      conditionA: 'Exact previous Full Pursuit control: Chaser 5.4/7.8, 32/s sprint drain; Runner 5.0/7.5, 24/s.',
+      conditionB: 'A with Chaser 5.7/7.9, 28/s sprint drain and 900ms Runner post-fall tag protection.',
+      conditionC: 'B plus direct retained-opponent engagement gating and clean-tag showcase scoring.',
       exportedHistorySampling: 'Every 5 generations plus first/final generation; final state and deterministic probes remain full detail.',
-      notes: 'Each pursuit condition starts from a fresh population with the same architecture and the same user upgrade/fitness settings. Only the pursuit-design profile intentionally differs. The first condition defines a frozen benchmark opponent bank reused by all three runs. The user\'s original run is restored after export.',
+      notes: 'Each condition starts from a fresh population with the same architecture, Full Pursuit curriculum, user upgrade/fitness settings, and frozen benchmark bank. B isolates stronger pursuit/fall fairness; C isolates stricter contemporary and clean-tag selection on top of B. The user\'s original run is restored after export.',
     },
     suiteWallTimeMs: completedAt - suite.startedAt,
   };
@@ -2659,6 +2821,8 @@ function maybeAdvanceArchitectureExperiment(evaluatedGeneration: number): void {
     pursuitDesign: { ...definition.pursuitDesign },
     pressureStarts: definition.pressureStarts,
     crossPlayGate: definition.crossPlayGate,
+    strictContemporaryGate: definition.strictContemporaryGate,
+    cleanTagShowcase: definition.cleanTagShowcase,
     analysis: buildAnalysisExport(5),
   });
 
@@ -2673,7 +2837,7 @@ function maybeAdvanceArchitectureExperiment(evaluatedGeneration: number): void {
 
 function startArchitectureExperimentSuite(targetGeneration: number): void {
   if (architectureExperimentSuite) throw new Error('An architecture experiment suite is already running.');
-  const target = Math.max(50, Math.min(1500, Math.round(Number(targetGeneration) || 500)));
+  const target = Math.max(50, Math.min(1500, Math.round(Number(targetGeneration) || 350)));
   const originalCheckpoint = checkpointWithRecentAnalysis(latestSafeCheckpoint, MAX_EXPERIMENT_RESTORE_HISTORY);
   architectureExperimentSuite = {
     targetGeneration: target,
@@ -2696,7 +2860,7 @@ function cancelArchitectureExperimentSuite(): void {
   const completedExperiments = suite.results.length;
   architectureExperimentSuite = null;
   activePursuitDesign = null;
-  activePursuitExperimentFlags = { pressureStarts: false, crossPlayGate: false };
+  activePursuitExperimentFlags = { pressureStarts: false, crossPlayGate: false, strictContemporaryGate: false, cleanTagShowcase: false };
   isRunning = false;
   if (timerId) clearTimeout(timerId);
   restoreEvolutionCheckpoint(cloneCheckpoint(suite.originalCheckpoint));
@@ -2761,6 +2925,7 @@ function finishGeneration() {
     timeWithin200Pct: generationTimeWithin200Pct / Math.max(1, generationPopulationMatches),
     timeWithin400Pct: generationTimeWithin400Pct / Math.max(1, generationPopulationMatches),
     tagsSoonAfterRunnerFallPerEpisode: generationTagsSoonAfterRunnerFall / Math.max(1, generationPopulationMatches),
+    cleanTagsPerEpisode: Math.max(0, generationPopulationTags - generationTagsSoonAfterRunnerFall) / Math.max(1, generationPopulationMatches),
     runnerMaxFrontierExpansionPx: generationRunnerMaxFrontierExpansionPx,
   };
 
@@ -2892,6 +3057,8 @@ function buildAnalysisProbeSet(
         chaserFitness: result.chaserFitness,
         runnerFitness: result.evaderFitness,
         tags: result.tags,
+        cleanTags: Math.max(0, result.tags - result.tagsSoonAfterRunnerFall),
+        postFallTags: result.tagsSoonAfterRunnerFall,
         chaserFalls: result.chaserFalls,
         runnerFalls: result.evaderFalls,
         runnerFrontierExpansionPx: result.runnerFrontierExpansionPx,
