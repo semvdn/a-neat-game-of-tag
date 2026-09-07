@@ -24,6 +24,7 @@ import {
   stepAgentPhysics,
   updateChaseCameraX,
   stepMovingPlatformsInPlace,
+  evaluateChaseEscape,
 } from './learning/simulationCore';
 import type {
   GameState,
@@ -263,6 +264,9 @@ export const App: React.FC = () => {
     performanceHistory: [],
     totalTags: 0,
     totalFalls: 0,
+    totalChaserFalls: 0,
+    totalChaserEscapes: 0,
+    totalRunnerFalls: 0,
     totalSuccessfulJumps: 0,
     actionDistribution: {},
     chaserActionDistribution: {},
@@ -571,6 +575,7 @@ export const App: React.FC = () => {
               totalTags: payload.totalTags,
               totalFalls: payload.totalFalls,
               totalChaserFalls: payload.totalChaserFalls,
+              totalChaserEscapes: payload.totalChaserEscapes,
               totalRunnerFalls: payload.totalRunnerFalls,
               totalSuccessfulJumps: payload.totalJumps,
               chaserActionDistribution: payload.actionCountsChaser || prev.chaserActionDistribution,
@@ -1178,7 +1183,56 @@ export const App: React.FC = () => {
           return { ...physics.agent, trajectory: newTrajectory };
         });
 
-        // 4. Tag Detection & role swap through the shared visual-game rule.
+        // 4. Escape detection. The exact same invariant camera envelope is used in headless
+        // training. Once the group would need to be rendered below 50% reference zoom, the
+        // Runners have escaped and this visible chase starts over instead of shrinking into an
+        // unreadable overview. This is presentation reset only; evolutionary fitness is worker-owned.
+        const chaseEscape = evaluateChaseEscape(newState.agents);
+        if (chaseEscape.escaped) {
+          chaserAgent.current?.resetState();
+          evaderAgent.current?.resetState();
+          platformIdCounter.current = 10;
+          const groundY = viewportSize.height - 100;
+          const starts = [100, 400, 700];
+          newState.agents = newState.agents.map((agent, index) => {
+            const isChaser = index === 0;
+            const x = starts[index] ?? starts[starts.length - 1];
+            return {
+              ...agent,
+              position: { x, y: 500 },
+              velocity: { x: 0, y: 0 },
+              acceleration: { x: 0, y: 0 },
+              status: isChaser ? AgentStatus.It : AgentStatus.Normal,
+              role: isChaser ? 'chaser' as const : 'evader' as const,
+              elo: isChaser ? chaserElo.current : evaderElo.current,
+              isOnGround: false,
+              cooldownTimer: 0,
+              lastAction: 'idle',
+              energy: MAX_ENERGY,
+              maxEnergy: MAX_ENERGY,
+              trajectory: [{ x, y: 500, timestamp: 0 }],
+              lastPlatformId: 0,
+              activeRoutePath: null,
+              scale: { x: 1, y: 1 },
+              energyAtLastTakeoff: MAX_ENERGY,
+              positionAtLastTakeoff: { x, y: 500 },
+              survivalTime: 0,
+              timeSinceBecameIt: 0,
+              modelId: isChaser
+                ? `champion_chaser_g${installedChampionGenerationRef.current.chaser}`
+                : `champion_evader_g${installedChampionGenerationRef.current.evader}`,
+            };
+          });
+          newState.platforms = [{ id: 0, position: { x: 0, y: groundY }, width: viewportSize.width, height: PLATFORM_HEIGHT }];
+          newState.cameraPosition = { x: 0, y: 0 };
+          newState.gameTime = 0;
+          newState.tagEffects = [];
+          newState.avgSurvivalTime = 0;
+          newState.avgTimeToTag = 0;
+          return newState;
+        }
+
+        // 5. Tag Detection & role swap through the shared visual-game rule.
         let tagEvent: { taggerId?: number; taggedId?: number } = {};
         const tagTransition = resolveTagSwap(newState.agents);
         if (tagTransition) {
@@ -1210,7 +1264,7 @@ export const App: React.FC = () => {
           });
         }
 
-        // 5. Performance Averages
+        // 6. Performance Averages
         const activeEvaders = newState.agents.filter(a => a.status !== AgentStatus.It);
         const liveEvaderSurvivalAvg = activeEvaders.length > 0
           ? activeEvaders.reduce((sum, a) => sum + (a.survivalTime || 0), 0) / activeEvaders.length
@@ -1231,7 +1285,7 @@ export const App: React.FC = () => {
           newState.avgTimeToTag = currentActiveTagger.timeSinceBecameIt || 0;
         }
 
-        // 6. Visual reward breakdown is retained only as explanatory UI telemetry.
+        // 7. Visual reward breakdown is retained only as explanatory UI telemetry.
         const rewardBreakdowns: { [id: number]: RewardBreakdown } = {};
         newState.agents.forEach(agent => {
           const prevState = prevGameState.agents.find(a => a.id === agent.id)!;
@@ -1250,14 +1304,14 @@ export const App: React.FC = () => {
 
         // Evolutionary diagnostics remain worker-owned; the visible game is presentation only.
 
-        // 7. Camera Tracking (shared with headless training)
+        // 8. Camera Tracking (shared with headless training)
         newState.cameraPosition.x = updateChaseCameraX(
           newState.agents,
           newState.cameraPosition.x,
           viewportSize.width
         );
 
-        // 10. Platform Generation. The visual game continues to use Math.random; training
+        // 9. Platform Generation. The visual game continues to use Math.random; training
         // supplies a seeded RNG to this same rule so all compared genomes see identical terrain.
         const platformUpdate = maintainPlatformsForCamera(
           newState.platforms,
@@ -1272,7 +1326,7 @@ export const App: React.FC = () => {
         newState.platforms = platformUpdate.platforms;
         platformIdCounter.current = platformUpdate.nextPlatformId;
 
-        // 11. Tag Visual Effects
+        // 10. Tag Visual Effects
         newState.tagEffects = newState.tagEffects
           .map(effect => ({ ...effect, life: effect.life - deltaTime }))
           .filter(effect => effect.life > 0);
@@ -1382,6 +1436,7 @@ export const App: React.FC = () => {
           maxEnergy: MAX_ENERGY,
           trajectory: [{ x, y: 500, timestamp: 0 }],
           lastPlatformId: 0,
+          activeRoutePath: null,
           scale: { x: 1, y: 1 },
           energyAtLastTakeoff: MAX_ENERGY,
           positionAtLastTakeoff: { x, y: 500 },
@@ -1425,6 +1480,7 @@ export const App: React.FC = () => {
       ...prev,
       chaserNeatHistory: [], evaderNeatHistory: [], lastChaserNeatMetrics: null, lastEvaderNeatMetrics: null,
       chaserChampionGenome: null, evaderChampionGenome: null, performanceHistory: [], totalTags: 0, totalFalls: 0,
+      totalChaserFalls: 0, totalChaserEscapes: 0, totalRunnerFalls: 0,
       totalSuccessfulJumps: 0, actionDistribution: {}, chaserActionDistribution: {}, evaderActionDistribution: {}, generation: 0,
       chaserElo: INITIAL_ELO, evaderElo: INITIAL_ELO,
       eloLeaderboard: createLeaderboardEntries(INITIAL_ELO, INITIAL_ELO, 0, 0, 0, 0, 0, 0, 0),
@@ -1463,6 +1519,9 @@ export const App: React.FC = () => {
       performanceHistory: [],
       totalTags: 0,
       totalFalls: 0,
+      totalChaserFalls: 0,
+      totalChaserEscapes: 0,
+      totalRunnerFalls: 0,
       totalSuccessfulJumps: 0,
       actionDistribution: {},
       chaserActionDistribution: {},

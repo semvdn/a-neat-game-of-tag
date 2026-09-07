@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { GameState, PlatformState } from '../types';
 import { drawPlatform, drawAgent, drawAgentTrail, drawTagEffect, drawAgentSenses } from './drawing';
-import { AGENT_HEIGHT, AGENT_WIDTH, WORLD_REF_WIDTH, WORLD_REF_HEIGHT } from '../constants';
+import { AGENT_HEIGHT, AGENT_WIDTH, WORLD_REF_WIDTH, WORLD_REF_HEIGHT, CAMERA_FRAME_PADDING_REFERENCE_PX, CAMERA_MIN_USEFUL_AUTO_ZOOM } from '../constants';
 
 interface GameCanvasProps {
   gameState: GameState;
@@ -22,9 +22,6 @@ const CAMERA_HORIZONTAL_FOLLOW_RATE = 6.0;
 // Zooming out must be immediate enough to preserve visibility when agents commit to different
 // branches. Zooming back in is deliberately slower so the presentation does not pulse.
 const CAMERA_ZOOM_IN_FOLLOW_RATE = 2.4;
-// Screen-space safe margin around the pair. This remains visually consistent across browser sizes
-// and all automatic zoom levels.
-const CAMERA_FRAME_PADDING_PX = 72;
 // While easing, keep the active platform inside this vertical screen band. The target sits at
 // 72%, leaving room above for jumps while guaranteeing that downward height changes cannot
 // disappear below the viewport at high zoom.
@@ -165,15 +162,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       maxAgentY = Math.max(...agents.map(agent => agent.position.y + AGENT_HEIGHT));
     }
 
-    const frameWidthPx = Math.max(40, cssWidth - CAMERA_FRAME_PADDING_PX * 2);
-    const frameHeightPx = Math.max(40, cssHeight - CAMERA_FRAME_PADDING_PX * 2);
+    const cameraFramePaddingPx = CAMERA_FRAME_PADDING_REFERENCE_PX * fitScale;
+    const frameWidthPx = Math.max(40, cssWidth - cameraFramePaddingPx * 2);
+    const frameHeightPx = Math.max(40, cssHeight - cameraFramePaddingPx * 2);
     const agentSpanX = Math.max(AGENT_WIDTH, maxAgentX - minAgentX);
     const agentSpanY = Math.max(AGENT_HEIGHT, maxAgentY - minAgentY);
     const pairFitScale = Math.max(
       0.0001,
       Math.min(frameWidthPx / agentSpanX, frameHeightPx / agentSpanY)
     );
-    const desiredScale = Math.min(preferredScale, pairFitScale);
+    const minimumUsefulScale = fitScale * CAMERA_MIN_USEFUL_AUTO_ZOOM;
+    const desiredScale = Math.max(minimumUsefulScale, Math.min(preferredScale, pairFitScale));
 
     // Smooth only the zoom-IN direction. Zooming out is a safety response and happens immediately,
     // otherwise a fast branch split can spend several frames outside the viewport.
@@ -230,8 +229,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // Then hard-clamp BOTH axes to the legal camera-center interval that keeps every agent within
     // the screen-space safety margin. This means camera smoothing can never be the reason a Runner
     // or Chaser disappears off-screen, even during rapid recursive branch divergence.
-    const safeHalfWorldWidth = Math.max(0, cssWidth * 0.5 - CAMERA_FRAME_PADDING_PX) / cameraScale;
-    const safeHalfWorldHeight = Math.max(0, cssHeight * 0.5 - CAMERA_FRAME_PADDING_PX) / cameraScale;
+    const safeHalfWorldWidth = Math.max(0, cssWidth * 0.5 - cameraFramePaddingPx) / cameraScale;
+    const safeHalfWorldHeight = Math.max(0, cssHeight * 0.5 - cameraFramePaddingPx) / cameraScale;
     const minimumSafeCenterX = maxAgentX - safeHalfWorldWidth;
     const maximumSafeCenterX = minAgentX + safeHalfWorldWidth;
     const minimumSafeCenterY = maxAgentY - safeHalfWorldHeight;

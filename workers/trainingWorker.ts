@@ -274,7 +274,7 @@ interface EvolutionCheckpoint {
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   /** Fitness semantics marker for compatibility with checkpoints created before right-only exploration. */
   explorationRewardMode?: 'safe-per-runner-right-frontier';
-  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5' | 'hybrid-soft-pursuit-v6' | 'hybrid-soft-pursuit-terrain-v7';
+  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5' | 'hybrid-soft-pursuit-v6' | 'hybrid-soft-pursuit-terrain-v7' | 'hybrid-soft-pursuit-terrain-escape-v8';
   actionSchema?: 'signed-horizontal-controls-v2';
   stateSchema?: 'world-relative-senses-v3';
   horizontalControlResolution?: 'signed-axis-v2';
@@ -298,6 +298,7 @@ interface EvolutionCheckpoint {
     totalTags: number;
     totalFalls: number;
     totalChaserFalls: number;
+    totalChaserEscapes?: number;
     totalRunnerFalls: number;
     totalJumps: number;
     totalEvaluationMatches: number;
@@ -424,6 +425,7 @@ let generationPopulationTags = 0;
 let generationPopulationTaggedEpisodes = 0;
 let generationPopulationTagTimeMs = 0;
 let generationPopulationChaserFalls = 0;
+let generationPopulationChaserEscapes = 0;
 let generationPopulationRunnerFalls = 0;
 let generationPopulationCleanRunnerSurvivals = 0;
 let generationRunnerFrontierExpansionPx = 0;
@@ -516,6 +518,7 @@ let architectureExperimentSuite: ArchitectureExperimentSuiteState | null = null;
 let totalTags = 0;
 let totalFalls = 0;
 let totalChaserFalls = 0;
+let totalChaserEscapes = 0;
 let totalRunnerFalls = 0;
 let totalJumps = 0;
 let totalEvaluationMatches = 0;
@@ -548,6 +551,10 @@ interface EpisodeStats {
   terminalFallRole: 'chaser' | 'evader' | null;
   chaserFalls: number;
   evaderFalls: number;
+  chaserEscapes: number;
+  escaped: boolean;
+  escapeRequiredZoom: number | null;
+  escapeMaxSeparationPx: number;
   tagTimeTotalMs: number;
   taggedSurvivalTimeTotalMs: number;
   elapsedMs: number;
@@ -613,6 +620,7 @@ function runEpisode(
   totalTags += result.tags;
   totalFalls += result.falls;
   totalChaserFalls += result.chaserFalls;
+  totalChaserEscapes += result.chaserEscapes;
   totalRunnerFalls += result.evaderFalls;
   totalJumps += result.jumps;
   for (let i = 0; i < ACTION_SPACE.length; i++) {
@@ -684,6 +692,7 @@ function evaluateFixedBenchmark(genome: NeatGenomeData, role: 'chaser' | 'evader
   let fitnessTotal = 0;
   let tags = 0;
   let ownFalls = 0;
+  let escapeFailures = 0;
   let explorationViewports = 0;
   let paceCompletion = 0;
   let pursuitBonus = 0;
@@ -726,6 +735,7 @@ function evaluateFixedBenchmark(genome: NeatGenomeData, role: 'chaser' | 'evader
       fitnessTotal += role === 'chaser' ? result.chaserFitness : result.evaderFitness;
       tags += result.tags;
       ownFalls += role === 'chaser' ? result.chaserFalls : result.evaderFalls;
+      if (role === 'chaser') escapeFailures += result.chaserEscapes;
       if (role === 'evader') {
         explorationViewports += result.runnerFrontierExpansionViewports;
         paceCompletion += result.runnerPaceCompletion;
@@ -749,6 +759,7 @@ function evaluateFixedBenchmark(genome: NeatGenomeData, role: 'chaser' | 'evader
     matches,
     tagsPerEpisode,
     ownFallsPerEpisode,
+    escapeFailuresPerEpisode: role === 'chaser' ? escapeFailures / Math.max(1, matches) : 0,
     rightActionShare: controlActiveShare(actionCounts, 'move_right', decisionCount),
     jumpActionShare: controlActiveShare(actionCounts, 'jump', decisionCount),
     sprintActionShare: upgrades.sprint ? controlActiveShare(actionCounts, 'sprint', decisionCount) : 0,
@@ -787,7 +798,8 @@ function generalistValidationScore(role: 'chaser' | 'evader', telemetry: Benchma
     const pursuitCredit = 1.5 * Math.min(5, telemetry.pursuitBonusPerEpisode || 0);
     const idlePenalty = 24 * Math.max(0, idle - 0.35) / 0.65;
     const conflictPenalty = 8 * conflict;
-    return telemetry.meanFitness + encounterCredit + pursuitCredit - idlePenalty - conflictPenalty - 2 * falls;
+    const escapeFailures = telemetry.escapeFailuresPerEpisode || 0;
+    return telemetry.meanFitness + encounterCredit + pursuitCredit - idlePenalty - conflictPenalty - 2 * (falls + escapeFailures);
   }
 
   // Runner retention treats pace as a required capability rather than a cosmetic tie-breaker.
@@ -969,7 +981,9 @@ function evaluateContemporaryMatchup(genome: NeatGenomeData, role: 'chaser' | 'e
     pace += result.runnerPaceCompletion;
     within200 += result.timeWithin200Ms / Math.max(1, result.elapsedMs);
     close += result.closeEncounters;
-    failures += result.tags + result.evaderFalls;
+    failures += role === 'chaser'
+      ? result.chaserFalls + result.chaserEscapes
+      : result.tags + result.evaderFalls;
     if (modes[i] === 'pressure_normal' || modes[i] === 'pressure_long') {
       normalLongClosing += Math.max(0, result.initialNearestRunnerDistancePx - result.minNearestRunnerDistancePx);
       normalLongWithin200 += result.timeWithin200Ms / Math.max(1, result.elapsedMs);
@@ -1274,6 +1288,7 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
   let close = 0;
   let evades = 0;
   let chaserFalls = 0;
+  let chaserEscapes = 0;
   let runnerFalls = 0;
   let branches = 0;
   let matches = 0;
@@ -1296,6 +1311,7 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
     close += result.closeEncounters;
     evades += result.successfulEvades;
     chaserFalls += result.chaserFalls;
+    chaserEscapes += result.chaserEscapes;
     runnerFalls += result.evaderFalls;
     branches += result.runnerBranchLandings + result.chaserBranchLandings;
     matches++;
@@ -1308,6 +1324,7 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
   const closeEncountersPerEpisode = close / denom;
   const successfulEvadesPerEpisode = evades / denom;
   const chaserFallsPerEpisode = chaserFalls / denom;
+  const chaserEscapesPerEpisode = chaserEscapes / denom;
   const runnerFallsPerEpisode = runnerFalls / denom;
   const branchLandingsPerEpisode = branches / denom;
   const showcaseTagRate = activePursuitExperimentFlags.cleanTagShowcase ? cleanTagsPerEpisode : tagsPerEpisode;
@@ -1317,7 +1334,7 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
     4 * Math.min(4, closeEncountersPerEpisode) +
     4 * Math.min(2, successfulEvadesPerEpisode) +
     1.5 * Math.min(3, branchLandingsPerEpisode) -
-    6 * (chaserFallsPerEpisode + runnerFallsPerEpisode) -
+    6 * (chaserFallsPerEpisode + chaserEscapesPerEpisode + runnerFallsPerEpisode) -
     3 * Math.max(0, showcaseTagRate - 3) -
     (showcaseTagRate < 0.15 ? 15 : 0) -
     (activePursuitExperimentFlags.cleanTagShowcase ? 5 * postFallTagsPerEpisode : 0) -
@@ -1336,6 +1353,7 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
     closeEncountersPerEpisode,
     successfulEvadesPerEpisode,
     chaserFallsPerEpisode,
+    chaserEscapesPerEpisode,
     runnerFallsPerEpisode,
     branchLandingsPerEpisode,
   };
@@ -1622,7 +1640,7 @@ function buildEvolutionCheckpoint(analysisHistoryLimit = 0): EvolutionCheckpoint
     terrainVarietyConfig: sanitizeTerrainVarietyConfig(terrainVarietyConfig),
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     explorationRewardMode: 'safe-per-runner-right-frontier',
-    gameplayObjectiveVersion: 'hybrid-soft-pursuit-terrain-v7',
+    gameplayObjectiveVersion: 'hybrid-soft-pursuit-terrain-escape-v8',
     actionSchema: 'signed-horizontal-controls-v2',
     stateSchema: 'world-relative-senses-v3',
     horizontalControlResolution: 'signed-axis-v2',
@@ -1654,6 +1672,7 @@ function buildEvolutionCheckpoint(analysisHistoryLimit = 0): EvolutionCheckpoint
       totalTags,
       totalFalls,
       totalChaserFalls,
+      totalChaserEscapes,
       totalRunnerFalls,
       totalJumps,
       totalEvaluationMatches,
@@ -1708,7 +1727,7 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
   upgradeConfig = sanitizeUpgradeConfig(checkpoint.upgradeConfig);
   const migratedExplorationFitness = !checkpoint.trainingFitnessConfig;
   const migratedExplorationRewardMode = checkpoint.explorationRewardMode !== 'safe-per-runner-right-frontier';
-  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'hybrid-soft-pursuit-terrain-v7';
+  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'hybrid-soft-pursuit-terrain-escape-v8';
   const migratedHorizontalControl = checkpoint.horizontalControlResolution !== 'signed-axis-v2';
   trainingFitnessConfig = sanitizeTrainingFitnessConfig(checkpoint.trainingFitnessConfig);
   terrainVarietyConfig = sanitizeTerrainVarietyConfig(checkpoint.terrainVarietyConfig);
@@ -1750,6 +1769,7 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
   totalTags = Number(telemetry.totalTags) || 0;
   totalFalls = Number(telemetry.totalFalls) || 0;
   totalChaserFalls = Number(telemetry.totalChaserFalls) || 0;
+  totalChaserEscapes = Number(telemetry.totalChaserEscapes) || 0;
   totalRunnerFalls = Number(telemetry.totalRunnerFalls) || 0;
   totalJumps = Number(telemetry.totalJumps) || 0;
   totalEvaluationMatches = Number(telemetry.totalEvaluationMatches) || 0;
@@ -2179,6 +2199,7 @@ function recordPopulationBalance(result: EpisodeStats) {
     generationPopulationTagTimeMs += result.tagTimeTotalMs;
   }
   if (result.chaserFalls > 0) generationPopulationChaserFalls++;
+  if (result.chaserEscapes > 0) generationPopulationChaserEscapes++;
   if (result.evaderFalls > 0) generationPopulationRunnerFalls++;
   if (result.tags === 0 && result.evaderFalls === 0) generationPopulationCleanRunnerSurvivals++;
   generationRunnerFrontierExpansionPx += result.runnerFrontierExpansionPx;
@@ -2223,6 +2244,7 @@ function applyParallelEpisodeResult(task: ParallelEvaluationTask, result: Traini
   totalTags += result.tags;
   totalFalls += result.falls;
   totalChaserFalls += result.chaserFalls;
+  totalChaserEscapes += result.chaserEscapes;
   totalRunnerFalls += result.evaderFalls;
   totalJumps += result.jumps;
   for (let i = 0; i < ACTION_SPACE.length; i++) {
@@ -2500,6 +2522,7 @@ function resetEvaluationAccumulators() {
   generationPopulationTaggedEpisodes = 0;
   generationPopulationTagTimeMs = 0;
   generationPopulationChaserFalls = 0;
+  generationPopulationChaserEscapes = 0;
   generationPopulationRunnerFalls = 0;
   generationPopulationCleanRunnerSurvivals = 0;
   generationRunnerFrontierExpansionPx = 0;
@@ -2554,7 +2577,7 @@ function recordEpisodeTelemetry(result: EpisodeStats, currentPopulationMatch = t
   if (currentPopulationMatch) {
     // Elo is a tag-contest diagnostic only. Personal falls are deliberately excluded because they
     // no longer grant the opponent fitness. A match with at least one tag is a chaser win; a
-    // tag-free fixed-horizon match is a runner win. Exploration remains outside Elo as well.
+    // tag-free match (including an escape-terminated match) is a runner win. Exploration remains outside Elo as well.
     const chaserScore: 0 | 0.5 | 1 = result.tags > 0 ? 1 : 0;
     totalEvaluationMatches++;
     if (chaserScore === 1) totalChaserEpisodeWins++;
@@ -3036,8 +3059,10 @@ function finishGeneration() {
     avgTagTimeMs: generationPopulationTags > 0 ? generationPopulationTagTimeMs / generationPopulationTags : null,
     // These counts/rates mean matches containing at least one fall by the corresponding role.
     chaserFalls: generationPopulationChaserFalls,
+    chaserEscapes: generationPopulationChaserEscapes,
     runnerFalls: generationPopulationRunnerFalls,
     chaserFallRate: generationPopulationChaserFalls / Math.max(1, generationPopulationMatches),
+    chaserEscapeRate: generationPopulationChaserEscapes / Math.max(1, generationPopulationMatches),
     runnerFallRate: generationPopulationRunnerFalls / Math.max(1, generationPopulationMatches),
     runnerFrontierExpansionPxPerEpisode: generationRunnerFrontierExpansionPx / Math.max(1, generationPopulationMatches),
     runnerFrontierExpansionViewportsPerEpisode: generationRunnerFrontierExpansionPx / Math.max(1, generationPopulationMatches * viewportSize.width),
@@ -3211,6 +3236,10 @@ function buildAnalysisProbeSet(
         cleanTags: Math.max(0, result.tags - result.tagsSoonAfterRunnerFall),
         postFallTags: result.tagsSoonAfterRunnerFall,
         chaserFalls: result.chaserFalls,
+        chaserEscapes: result.chaserEscapes,
+        escaped: result.escaped,
+        escapeRequiredZoom: result.escapeRequiredZoom,
+        escapeMaxSeparationPx: result.escapeMaxSeparationPx,
         runnerFalls: result.evaderFalls,
         runnerFrontierExpansionPx: result.runnerFrontierExpansionPx,
         runnerFrontierExpansionViewports: result.runnerFrontierExpansionViewports,
@@ -3306,7 +3335,7 @@ function buildAnalysisExport(historyStride = 1) {
 
   return {
     format: 'neat-tag-training-analysis',
-    version: 4,
+    version: 5,
     generatedAt: Date.now(),
     generation: Math.max(lastChaserMetrics?.generation || 0, lastEvaderMetrics?.generation || 0),
     stateVectorSize: STATE_VECTOR_SIZE,
@@ -3314,7 +3343,7 @@ function buildAnalysisExport(historyStride = 1) {
     policyOutputSpace: [...POLICY_OUTPUT_SPACE],
     actionSchema: 'signed-horizontal-controls-v2',
     horizontalControlResolution: 'signed-axis-v2',
-    gameplayObjectiveVersion: 'hybrid-soft-pursuit-terrain-v7',
+    gameplayObjectiveVersion: 'hybrid-soft-pursuit-terrain-escape-v8',
     stateSchema: 'world-relative-senses-v3',
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     pursuitDesign: activePursuitDesign ? { ...activePursuitDesign } : null,
@@ -3323,7 +3352,7 @@ function buildAnalysisExport(historyStride = 1) {
     historicalOpponentPanel: '50/20/15/15 league: current + strong recent + strongest historical + diverse historical',
     viewportSize: { ...viewportSize },
     fitness: {
-      chaser: '100 + 20 * (tags - chaserFalls) + capped runner-visited-platform pursuit shaping + optional capped new-best-proximity bootstrap',
+      chaser: '100 + 20 * (tags - chaserFalls - escapeFailures) + capped runner-visited-platform pursuit shaping + optional capped new-best-proximity bootstrap',
       runner: '100 + 20 * (-tags - runnerFalls) + capped pace reward - pace shortfall penalty + capped pressure-escape reward',
       config: {
         ...trainingFitnessConfig,
@@ -3331,6 +3360,7 @@ function buildAnalysisExport(historyStride = 1) {
       },
       paceDefinition: 'Every 2 seconds, SAFE rightward progress across both Runner slots is averaged into a 0..1 completion fraction. Reward saturates at the target, while the unsatisfied fraction carries a modest shortfall penalty so standing still is not a free survival strategy. Clean close-pressure escapes add only a small capped tactical bonus.',
       pursuitDefinition: 'The Chaser earns small capped signals for following Runner-used terrain and, only in the full pursuit condition, for reaching genuinely new best proximity within a chase segment. Repeating the same distance does not pay again; tags remain +20 and dominant.',
+      escapeDefinition: 'If the complete chase group would require a presentation zoom below 50% of the invariant 1200x800 reference frame, the Runners have escaped. The episode ends immediately and the Chaser receives one -20 failure event, equal to a Chaser fall; the Runner receives no artificial +20 event bonus.',
     },
     upgrades: sanitizeUpgradeConfig(upgradeConfig),
     terrainVarietyConfig: sanitizeTerrainVarietyConfig(terrainVarietyConfig),
@@ -3365,6 +3395,7 @@ function buildAnalysisExport(historyStride = 1) {
       runnerElo: evaderElo,
       totalTags,
       totalChaserFalls,
+      totalChaserEscapes,
       totalRunnerFalls,
       totalSimulatedTimeMs: totalSimulatedTime,
       completedEpisodes,
@@ -3417,6 +3448,7 @@ function emitTelemetry(force = false) {
       totalTags,
       totalFalls,
       totalChaserFalls,
+      totalChaserEscapes,
       totalRunnerFalls,
       totalJumps,
       lastChaserNeatMetrics: lastChaserMetrics,
@@ -3515,6 +3547,7 @@ function resetEntireEvolutionRun(): void {
   totalTags = 0;
   totalFalls = 0;
   totalChaserFalls = 0;
+  totalChaserEscapes = 0;
   totalRunnerFalls = 0;
   totalJumps = 0;
   totalEvaluationMatches = 0;

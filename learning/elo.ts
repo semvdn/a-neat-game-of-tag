@@ -36,7 +36,7 @@ export function updateEloRatings(
   };
 }
 
-/** Builds the role-level leaderboard from completed fixed-horizon evaluation episodes. */
+/** Builds the role-level leaderboard from completed scored evaluation episodes. */
 export function createLeaderboardEntries(
   chaserElo: number,
   evaderElo: number,

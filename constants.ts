@@ -60,6 +60,17 @@ export const STATE_VECTOR_SIZE = 23;
 export const WORLD_REF_WIDTH = 1200;
 export const WORLD_REF_HEIGHT = 800;
 
+// Presentation-camera / chase-containment contract. The champion camera may auto-zoom down to
+// 50% of the invariant reference view; requiring a smaller scale would make the agents too small
+// to follow meaningfully. Headless training uses this same reference envelope, so an escape is a
+// gameplay outcome rather than a browser-size-dependent rendering artifact.
+export const CAMERA_FRAME_PADDING_REFERENCE_PX = 72;
+export const CAMERA_MIN_USEFUL_AUTO_ZOOM = 0.5;
+export const CHASE_ESCAPE_MAX_GROUP_SPAN_X =
+  (WORLD_REF_WIDTH - CAMERA_FRAME_PADDING_REFERENCE_PX * 2) / CAMERA_MIN_USEFUL_AUTO_ZOOM;
+export const CHASE_ESCAPE_MAX_GROUP_SPAN_Y =
+  (WORLD_REF_HEIGHT - CAMERA_FRAME_PADDING_REFERENCE_PX * 2) / CAMERA_MIN_USEFUL_AUTO_ZOOM;
+
 // Visual-only rightward flow reward breakdown. Evolutionary fitness is defined separately in trainingEpisode.ts.
 export const RIGHTWARD_VELOCITY_REWARD = 0.05;
 export const RIGHTWARD_PROGRESSION_REWARD = 0.08;

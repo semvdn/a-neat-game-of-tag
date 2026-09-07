@@ -45,7 +45,7 @@ The former automatic curriculum/unlock mode has been removed. Sprint and Control
 
 When enabled, Chaser and Runner can still be toggled independently. Sprint keeps its per-role Advanced settings for optional maximum-speed and stamina-cost overrides. Sprint stamina now regenerates only while the Sprint output is released; holding Sprint high while stationary produces no boost but blocks recovery, so `sprint = 1 forever` is no longer a free neutral policy. Diagnostics count Sprint only when it is actually boosting horizontal motion. Changing an ability configuration invalidates a partially evaluated generation so a generation is never scored under mixed physics rules. Settings are persisted in browser local storage; legacy `auto` values migrate to `off`.
 
-## Persistent fixed-horizon tag training
+## Persistent maximum-horizon tag training
 
 Every evaluation runs for the full **12-second simulated horizon**. A tag does not end the episode:
 
@@ -54,13 +54,13 @@ Every evaluation runs for the full **12-second simulated horizon**. A tag does n
 - the same anti-chain-tag delay/cooldown rules as the visible simulation apply;
 - play continues after role swaps.
 
-Falls also do not end an episode. The shared fair-respawn routine restores the fallen body while preserving its role, and play continues.
+Falls still do not end an episode. The shared fair-respawn routine restores the fallen body while preserving its role, and play continues. A **camera-envelope escape** is different: if the chase group becomes so spread out that it would require less than 50% of the invariant reference zoom to keep everyone readable, the Runners have escaped and that scored episode ends immediately.
 
 ### Sparse event fitness + capped gameplay pace
 
 The competitive objective stays sparse, but movement shaping is designed to avoid both known trivial optima: camping and maximum-speed endless running.
 
-- **Chaser fitness:** `100 + 20 × (contactTags - chaserFalls) + cappedPursuitTraversal`
+- **Chaser fitness:** `100 + 20 × (contactTags - chaserFalls - escapeFailures) + cappedPursuitTraversal`
 - **Runner fitness:** `100 + 20 × (-contactTags - runnerFalls) + cappedPaceReward`
 - **Runner pace window:** 2 seconds
 - **Default pace target:** 260 px of SAFE rightward progress per window, averaged across the two Runner slots
@@ -71,7 +71,7 @@ SAFE rightward progress is still banked only while grounded or after a successfu
 
 The Chaser's small terrain-following reward improves credit assignment for multi-platform pursuit without replacing the main objective. A +20 tag remains much more valuable than one traversal event, and the pursuit signal is hard-capped each window.
 
-Falls remain self-penalties only: a Runner fall does not reward the Chaser, and a Chaser fall does not reward the Runner.
+Falls remain self-penalties only: a Runner fall does not reward the Chaser, and a Chaser fall does not reward the Runner. An escape is also a Chaser-only failure event worth the same `-20` as a Chaser fall; it does not award an artificial `+20` to the Runner. If a Chaser fall itself crosses the escape boundary on that same physics frame, the failure is logged as an escape but the `-20` is not charged twice.
 
 ## Visual-game parity and start diversity
 
@@ -207,11 +207,11 @@ These changes are intentionally CPU-focused. The NEAT networks are small, topolo
 
 ## Diagnostics fixes
 
-Diagnostics now match the persistent fixed-horizon game:
+Diagnostics now match the persistent maximum-horizon game (normally 12 seconds, with early termination on escape):
 
 - **Runner clean survival** means an evaluation episode contained **neither a contact tag nor a Runner fall**;
-- Chaser/Runner fall rates mean the fraction of fixed-horizon population matches containing at least one fall by that role;
-- diagnostic role Elo now measures the tag contest only: at least one contact tag = Chaser win, a tag-free fixed horizon = Runner win; personal falls and exploration are excluded because they are not zero-sum events;
+- Chaser/Runner fall rates mean the fraction of population matches containing at least one fall by that role; Chaser escape rate separately records matches terminated by excessive chase separation;
+- diagnostic role Elo still measures the tag contest only: at least one contact tag = Chaser win, a tag-free episode (including an escape-terminated episode) = Runner win; personal falls and exploration are excluded because they are not zero-sum events;
 - Runner wins are no longer inferred from aggregate fall counts;
 - Chaser and Runner fall totals are tracked separately;
 - dead/incomplete benchmark-session state was removed;
@@ -227,7 +227,7 @@ Press **S** or use the sidebar toggle to show the current 23 policy inputs. The 
 
 - `learning/state.ts` — compact allocation-efficient 23-D world-relative policy state
 - `learning/agent.ts` — three-output signed-horizontal NEAT controller wrapper and compatibility checks
-- `learning/trainingEpisode.ts` — fixed-horizon persistent evaluation with reusable buffers
+- `learning/trainingEpisode.ts` — maximum-horizon persistent evaluation with reusable buffers and terminal escape handling
 - `learning/simulationCore.ts` — gameplay shared by visual and headless simulation
 - `learning/neat.ts` — NEAT evolution/network implementation
 - `learning/elo.ts` — corrected role-level diagnostic Elo and leaderboard accounting
@@ -333,7 +333,7 @@ The Architecture diagnostics **Run experiment** tool now performs one fresh **D 
 
 ### Camera is observational only
 
-Agents are never clamped to the left or right viewport edge, and fair respawn is performed entirely in world coordinates. Rolling platform retention expands to include the leftmost and rightmost active agents, so a lagging Chaser keeps traversable terrain even when temporarily off-screen. The presentation camera dynamically frames the active Chaser + Runner pair. The user's zoom setting is treated as the preferred maximum zoom; recursive branch separation can automatically zoom the view farther out, and horizontal/vertical safety clamps keep both agents inside a padded screen frame even while camera motion is smoothed.
+Agents are never clamped to the left or right viewport edge, and fair respawn is performed entirely in world coordinates. Rolling platform retention expands to include the leftmost and rightmost active agents, so a lagging Chaser keeps traversable terrain even when temporarily off-screen. The presentation camera dynamically frames the active chase group. The user's zoom setting is treated as the preferred maximum zoom, but automatic framing never shrinks below **50% of the invariant reference view**. If the group exceeds that readable envelope, the Runners have escaped: training applies one Chaser failure event and terminates the episode, while the continuous champion view immediately starts a fresh chase. Horizontal/vertical safety clamps still keep the group inside the padded frame up to that boundary.
 
 The two camera-boundary inputs remain removed from the policy state, keeping the state vector at **23 inputs**. Checkpoints carry `stateSchema: world-relative-senses-v3`; older 25-input checkpoints are rejected rather than silently remapped.
 
@@ -341,7 +341,7 @@ The two camera-boundary inputs remain removed from the policy state, keeping the
 
 The Diagnostics → Models tab includes **Export analysis JSON**. This is intentionally smaller and more analysis-oriented than a full evolutionary checkpoint. It contains:
 
-- a retained per-generation record (up to 2000 generations) with population fitness/species metrics, balance, fixed benchmark, Hall-of-Fame state, role Elo, action shares, pace/pursuit shaping, landings and chase-interaction metrics;
+- a retained per-generation record (up to 2000 generations) with population fitness/species metrics, balance, fixed benchmark, Hall-of-Fame state, role Elo, action shares, pace/pursuit shaping, landings, chase-interaction metrics and Chaser escape rate;
 - the exploration reward configuration used for each generation, so later retuning is visible in the history;
 - Runner pace completion/reward, safe rightward progression, raw left/right envelopes, platform/branch landings and Chaser pursuit traversal;
 - the current run totals/configuration;

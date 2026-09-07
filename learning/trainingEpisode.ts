@@ -9,6 +9,7 @@ import {
   stepAgentPhysicsInPlace,
   updateChaseCameraX,
   stepMovingPlatformsInPlace,
+  evaluateChaseEscape,
 } from './simulationCore';
 import type { ActiveUpgradeState, AgentState, GameState, PlatformState, PursuitDesignConfig, TerrainRuntimeConfig, TerrainVarietyConfig } from '../types';
 import { AgentStatus } from '../types';
@@ -48,7 +49,7 @@ const VISUAL_PLATFORM_ID_START = 10;
 export interface TrainingEpisodeResult {
   chaserFitness: number;
   evaderFitness: number;
-  /** True when at least one physical contact tag occurred during the fixed-horizon match. */
+  /** True when at least one physical contact tag occurred during the scored match. */
   tagged: boolean;
   /** Number of physical contact tags during the match. */
   tags: number;
@@ -56,6 +57,14 @@ export interface TrainingEpisodeResult {
   terminalFallRole: 'chaser' | 'evader' | null;
   chaserFalls: number;
   evaderFalls: number;
+  /** Terminal chase failures caused by the group exceeding the minimum useful camera envelope. */
+  chaserEscapes: number;
+  /** True when this maximum-horizon match ended early because the Runner group escaped. */
+  escaped: boolean;
+  /** Reference-view zoom that would have been required at the escape boundary. */
+  escapeRequiredZoom: number | null;
+  /** Largest Chaser-to-Runner center distance on the escape frame. */
+  escapeMaxSeparationPx: number;
   /** Sum of the current chaser's time-since-role-swap at each successful tag. */
   tagTimeTotalMs: number;
   /** Sum of the tagged runner's survival interval at each successful tag. */
@@ -693,7 +702,8 @@ function createEpisodeState(
 }
 
 /**
- * Fixed-horizon headless evaluation driven by the same gameplay core as the visual simulation.
+ * Headless scored evaluation driven by the same gameplay core as the visual simulation.
+ * Episodes normally run to the configured horizon, but a camera-envelope escape is terminal.
  *
  * Differences are evaluation-only rather than gameplay differences:
  * - terrain randomness is seeded so every compared genome can see identical worlds;
@@ -745,6 +755,10 @@ export function runTrainingEpisode(
 
   let chaserFalls = 0;
   let evaderFalls = 0;
+  let chaserEscapes = 0;
+  let chaserEscapePenaltyEvents = 0;
+  let escapeRequiredZoom: number | null = null;
+  let escapeMaxSeparationPx = 0;
   let chaserJumps = 0;
   let evaderJumps = 0;
   let tags = 0;
@@ -1041,6 +1055,22 @@ export function runTrainingEpisode(
       previousPlatformIds[i] = agent.lastPlatformId;
     }
 
+    // Escape is a real Chaser failure, not a presentation workaround. If keeping the complete
+    // chase group visible would require shrinking below the minimum useful reference zoom, the
+    // Runners have escaped. End this scored chase immediately so the Chaser cannot recover fitness
+    // by farming later tags after losing contact with the level.
+    const escapeEvaluation = evaluateChaseEscape(gameState.agents);
+    if (escapeEvaluation.escaped) {
+      chaserEscapes++;
+      // A fall that itself creates the terminal separation is already a -20 Chaser event. Do not
+      // charge a second -20 on the same physics frame; the escape still terminates and is logged.
+      if (chaserFalls === chaserFallsBeforeStep) chaserEscapePenaltyEvents++;
+      escapeRequiredZoom = escapeEvaluation.requiredReferenceZoom;
+      escapeMaxSeparationPx = escapeEvaluation.maxChaserRunnerDistancePx;
+      closeEncounterActive = false;
+      break;
+    }
+
     // Measure actual chase interaction before a tag can swap roles this frame.
     let chaserBody: AgentState | null = null;
     for (const agent of gameState.agents) if (agent.status === AgentStatus.It) { chaserBody = agent; break; }
@@ -1243,7 +1273,7 @@ export function runTrainingEpisode(
   // Tags are the only directly competitive event. A fall penalizes only the controller
   // responsible for that role at the time of the fall; it never grants fitness to the opponent.
   // This prevents either population from succeeding merely because its opponent platformed badly.
-  const chaserEventScore = tags - chaserFalls;
+  const chaserEventScore = tags - chaserFalls - chaserEscapePenaltyEvents;
   const evaderEventScore = -tags - evaderFalls;
   const FITNESS_BASE = 100;
   const FITNESS_PER_EVENT = 20;
@@ -1269,6 +1299,10 @@ export function runTrainingEpisode(
     terminalFallRole: firstFallRole,
     chaserFalls,
     evaderFalls,
+    chaserEscapes,
+    escaped: chaserEscapes > 0,
+    escapeRequiredZoom,
+    escapeMaxSeparationPx,
     tagTimeTotalMs,
     taggedSurvivalTimeTotalMs,
     elapsedMs: gameState.gameTime,

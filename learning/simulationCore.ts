@@ -31,6 +31,12 @@ import {
   SPRINT_ACCELERATION_MULTIPLIER,
   TAG_COOLDOWN,
   NEW_CHASER_TAG_DELAY_MS,
+  CAMERA_FRAME_PADDING_REFERENCE_PX,
+  CAMERA_MIN_USEFUL_AUTO_ZOOM,
+  CHASE_ESCAPE_MAX_GROUP_SPAN_X,
+  CHASE_ESCAPE_MAX_GROUP_SPAN_Y,
+  WORLD_REF_WIDTH,
+  WORLD_REF_HEIGHT,
 } from '../constants';
 
 /** The short re-arm delay given to the newly tagged chaser in the visual game. */
@@ -72,6 +78,81 @@ export function advanceRoleTimers(agents: AgentState[], deltaTime: number): void
       agent.timeSinceBecameIt = 0;
     }
   }
+}
+
+export interface ChaseEscapeEvaluation {
+  escaped: boolean;
+  chaserId: number | null;
+  runnerCount: number;
+  groupSpanX: number;
+  groupSpanY: number;
+  maxChaserRunnerDistancePx: number;
+  /** Reference-view zoom needed to keep the full chase group inside the safe camera frame. */
+  requiredReferenceZoom: number;
+}
+
+/**
+ * Detect when the active Chaser has lost the Runner group beyond the minimum useful camera frame.
+ * This deliberately uses the invariant 1200x800 world reference rather than DOM dimensions, so
+ * the exact same separation is an escape in workers, benchmarks and the champion view.
+ */
+export function evaluateChaseEscape(agents: AgentState[]): ChaseEscapeEvaluation {
+  const chaser = agents.find(agent => agent.status === AgentStatus.It) || null;
+  const runners = chaser ? agents.filter(agent => agent.id !== chaser.id && agent.status !== AgentStatus.It) : [];
+  if (!chaser || runners.length === 0) {
+    return {
+      escaped: false,
+      chaserId: chaser?.id ?? null,
+      runnerCount: runners.length,
+      groupSpanX: 0,
+      groupSpanY: 0,
+      maxChaserRunnerDistancePx: 0,
+      requiredReferenceZoom: Infinity,
+    };
+  }
+
+  const chaseGroup = [chaser, ...runners];
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const agent of chaseGroup) {
+    minX = Math.min(minX, agent.position.x);
+    maxX = Math.max(maxX, agent.position.x + AGENT_WIDTH);
+    minY = Math.min(minY, agent.position.y);
+    maxY = Math.max(maxY, agent.position.y + AGENT_HEIGHT);
+  }
+
+  const groupSpanX = Math.max(AGENT_WIDTH, maxX - minX);
+  const groupSpanY = Math.max(AGENT_HEIGHT, maxY - minY);
+  const safeReferenceWidth = Math.max(1, WORLD_REF_WIDTH - CAMERA_FRAME_PADDING_REFERENCE_PX * 2);
+  const safeReferenceHeight = Math.max(1, WORLD_REF_HEIGHT - CAMERA_FRAME_PADDING_REFERENCE_PX * 2);
+  const requiredReferenceZoom = Math.min(
+    safeReferenceWidth / groupSpanX,
+    safeReferenceHeight / groupSpanY
+  );
+
+  const cx = chaser.position.x + AGENT_WIDTH / 2;
+  const cy = chaser.position.y + AGENT_HEIGHT / 2;
+  let maxChaserRunnerDistancePx = 0;
+  for (const runner of runners) {
+    const rx = runner.position.x + AGENT_WIDTH / 2;
+    const ry = runner.position.y + AGENT_HEIGHT / 2;
+    maxChaserRunnerDistancePx = Math.max(maxChaserRunnerDistancePx, Math.hypot(rx - cx, ry - cy));
+  }
+
+  return {
+    escaped:
+      groupSpanX > CHASE_ESCAPE_MAX_GROUP_SPAN_X ||
+      groupSpanY > CHASE_ESCAPE_MAX_GROUP_SPAN_Y ||
+      requiredReferenceZoom < CAMERA_MIN_USEFUL_AUTO_ZOOM,
+    chaserId: chaser.id,
+    runnerCount: runners.length,
+    groupSpanX,
+    groupSpanY,
+    maxChaserRunnerDistancePx,
+    requiredReferenceZoom,
+  };
 }
 
 /**

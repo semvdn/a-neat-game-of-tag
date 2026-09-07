@@ -543,12 +543,13 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
           <div className="max-w-7xl mx-auto space-y-5">
             <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-10 gap-3">
               <MetricCard label="Generation" value={generation} hint="one full population evaluation" />
-              <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} hint="tags − own falls; no exploration shaping" />
+              <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} hint="tags − own falls − escape failures; no exploration shaping" />
               <MetricCard label="Runner best" value={fmt(evaderMetrics?.bestFitness)} hint="−tags − own falls + capped pace-window reward" />
               <MetricCard label="Species C / R" value={`${chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.speciesCount ?? '—'}`} hint={`reproducing ${chaserMetrics?.reproductiveSpeciesCount ?? chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.reproductiveSpeciesCount ?? evaderMetrics?.speciesCount ?? '—'}`} />
               <MetricCard label="Tag rate" value={balance ? `${(balance.tagRate * 100).toFixed(1)}%` : '—'} hint="contact tags only" />
               <MetricCard label="Runner clean survival" value={balance ? `${(balance.survivalRate * 100).toFixed(1)}%` : '—'} hint="no tag and no runner fall" />
               <MetricCard label="Chaser fall rate" value={balance?.chaserFallRate != null ? `${(balance.chaserFallRate * 100).toFixed(1)}%` : '—'} hint={balance?.chaserFalls != null ? `${balance.chaserFalls} matches with chaser fall` : 'population matches'} />
+              <MetricCard label="Chaser escape rate" value={balance?.chaserEscapeRate != null ? `${(balance.chaserEscapeRate * 100).toFixed(1)}%` : '—'} hint={balance?.chaserEscapes != null ? `${balance.chaserEscapes} matches exceeded the 50% camera envelope` : 'terminal chase-separation failures'} />
               <MetricCard label="Runner fall rate" value={balance?.runnerFallRate != null ? `${(balance.runnerFallRate * 100).toFixed(1)}%` : '—'} hint={balance?.runnerFalls != null ? `${balance.runnerFalls} matches with runner fall` : 'population matches'} />
               <MetricCard label="Avg tag time" value={balance?.avgTagTimeMs != null ? `${(balance.avgTagTimeMs / 1000).toFixed(2)}s` : '—'} hint="when a contact tag occurs" />
               <MetricCard label="Matches" value={balance?.matches ?? '—'} hint="last completed generation" />
@@ -573,9 +574,9 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="grid md:grid-cols-2 xl:grid-cols-5 gap-3">
-              <MetricCard label="Retained Chaser" value={retainedChaser ? `g${retainedChaser.generation}` : '—'} hint={retainedChaser ? `generalist ${retainedChaser.score.toFixed(1)} · benchmark ${retainedChaser.benchmark.meanFitness.toFixed(1)} · contemporary clean tags ${(retainedChaser.contemporaryCleanTagsPerEpisode ?? 0).toFixed(2)}/ep` : 'best validated generalist so far'} />
+              <MetricCard label="Retained Chaser" value={retainedChaser ? `g${retainedChaser.generation}` : '—'} hint={retainedChaser ? `generalist ${retainedChaser.score.toFixed(1)} · benchmark ${retainedChaser.benchmark.meanFitness.toFixed(1)} · escapes ${(retainedChaser.benchmark.escapeFailuresPerEpisode ?? 0).toFixed(2)}/ep · contemporary clean tags ${(retainedChaser.contemporaryCleanTagsPerEpisode ?? 0).toFixed(2)}/ep` : 'best validated generalist so far'} />
               <MetricCard label="Retained Runner" value={retainedRunner ? `g${retainedRunner.generation}` : '—'} hint={retainedRunner ? `generalist ${retainedRunner.score.toFixed(1)} · ${((retainedRunner.benchmark.paceCompletion ?? 0) * 100).toFixed(0)}% benchmark pace · contemporary ${((retainedRunner.contemporaryPaceCompletion ?? 0) * 100).toFixed(0)}% pace` : 'best validated generalist so far'} />
-              <MetricCard label="Showcase pair" value={showcase ? `g${showcase.chaserGeneration} / g${showcase.runnerGeneration}` : '—'} hint={showcase ? `${(showcase.cleanTagsPerEpisode ?? showcase.tagsPerEpisode).toFixed(1)} clean / ${showcase.tagsPerEpisode.toFixed(1)} total tags · ${showcase.closeEncountersPerEpisode.toFixed(1)} close · ${(showcase.runnerPaceCompletion * 100).toFixed(0)}% pace` : 'non-breeding archived pair chosen for readable mutual gameplay'} />
+              <MetricCard label="Showcase pair" value={showcase ? `g${showcase.chaserGeneration} / g${showcase.runnerGeneration}` : '—'} hint={showcase ? `${(showcase.cleanTagsPerEpisode ?? showcase.tagsPerEpisode).toFixed(1)} clean / ${showcase.tagsPerEpisode.toFixed(1)} total tags · ${(showcase.chaserEscapesPerEpisode ?? 0).toFixed(2)} escapes · ${showcase.closeEncountersPerEpisode.toFixed(1)} close · ${(showcase.runnerPaceCompletion * 100).toFixed(0)}% pace` : 'non-breeding archived pair chosen for readable mutual gameplay'} />
               <MetricCard label="Chaser soft pursuit" value={retainedChaser?.contemporaryPursuitScore != null ? retainedChaser.contemporaryPursuitScore.toFixed(1) : '—'} hint={retainedChaser ? `tag ${fmt(retainedChaser.contemporaryPursuitCleanTagScore)} · closing ${fmt(retainedChaser.contemporaryPursuitClosingScore)} · threat ${fmt(retainedChaser.contemporaryPursuitThreatScore)} · encounters ${fmt(retainedChaser.contemporaryPursuitEncounterScore)}` : '0–100 multi-distance retention evidence'} />
               <MetricCard label="Retention margin" value="+1.5" hint="challenger must clearly beat incumbent; population breeding uses the separate robust matchup score" />
             </div>
@@ -667,19 +668,20 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-              <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-rose-300" /><h3 className="font-semibold text-white">Fall rate by generation</h3></div>
+              <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-rose-300" /><h3 className="font-semibold text-white">Failure rate by generation</h3></div>
               <LineChart
                 series={[
                   { label: 'Chaser fall %', values: balanceHistory.map(m => (m.chaserFallRate ?? 0) * 100) },
+                  { label: 'Chaser escape %', values: balanceHistory.map(m => (m.chaserEscapeRate ?? 0) * 100) },
                   { label: 'Runner fall %', values: balanceHistory.map(m => (m.runnerFallRate ?? 0) * 100) },
                 ]}
-                emptyLabel="Complete generations to populate the fall-rate chart."
+                emptyLabel="Complete generations to populate the failure-rate chart."
               />
-              <p className="mt-2 text-xs text-gray-500">Rate = percentage of fixed-horizon current-population evaluation matches containing at least one fall by that role. Matches continue after falls and tags; Hall-of-Fame tests are excluded.</p>
+              <p className="mt-2 text-xs text-gray-500">Failure telemetry covers current-population matches only. Fall rates count matches containing the corresponding fall; escape rate counts matches terminated because the complete chase group would require less than 50% reference zoom to remain readable. Falls/tags normally continue; an escape ends the chase immediately. Hall-of-Fame tests are excluded.</p>
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> persistent NEAT species now carry lineage age and progress across generations, with conservative stagnation pruning and protected young/top lineages. The compact 23-input world-relative policy now has a signed horizontal-drive output plus independent jump and sprint outputs, so horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities. Every genome is evaluated against common opponent panels plus Hall of Fame champions. Recent champions are retained alongside a strength-aware behaviorally diverse historical archive, while a separate fixed benchmark tracks cross-generation progress and now gates only visible/generalist champion retention, never population breeding. Runner shaping is a capped 2-second pace requirement plus a small capped clean pressure-escape bonus, and Chaser shaping gives a small capped signal for safely following Runner-used terrain. Jump requires a release before it can fire again, and later procedural terrain can branch into upper/lower routes that reconnect. The worker pool preloads genomes and batches episodes for lower messaging overhead.
+              <strong className="text-violet-200">Training architecture:</strong> persistent NEAT species now carry lineage age and progress across generations, with conservative stagnation pruning and protected young/top lineages. The compact 23-input world-relative policy now has a signed horizontal-drive output plus independent jump and sprint outputs, so horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities. Every genome is evaluated against common opponent panels plus Hall of Fame champions. Recent champions are retained alongside a strength-aware behaviorally diverse historical archive, while a separate fixed benchmark tracks cross-generation progress and now gates only visible/generalist champion retention, never population breeding. Runner shaping is a capped 2-second pace requirement plus a small capped clean pressure-escape bonus, and Chaser shaping gives a small capped signal for safely following Runner-used terrain. A chase now also terminates as a Chaser failure if the group exceeds the minimum useful 50% camera framing envelope, preventing runaway separation from becoming an unwatchable strategy. Jump requires a release before it can fire again, and later procedural terrain can branch into upper/lower routes that reconnect. The worker pool preloads genomes and batches episodes for lower messaging overhead.
             </div>
           </div>
         )}

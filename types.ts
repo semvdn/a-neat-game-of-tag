@@ -253,12 +253,16 @@ export interface BalanceTelemetry {
   /** Fraction of population matches with no tag and no runner fall. */
   survivalRate: number;
   avgTagTimeMs: number | null;
-  /** Fixed-horizon population matches containing at least one chaser fall. */
+  /** Population matches containing at least one chaser fall. */
   chaserFalls?: number;
-  /** Fixed-horizon population matches containing at least one runner fall. */
+  /** Population matches containing at least one runner fall. */
   runnerFalls?: number;
   /** Fraction of population matches containing at least one chaser fall. */
   chaserFallRate?: number;
+  /** Population matches that ended because the chase group exceeded the minimum useful camera envelope. */
+  chaserEscapes?: number;
+  /** Fraction of population matches ending in a Chaser escape failure. */
+  chaserEscapeRate?: number;
   /** Fraction of population matches containing at least one runner fall. */
   runnerFallRate?: number;
   /** Mean SAFE rightward progression, averaged across the two runner slots, per scored match. */
@@ -301,6 +305,8 @@ export interface BenchmarkRoleTelemetry {
   matches: number;
   tagsPerEpisode: number;
   ownFallsPerEpisode: number;
+  /** Chaser-only camera-envelope escape failures; zero for Runner benchmarks. */
+  escapeFailuresPerEpisode?: number;
   /** Fraction of policy decisions with net rightward drive (right − left) above the active threshold. */
   rightActionShare: number;
   /** Fraction of decisions with jump output above the active threshold. */
@@ -395,6 +401,7 @@ export interface ShowcasePairTelemetry {
   closeEncountersPerEpisode: number;
   successfulEvadesPerEpisode: number;
   chaserFallsPerEpisode: number;
+  chaserEscapesPerEpisode?: number;
   runnerFallsPerEpisode: number;
   branchLandingsPerEpisode: number;
 }
@@ -410,6 +417,7 @@ export interface DiagnosticsState {
   totalTags: number;
   totalFalls: number;
   totalChaserFalls?: number;
+  totalChaserEscapes?: number;
   totalRunnerFalls?: number;
   totalSuccessfulJumps: number;
   actionDistribution: Record<string, number>;
