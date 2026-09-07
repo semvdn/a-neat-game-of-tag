@@ -122,7 +122,7 @@ const DEFAULT_TRAINING_FITNESS_CONFIG: TrainingFitnessConfig = {
 let trainingFitnessConfig: TrainingFitnessConfig = { ...DEFAULT_TRAINING_FITNESS_CONFIG };
 let terrainVarietyConfig: TerrainVarietyConfig = { ...DEFAULT_TERRAIN_VARIETY_CONFIG };
 
-interface PursuitExperimentRuntimeFlags {
+interface PursuitDesignRuntimeFlags {
   pressureStarts: boolean;
   crossPlayGate: boolean;
   strictContemporaryGate: boolean;
@@ -130,9 +130,9 @@ interface PursuitExperimentRuntimeFlags {
   cleanTagShowcase: boolean;
 }
 
-// Permanent camera-decoupled pursuit baseline selected from the B/C experiment series. Physics and
-// curriculum stay on B; only champion retention adopts the softer multi-distance signal described
-// below. This same configuration is also used by the visible simulation outside temporary tests.
+// Permanent camera-decoupled pursuit design. Physics, curriculum, soft multi-distance retention,
+// league opponents and clean-tag showcase behavior are the normal training rules and are shared
+// with the visible simulation.
 const BASELINE_PURSUIT_DESIGN: PursuitDesignConfig = {
   chaserBaseMaxSpeed: 5.7,
   runnerBaseMaxSpeed: 5.0,
@@ -149,7 +149,7 @@ const BASELINE_PURSUIT_DESIGN: PursuitDesignConfig = {
   postFallRunnerTagProtectionMs: 900,
   branchStructureMinX: 650,
 };
-const BASELINE_PURSUIT_FLAGS: PursuitExperimentRuntimeFlags = {
+const BASELINE_PURSUIT_FLAGS: PursuitDesignRuntimeFlags = {
   pressureStarts: true,
   crossPlayGate: false,
   strictContemporaryGate: false,
@@ -157,7 +157,7 @@ const BASELINE_PURSUIT_FLAGS: PursuitExperimentRuntimeFlags = {
   cleanTagShowcase: true,
 };
 let activePursuitDesign: PursuitDesignConfig | null = { ...BASELINE_PURSUIT_DESIGN };
-let activePursuitExperimentFlags: PursuitExperimentRuntimeFlags = { ...BASELINE_PURSUIT_FLAGS };
+let activePursuitDesignFlags: PursuitDesignRuntimeFlags = { ...BASELINE_PURSUIT_FLAGS };
 
 
 function sanitizeTrainingFitnessConfig(value?: Partial<TrainingFitnessConfig>): TrainingFitnessConfig {
@@ -274,7 +274,7 @@ interface EvolutionCheckpoint {
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   /** Fitness semantics marker for compatibility with checkpoints created before right-only exploration. */
   explorationRewardMode?: 'safe-per-runner-right-frontier';
-  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5' | 'hybrid-soft-pursuit-v6' | 'hybrid-soft-pursuit-terrain-v7' | 'hybrid-soft-pursuit-terrain-escape-v8';
+  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5' | 'hybrid-soft-pursuit-v6' | 'hybrid-soft-pursuit-terrain-v7' | 'hybrid-soft-pursuit-terrain-escape-v8' | 'hybrid-soft-pursuit-terrain-natural-v9';
   actionSchema?: 'signed-horizontal-controls-v2';
   stateSchema?: 'world-relative-senses-v3';
   horizontalControlResolution?: 'signed-axis-v2';
@@ -465,55 +465,8 @@ let generationDirectionConflictCountEvader = 0;
 let lastGenerationBalance: BalanceTelemetry | null = null;
 const MAX_ANALYSIS_HISTORY = 2000;
 const MAX_CHECKPOINT_ANALYSIS_HISTORY = 500;
-const MAX_EXPERIMENT_RESTORE_HISTORY = 1000;
 const analysisHistory: TrainingGenerationAnalysisRecord[] = [];
 let latestSafeCheckpoint: EvolutionCheckpoint | null = null;
-
-interface ArchitectureExperimentDefinition {
-  id: 'hybrid_soft_pursuit';
-  label: string;
-  hypothesis: string;
-  architecture: NetworkArchitectureSuiteConfig;
-  pursuitDesign: PursuitDesignConfig;
-  pressureStarts: boolean;
-  crossPlayGate: boolean;
-  strictContemporaryGate: boolean;
-  softMultiDistancePursuit: boolean;
-  cleanTagShowcase: boolean;
-}
-
-interface ArchitectureExperimentResult {
-  id: ArchitectureExperimentDefinition['id'];
-  label: string;
-  hypothesis: string;
-  startedAt: number;
-  completedAt: number;
-  wallTimeMs: number;
-  targetGeneration: number;
-  architecture: NetworkArchitectureSuiteConfig;
-  pursuitDesign: PursuitDesignConfig;
-  pressureStarts: boolean;
-  crossPlayGate: boolean;
-  strictContemporaryGate: boolean;
-  softMultiDistancePursuit: boolean;
-  cleanTagShowcase: boolean;
-  analysis: ReturnType<typeof buildAnalysisExport>;
-}
-
-interface ArchitectureExperimentSuiteState {
-  targetGeneration: number;
-  startedAt: number;
-  currentIndex: number;
-  currentStartedAt: number;
-  definitions: ArchitectureExperimentDefinition[];
-  results: ArchitectureExperimentResult[];
-  originalCheckpoint: EvolutionCheckpoint;
-  originalWasRunning: boolean;
-  sharedBenchmarkChaser: NeatGenomeData[] | null;
-  sharedBenchmarkRunner: NeatGenomeData[] | null;
-}
-
-let architectureExperimentSuite: ArchitectureExperimentSuiteState | null = null;
 
 let totalTags = 0;
 let totalFalls = 0;
@@ -894,7 +847,7 @@ function evaluateGeneralistCrossPlay(genome: NeatGenomeData, role: 'chaser' | 'e
   const opponents = generalistCrossPlayOpponents(role);
   if (opponents.length === 0) return { meanFitness: 100, matches: 0 };
   const candidate = new LearningAgent(role, genome);
-  const modes: TrainingStartMode[] = activePursuitExperimentFlags.pressureStarts
+  const modes: TrainingStartMode[] = activePursuitDesignFlags.pressureStarts
     ? ['pressure', 'varied', 'midgame']
     : ['visual', 'varied', 'midgame'];
   let fitnessTotal = 0;
@@ -1031,7 +984,7 @@ function evaluateGeneralistCandidate(
   const benchmark = cachedBenchmark || evaluateFixedBenchmark(genome, role);
   const benchmarkScore = generalistValidationScore(role, benchmark.telemetry);
   const crossPlay = evaluateGeneralistCrossPlay(genome, role);
-  const contemporary = (activePursuitExperimentFlags.strictContemporaryGate || activePursuitExperimentFlags.softMultiDistancePursuit)
+  const contemporary = (activePursuitDesignFlags.strictContemporaryGate || activePursuitDesignFlags.softMultiDistancePursuit)
     ? evaluateContemporaryMatchup(genome, role)
     : { meanFitness: 100, matches: 0, cleanTagsPerEpisode: 0, paceCompletion: 0, timeWithin200Pct: 0, closeEncountersPerEpisode: 0, failureEventsPerEpisode: 0, normalLongClosingPx: 0, normalLongTimeWithin200Pct: 0, normalLongCloseEncountersPerEpisode: 0 };
   const pursuitScore = role === 'chaser' ? softMultiDistancePursuitScore(contemporary) : { total: 0, cleanTag: 0, closing: 0, threat: 0, encounters: 0 };
@@ -1039,12 +992,12 @@ function evaluateGeneralistCandidate(
   // This keeps B's generalization/exploration pressure while preserving the useful pursuit signal C
   // discovered without C's brittle pass/fail gate. Runner retention stays on the B-style benchmark
   // plus light cross-play so it cannot trade away pace/platforming merely to survive one opponent.
-  const score = activePursuitExperimentFlags.softMultiDistancePursuit && role === 'chaser' && contemporary.matches > 0
+  const score = activePursuitDesignFlags.softMultiDistancePursuit && role === 'chaser' && contemporary.matches > 0
     ? 0.70 * benchmarkScore + 0.30 * pursuitScore.total
-    : activePursuitExperimentFlags.strictContemporaryGate && contemporary.matches > 0
+    : activePursuitDesignFlags.strictContemporaryGate && contemporary.matches > 0
     ? 0.35 * benchmarkScore + 0.35 * crossPlay.meanFitness + 0.30 * contemporary.meanFitness
     : crossPlay.matches > 0
-      ? activePursuitExperimentFlags.crossPlayGate
+      ? activePursuitDesignFlags.crossPlayGate
         ? 0.40 * benchmarkScore + 0.60 * crossPlay.meanFitness
         : 0.75 * benchmarkScore + 0.25 * crossPlay.meanFitness
       : benchmarkScore;
@@ -1200,13 +1153,13 @@ function considerRetainedGeneralistCandidates(
   let bestScore = -Infinity;
   for (const genome of unique.values()) {
     const evaluation = evaluateGeneralistCandidate(genome, role);
-    if (incumbent && activePursuitExperimentFlags.crossPlayGate) {
+    if (incumbent && activePursuitDesignFlags.crossPlayGate) {
       const benchmarkFloor = incumbentBenchmarkScore >= 0
         ? incumbentBenchmarkScore * 0.90
         : incumbentBenchmarkScore - Math.max(5, Math.abs(incumbentBenchmarkScore) * 0.10);
       if (evaluation.benchmarkScore < benchmarkFloor) continue;
     }
-    if (incumbent && activePursuitExperimentFlags.strictContemporaryGate && !passesStrictContemporaryGate(role, evaluation.contemporary)) {
+    if (incumbent && activePursuitDesignFlags.strictContemporaryGate && !passesStrictContemporaryGate(role, evaluation.contemporary)) {
       continue;
     }
     if (evaluation.score > bestScore) {
@@ -1279,7 +1232,7 @@ function showcaseCandidatePool(role: 'chaser' | 'evader'): NeatGenomeData[] {
 function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGenomeData, generation: number): ShowcasePairTelemetry {
   const chaserController = new LearningAgent('chaser', chaserGenome);
   const runnerController = new LearningAgent('evader', runnerGenome);
-  const modes: TrainingStartMode[] = activePursuitExperimentFlags.pressureStarts
+  const modes: TrainingStartMode[] = activePursuitDesignFlags.pressureStarts
     ? ['pressure', 'varied', 'midgame']
     : ['visual', 'varied', 'midgame'];
   let tags = 0;
@@ -1327,7 +1280,7 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
   const chaserEscapesPerEpisode = chaserEscapes / denom;
   const runnerFallsPerEpisode = runnerFalls / denom;
   const branchLandingsPerEpisode = branches / denom;
-  const showcaseTagRate = activePursuitExperimentFlags.cleanTagShowcase ? cleanTagsPerEpisode : tagsPerEpisode;
+  const showcaseTagRate = activePursuitDesignFlags.cleanTagShowcase ? cleanTagsPerEpisode : tagsPerEpisode;
   const score =
     18 * Math.min(1, runnerPaceCompletion / 0.65) +
     8 * Math.min(3, showcaseTagRate) +
@@ -1337,7 +1290,7 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
     6 * (chaserFallsPerEpisode + chaserEscapesPerEpisode + runnerFallsPerEpisode) -
     3 * Math.max(0, showcaseTagRate - 3) -
     (showcaseTagRate < 0.15 ? 15 : 0) -
-    (activePursuitExperimentFlags.cleanTagShowcase ? 5 * postFallTagsPerEpisode : 0) -
+    (activePursuitDesignFlags.cleanTagShowcase ? 5 * postFallTagsPerEpisode : 0) -
     (closeEncountersPerEpisode < 0.75 ? 10 : 0) -
     (runnerPaceCompletion < 0.35 ? 12 : 0);
   return {
@@ -1609,7 +1562,7 @@ function recordGenerationAnalysis(generation: number): void {
     terrainVarietyConfig: sanitizeTerrainVarietyConfig(terrainVarietyConfig),
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     pursuitDesign: activePursuitDesign ? { ...activePursuitDesign } : null,
-    pursuitExperimentFlags: { ...activePursuitExperimentFlags },
+    pursuitDesignFlags: { ...activePursuitDesignFlags },
     selectionAggregation: '70% mean + 30% lower-quartile fitness',
     historicalOpponentPanel: '50/20/15/15 league: current + strong recent + strongest historical + diverse historical',
     eliteSeeding: {
@@ -1640,7 +1593,7 @@ function buildEvolutionCheckpoint(analysisHistoryLimit = 0): EvolutionCheckpoint
     terrainVarietyConfig: sanitizeTerrainVarietyConfig(terrainVarietyConfig),
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     explorationRewardMode: 'safe-per-runner-right-frontier',
-    gameplayObjectiveVersion: 'hybrid-soft-pursuit-terrain-escape-v8',
+    gameplayObjectiveVersion: 'hybrid-soft-pursuit-terrain-natural-v9',
     actionSchema: 'signed-horizontal-controls-v2',
     stateSchema: 'world-relative-senses-v3',
     horizontalControlResolution: 'signed-axis-v2',
@@ -1701,7 +1654,7 @@ function captureSafeCheckpoint(): void {
 
 function checkpointWithRecentAnalysis(base: EvolutionCheckpoint | null, historyLimit: number): EvolutionCheckpoint {
   // Frequent safe checkpoints intentionally carry no analysis history. Add a bounded diagnostic
-  // tail only for explicit user saves or the one-off temporary experiment restore snapshot.
+  // tail only for explicit user saves; routine generation checkpoints stay compact.
   const checkpoint = cloneCheckpoint(base || buildEvolutionCheckpoint(0));
   checkpoint.telemetry.analysisHistory = JSON.parse(JSON.stringify(
     analysisHistory.slice(-Math.max(0, Math.floor(historyLimit)))
@@ -1727,7 +1680,7 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
   upgradeConfig = sanitizeUpgradeConfig(checkpoint.upgradeConfig);
   const migratedExplorationFitness = !checkpoint.trainingFitnessConfig;
   const migratedExplorationRewardMode = checkpoint.explorationRewardMode !== 'safe-per-runner-right-frontier';
-  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'hybrid-soft-pursuit-terrain-escape-v8';
+  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'hybrid-soft-pursuit-terrain-natural-v9';
   const migratedHorizontalControl = checkpoint.horizontalControlResolution !== 'signed-axis-v2';
   trainingFitnessConfig = sanitizeTrainingFitnessConfig(checkpoint.trainingFitnessConfig);
   terrainVarietyConfig = sanitizeTerrainVarietyConfig(checkpoint.terrainVarietyConfig);
@@ -1825,7 +1778,7 @@ function commonPopulationOpponentIndices(
 }
 
 function populationStartMode(round: number): TrainingStartMode {
-  if (activePursuitExperimentFlags.pressureStarts) {
+  if (activePursuitDesignFlags.pressureStarts) {
     // Full pursuit curriculum mixes direct pressure with varied and true mid-game states.
     if (round === 0) return 'pressure';
     if (round === 1) return 'varied';
@@ -1837,7 +1790,7 @@ function populationStartMode(round: number): TrainingStartMode {
 }
 
 function historicalStartMode(round: number): TrainingStartMode {
-  if (!activePursuitExperimentFlags.pressureStarts) return 'midgame';
+  if (!activePursuitDesignFlags.pressureStarts) return 'midgame';
   return round % 2 === 0 ? 'pressure' : 'midgame';
 }
 
@@ -2383,9 +2336,8 @@ function maybeFinishParallelGeneration() {
 
   const completedEpoch = evaluationEpoch;
   finishGeneration();
-  // A temporary architecture experiment may reset/restore the whole run from inside the generation
-  // boundary. In that case finishGeneration() has already invalidated the old epoch and may have
-  // dispatched the next experiment, so do not clobber its freshly prepared state here.
+  // A reset/restore can invalidate the current evaluation epoch at a generation boundary.
+  // If that happened, do not clobber the newly prepared state.
   if (evaluationEpoch !== completedEpoch) return;
   parallelGenerationPrepared = false;
   if (isRunning) {
@@ -2720,303 +2672,6 @@ function cloneCheckpoint<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function architectureExperimentDefinitions(): ArchitectureExperimentDefinition[] {
-  const fixedArchitecture: NetworkArchitectureSuiteConfig = sanitizeNetworkArchitectureSuite({
-    linkedRoles: true,
-    chaser: { ...NETWORK_ARCHITECTURE_PRESETS.memory_evolve, hiddenLayers: [...NETWORK_ARCHITECTURE_PRESETS.memory_evolve.hiddenLayers] },
-    runner: { ...NETWORK_ARCHITECTURE_PRESETS.memory_evolve, hiddenLayers: [...NETWORK_ARCHITECTURE_PRESETS.memory_evolve.hiddenLayers] },
-  });
-  return [
-    {
-      id: 'hybrid_soft_pursuit',
-      label: 'D · Hybrid soft-pursuit league',
-      hypothesis: 'Validates the camera-decoupled hybrid pursuit baseline with soft multi-distance retention, league opponents, the current route-locked recursive/moving terrain configuration, and light elite seeding.',
-      architecture: fixedArchitecture,
-      pursuitDesign: { ...BASELINE_PURSUIT_DESIGN },
-      pressureStarts: true,
-      crossPlayGate: false,
-      strictContemporaryGate: false,
-      softMultiDistancePursuit: true,
-      cleanTagShowcase: true,
-    },
-  ];
-}
-
-function installSharedExperimentBenchmark(suite: ArchitectureExperimentSuiteState): void {
-  if (!suite.sharedBenchmarkChaser || !suite.sharedBenchmarkRunner) {
-    suite.sharedBenchmarkChaser = benchmarkChaserReferences.map(ref => cloneGenome(ref.genome));
-    suite.sharedBenchmarkRunner = benchmarkEvaderReferences.map(ref => cloneGenome(ref.genome));
-    benchmarkSuiteRevision = 1;
-    lastCrossGenerationBenchmark = null;
-    return;
-  }
-  benchmarkChaserReferences = suite.sharedBenchmarkChaser.map(genome => ({
-    genome: cloneGenome(genome),
-    controller: new LearningAgent('chaser', genome),
-  }));
-  benchmarkEvaderReferences = suite.sharedBenchmarkRunner.map(genome => ({
-    genome: cloneGenome(genome),
-    controller: new LearningAgent('evader', genome),
-  }));
-  benchmarkSuiteRevision = 1;
-  lastCrossGenerationBenchmark = null;
-}
-
-function postArchitectureExperimentStatus(generation = 0, message?: string): void {
-  const suite = architectureExperimentSuite;
-  if (!suite) return;
-  const current = suite.definitions[suite.currentIndex];
-  self.postMessage({
-    type: 'ARCHITECTURE_EXPERIMENT_STATUS',
-    payload: {
-      running: true,
-      currentIndex: suite.currentIndex,
-      totalExperiments: suite.definitions.length,
-      experimentId: current?.id || null,
-      label: current?.label || 'Preparing experiment',
-      generation,
-      targetGeneration: suite.targetGeneration,
-      completedExperiments: suite.results.length,
-      pursuitDesign: current ? { ...current.pursuitDesign } : null,
-      pressureStarts: current?.pressureStarts || false,
-      crossPlayGate: current?.crossPlayGate || false,
-      strictContemporaryGate: current?.strictContemporaryGate || false,
-      softMultiDistancePursuit: current?.softMultiDistancePursuit || false,
-      cleanTagShowcase: current?.cleanTagShowcase || false,
-      message: message || null,
-    },
-  });
-}
-
-function startArchitectureExperimentRun(index: number): void {
-  const suite = architectureExperimentSuite;
-  if (!suite) return;
-  suite.currentIndex = index;
-  suite.currentStartedAt = Date.now();
-  const definition = suite.definitions[index];
-
-  // Configure at a clean boundary without allowing resetEntireEvolutionRun() to immediately launch
-  // evaluator work before the shared benchmark bank has been installed.
-  isRunning = false;
-  if (timerId) clearTimeout(timerId);
-  networkArchitecture = sanitizeNetworkArchitectureSuite(definition.architecture);
-  activePursuitDesign = { ...definition.pursuitDesign };
-  activePursuitExperimentFlags = {
-    pressureStarts: definition.pressureStarts,
-    crossPlayGate: definition.crossPlayGate,
-    strictContemporaryGate: definition.strictContemporaryGate,
-    softMultiDistancePursuit: definition.softMultiDistancePursuit,
-    cleanTagShowcase: definition.cleanTagShowcase,
-  };
-  resetEntireEvolutionRun();
-  installSharedExperimentBenchmark(suite);
-  captureSafeCheckpoint();
-  isRunning = true;
-  resetTrainingThroughput();
-  postArchitectureExperimentStatus(0, `Running ${definition.label}`);
-  startTrainingEngine();
-}
-
-function architectureExperimentSummary(result: ArchitectureExperimentResult) {
-  const analysis = result.analysis;
-  const benchmark = analysis.current.benchmark;
-  const balance = analysis.current.balance;
-  const chaserMetrics = analysis.current.chaserMetrics;
-  const runnerMetrics = analysis.current.runnerMetrics;
-  return {
-    id: result.id,
-    label: result.label,
-    targetGeneration: result.targetGeneration,
-    wallTimeMs: result.wallTimeMs,
-    completedEpisodes: analysis.current.completedEpisodes,
-    episodesPerSecondWall: analysis.current.completedEpisodes / Math.max(0.001, result.wallTimeMs / 1000),
-    chaser: {
-      benchmarkFitness: benchmark?.chaser.meanFitness ?? null,
-      benchmarkTagsPerEpisode: benchmark?.chaser.tagsPerEpisode ?? null,
-      benchmarkFallsPerEpisode: benchmark?.chaser.ownFallsPerEpisode ?? null,
-      benchmarkDirectionConflictShare: benchmark?.chaser.directionConflictShare ?? null,
-      generalist: analysis.current.generalistChampions.chaser,
-      hiddenLayers: chaserMetrics?.championHiddenLayers ?? null,
-      hiddenNodes: chaserMetrics?.championHiddenNodes ?? null,
-      recurrentConnections: chaserMetrics?.championRecurrentConnections ?? null,
-      totalConnections: chaserMetrics?.championConnections ?? null,
-    },
-    runner: {
-      benchmarkFitness: benchmark?.evader.meanFitness ?? null,
-      benchmarkTagsPerEpisode: benchmark?.evader.tagsPerEpisode ?? null,
-      benchmarkFallsPerEpisode: benchmark?.evader.ownFallsPerEpisode ?? null,
-      benchmarkPaceCompletion: benchmark?.evader.paceCompletion ?? null,
-      benchmarkDirectionConflictShare: benchmark?.evader.directionConflictShare ?? null,
-      generalist: analysis.current.generalistChampions.runner,
-      hiddenLayers: runnerMetrics?.championHiddenLayers ?? null,
-      hiddenNodes: runnerMetrics?.championHiddenNodes ?? null,
-      recurrentConnections: runnerMetrics?.championRecurrentConnections ?? null,
-      totalConnections: runnerMetrics?.championConnections ?? null,
-    },
-    interaction: balance ? {
-      tagRate: balance.tagRate,
-      chaserFallRate: balance.chaserFallRate,
-      runnerFallRate: balance.runnerFallRate,
-      runnerPaceCompletion: balance.runnerPaceCompletion,
-      runnerPaceShortfallPenaltyPerEpisode: balance.runnerPaceShortfallPenaltyPerEpisode,
-      runnerPressureEscapeBonusPerEpisode: balance.runnerPressureEscapeBonusPerEpisode,
-      chaserProximityBonusPerEpisode: balance.chaserProximityBonusPerEpisode,
-      chaserDirectionConflictShare: balance.chaserDirectionConflictShare,
-      runnerDirectionConflictShare: balance.runnerDirectionConflictShare,
-      closeEncountersPerEpisode: balance.closeEncountersPerEpisode,
-      successfulEvadesPerEpisode: balance.successfulEvadesPerEpisode,
-      meanNearestRunnerDistancePx: balance.meanNearestRunnerDistancePx,
-      timeWithin100Pct: balance.timeWithin100Pct,
-      timeWithin200Pct: balance.timeWithin200Pct,
-      timeWithin400Pct: balance.timeWithin400Pct,
-      tagsSoonAfterRunnerFallPerEpisode: balance.tagsSoonAfterRunnerFallPerEpisode,
-      cleanTagsPerEpisode: balance.cleanTagsPerEpisode,
-      runnerPlatformLandingsPerEpisode: balance.runnerPlatformLandingsPerEpisode,
-      chaserPlatformLandingsPerEpisode: balance.chaserPlatformLandingsPerEpisode,
-      runnerBranchLandingsPerEpisode: balance.runnerBranchLandingsPerEpisode,
-      chaserBranchLandingsPerEpisode: balance.chaserBranchLandingsPerEpisode,
-    } : null,
-  };
-}
-
-function restoreRunAfterArchitectureExperiments(suite: ArchitectureExperimentSuiteState): void {
-  // The suite owns this immutable restore snapshot. Re-cloning it here creates a needless second
-  // full population/history graph exactly at experiment completion, when memory pressure is highest.
-  const originalCheckpoint = suite.originalCheckpoint;
-  const originalWasRunning = suite.originalWasRunning;
-  activePursuitDesign = { ...BASELINE_PURSUIT_DESIGN };
-  activePursuitExperimentFlags = { ...BASELINE_PURSUIT_FLAGS };
-  isRunning = false;
-  if (timerId) clearTimeout(timerId);
-  restoreEvolutionCheckpoint(originalCheckpoint);
-  isRunning = originalWasRunning;
-  if (isRunning) startTrainingEngine();
-  else emitTelemetry(true);
-}
-
-function completeArchitectureExperimentSuite(): void {
-  const suite = architectureExperimentSuite;
-  if (!suite) return;
-  const completedAt = Date.now();
-  const report = {
-    format: 'neat-tag-pursuit-design-experiment-suite',
-    version: 5,
-    generatedAt: completedAt,
-    targetGeneration: suite.targetGeneration,
-    experiments: suite.results,
-    comparison: suite.results.map(architectureExperimentSummary),
-    methodology: {
-      experiments: suite.definitions.map(({ id, label, hypothesis, architecture, pursuitDesign, pressureStarts, crossPlayGate, strictContemporaryGate, softMultiDistancePursuit, cleanTagShowcase }) => ({
-        id, label, hypothesis, architecture, pursuitDesign, pressureStarts, crossPlayGate, strictContemporaryGate, softMultiDistancePursuit, cleanTagShowcase,
-      })),
-      controlledGameSettingsAcrossRuns: true,
-      deliberatePursuitDesignDifferencesAcrossRuns: false,
-      sameUpgradeSettingsAcrossRuns: true,
-      sharedFrozenBenchmarkOpponentBank: true,
-      stationaryCollapseFix: {
-        horizontalControlResolution: 'signed-axis-v2',
-        paceShortfallPenaltyFraction: 2 / 3,
-        directionConflictTelemetry: true,
-      },
-      fixedArchitectureAcrossRuns: 'Memory Discovery (16→12 feed-forward start, recurrence may evolve)',
-      fullPursuitFrameworkAcrossRuns: 'camera-decoupled B physics + pressure starts + proximity bootstrap + soft multi-distance retention + 50/20/15/15 league + current route-locked recursive/moving terrain + light elite seeding',
-      leagueOpponentMix: '50% current population + 20% strong recent + 15% strongest historical + 15% behaviorally diverse historical (deterministic long-run mix)',
-      eliteSeeding: 'Up to two distinct retained/recent elite genomes per role replace tail offspring; fitness resets to zero and they are evaluated normally.',
-      robustSelectionAcrossRuns: '70% mean fitness + 30% lower-quartile fitness',
-      retainedChaserSelection: '70% frozen benchmark generalist score + 30% soft 0..100 multi-distance pursuit score; no hard pass/fail pursuit gate.',
-      pursuitScore: '30% clean tags + 35% normal/long closing + 20% time within 200px + 15% normal/long close encounters, each smoothly saturated.',
-      exportedHistorySampling: 'Every 5 generations plus first/final generation; final state and deterministic probes remain full detail.',
-      cameraPhysics: 'Presentation camera is observational only; agents are never clamped to the viewport, respawns are world-relative, and platform retention covers all active agents.',
-      policyState: '23 world-relative inputs; camera-boundary inputs removed.',
-      notes: 'The validation run starts from a fresh population using the integrated hybrid design. The user\'s original run is restored after export.',
-    },
-    suiteWallTimeMs: completedAt - suite.startedAt,
-  };
-  // Serialize inside the worker while the report is still compact. Sending the object itself would
-  // make structured clone create a second large object graph in the renderer, followed by another
-  // JSON.stringify copy there. A single compact string keeps the completion peak predictable.
-  const reportJson = JSON.stringify(report);
-  architectureExperimentSuite = null;
-  restoreRunAfterArchitectureExperiments(suite);
-  self.postMessage({
-    type: 'ARCHITECTURE_EXPERIMENT_COMPLETE',
-    payload: { reportJson, targetGeneration: report.targetGeneration },
-  });
-}
-
-function maybeAdvanceArchitectureExperiment(evaluatedGeneration: number): void {
-  const suite = architectureExperimentSuite;
-  if (!suite) return;
-  postArchitectureExperimentStatus(evaluatedGeneration);
-  if (evaluatedGeneration < suite.targetGeneration) return;
-
-  const definition = suite.definitions[suite.currentIndex];
-  const completedAt = Date.now();
-  suite.results.push({
-    id: definition.id,
-    label: definition.label,
-    hypothesis: definition.hypothesis,
-    startedAt: suite.currentStartedAt,
-    completedAt,
-    wallTimeMs: completedAt - suite.currentStartedAt,
-    targetGeneration: suite.targetGeneration,
-    architecture: sanitizeNetworkArchitectureSuite(definition.architecture),
-    pursuitDesign: { ...definition.pursuitDesign },
-    pressureStarts: definition.pressureStarts,
-    crossPlayGate: definition.crossPlayGate,
-    strictContemporaryGate: definition.strictContemporaryGate,
-    softMultiDistancePursuit: definition.softMultiDistancePursuit,
-    cleanTagShowcase: definition.cleanTagShowcase,
-    analysis: buildAnalysisExport(5),
-  });
-
-  const nextIndex = suite.currentIndex + 1;
-  if (nextIndex < suite.definitions.length) {
-    postArchitectureExperimentStatus(evaluatedGeneration, `${definition.label} complete. Starting next experiment…`);
-    startArchitectureExperimentRun(nextIndex);
-  } else {
-    completeArchitectureExperimentSuite();
-  }
-}
-
-function startArchitectureExperimentSuite(targetGeneration: number): void {
-  if (architectureExperimentSuite) throw new Error('An architecture experiment suite is already running.');
-  const target = Math.max(50, Math.min(1500, Math.round(Number(targetGeneration) || 275)));
-  const originalCheckpoint = checkpointWithRecentAnalysis(latestSafeCheckpoint, MAX_EXPERIMENT_RESTORE_HISTORY);
-  architectureExperimentSuite = {
-    targetGeneration: target,
-    startedAt: Date.now(),
-    currentIndex: 0,
-    currentStartedAt: Date.now(),
-    definitions: architectureExperimentDefinitions(),
-    results: [],
-    originalCheckpoint,
-    originalWasRunning: isRunning,
-    sharedBenchmarkChaser: null,
-    sharedBenchmarkRunner: null,
-  };
-  startArchitectureExperimentRun(0);
-}
-
-function cancelArchitectureExperimentSuite(): void {
-  const suite = architectureExperimentSuite;
-  if (!suite) return;
-  const completedExperiments = suite.results.length;
-  architectureExperimentSuite = null;
-  activePursuitDesign = { ...BASELINE_PURSUIT_DESIGN };
-  activePursuitExperimentFlags = { ...BASELINE_PURSUIT_FLAGS };
-  isRunning = false;
-  if (timerId) clearTimeout(timerId);
-  restoreEvolutionCheckpoint(cloneCheckpoint(suite.originalCheckpoint));
-  isRunning = suite.originalWasRunning;
-  if (isRunning) startTrainingEngine();
-  else emitTelemetry(true);
-  self.postMessage({
-    type: 'ARCHITECTURE_EXPERIMENT_CANCELLED',
-    payload: { completedExperiments, message: 'Pursuit-design experiment suite cancelled; original run restored.' },
-  });
-}
-
 function robustSelectionFitness(samples: number[], total: number, count: number): number {
   if (samples.length === 0) return total / Math.max(1, count);
   const mean = samples.reduce((sum, value) => sum + value, 0) / samples.length;
@@ -3142,7 +2797,6 @@ function finishGeneration() {
   resetEvaluationAccumulators();
   refreshControllers();
   captureSafeCheckpoint();
-  maybeAdvanceArchitectureExperiment(evaluatedGeneration);
 }
 
 function average(values: number[]): number {
@@ -3284,8 +2938,8 @@ function buildAnalysisProbeSet(
 }
 
 function compactAnalysisHistoryRecord(record: TrainingGenerationAnalysisRecord) {
-  // Analysis exports omit large repeated configuration blocks. Experiment suites additionally
-  // sample this compact history every few generations; the top-level export records config once.
+  // Analysis exports omit large repeated configuration blocks; the top-level export records
+  // configuration once while generation records stay compact.
   return {
     generation: record.generation,
     recordedAt: record.recordedAt,
@@ -3335,7 +2989,7 @@ function buildAnalysisExport(historyStride = 1) {
 
   return {
     format: 'neat-tag-training-analysis',
-    version: 5,
+    version: 6,
     generatedAt: Date.now(),
     generation: Math.max(lastChaserMetrics?.generation || 0, lastEvaderMetrics?.generation || 0),
     stateVectorSize: STATE_VECTOR_SIZE,
@@ -3343,11 +2997,11 @@ function buildAnalysisExport(historyStride = 1) {
     policyOutputSpace: [...POLICY_OUTPUT_SPACE],
     actionSchema: 'signed-horizontal-controls-v2',
     horizontalControlResolution: 'signed-axis-v2',
-    gameplayObjectiveVersion: 'hybrid-soft-pursuit-terrain-escape-v8',
+    gameplayObjectiveVersion: 'hybrid-soft-pursuit-terrain-natural-v9',
     stateSchema: 'world-relative-senses-v3',
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     pursuitDesign: activePursuitDesign ? { ...activePursuitDesign } : null,
-    pursuitExperimentFlags: { ...activePursuitExperimentFlags },
+    pursuitDesignFlags: { ...activePursuitDesignFlags },
     selectionAggregation: '70% mean + 30% lower-quartile fitness',
     historicalOpponentPanel: '50/20/15/15 league: current + strong recent + strongest historical + diverse historical',
     viewportSize: { ...viewportSize },
@@ -3469,7 +3123,7 @@ function emitTelemetry(force = false) {
       terrainVarietyConfig: sanitizeTerrainVarietyConfig(terrainVarietyConfig),
       networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     pursuitDesign: activePursuitDesign ? { ...activePursuitDesign } : null,
-    pursuitExperimentFlags: { ...activePursuitExperimentFlags },
+    pursuitDesignFlags: { ...activePursuitDesignFlags },
     selectionAggregation: '70% mean + 30% lower-quartile fitness',
     historicalOpponentPanel: '50/20/15/15 league: current + strong recent + strongest historical + diverse historical',
       eliteSeeding: {
@@ -3588,11 +3242,6 @@ self.onmessage = (event: MessageEvent) => {
 
   switch (type) {
     case 'START': {
-      if (architectureExperimentSuite) {
-        isRunning = true;
-        startTrainingEngine();
-        break;
-      }
       if (!seededFromStart) {
         if (payload?.networkArchitecture) networkArchitecture = sanitizeNetworkArchitectureSuite(payload.networkArchitecture);
         chaserPopulation = createFreshPopulation('chaser');
@@ -3630,10 +3279,6 @@ self.onmessage = (event: MessageEvent) => {
     }
 
     case 'SET_NETWORK_ARCHITECTURE': {
-      if (architectureExperimentSuite) {
-        postArchitectureExperimentStatus(Math.max(lastChaserMetrics?.generation || 0, lastEvaderMetrics?.generation || 0), 'Architecture controls are locked while the temporary experiment suite is running.');
-        break;
-      }
       networkArchitecture = sanitizeNetworkArchitectureSuite(payload?.networkArchitecture);
       resetEntireEvolutionRun();
       self.postMessage({
@@ -3644,7 +3289,6 @@ self.onmessage = (event: MessageEvent) => {
     }
 
     case 'SET_UPGRADE_CONFIG': {
-      if (architectureExperimentSuite) break;
       const before = activeUpgradeState();
       upgradeConfig = sanitizeUpgradeConfig(payload?.upgradeConfig);
           const after = activeUpgradeState();
@@ -3669,7 +3313,6 @@ self.onmessage = (event: MessageEvent) => {
     }
 
     case 'SET_TRAINING_FITNESS_CONFIG': {
-      if (architectureExperimentSuite) break;
       const next = sanitizeTrainingFitnessConfig(payload?.trainingFitnessConfig);
       const changed =
         next.runnerPaceTargetPxPerWindow !== trainingFitnessConfig.runnerPaceTargetPxPerWindow ||
@@ -3692,7 +3335,6 @@ self.onmessage = (event: MessageEvent) => {
     }
 
     case 'SET_TERRAIN_VARIETY_CONFIG': {
-      if (architectureExperimentSuite) break;
       const next = sanitizeTerrainVarietyConfig(payload?.terrainVarietyConfig);
       const changed = JSON.stringify(next) !== JSON.stringify(terrainVarietyConfig);
       terrainVarietyConfig = next;
@@ -3711,22 +3353,6 @@ self.onmessage = (event: MessageEvent) => {
       if (isRunning && changed) startTrainingEngine();
       break;
     }
-
-    case 'START_ARCHITECTURE_EXPERIMENT_SUITE': {
-      try {
-        startArchitectureExperimentSuite(payload?.targetGeneration);
-      } catch (error) {
-        self.postMessage({
-          type: 'ARCHITECTURE_EXPERIMENT_ERROR',
-          payload: { message: error instanceof Error ? error.message : String(error) },
-        });
-      }
-      break;
-    }
-
-    case 'CANCEL_ARCHITECTURE_EXPERIMENT_SUITE':
-      cancelArchitectureExperimentSuite();
-      break;
 
     case 'ANALYSIS_EXPORT_REQUEST': {
       try {
@@ -3763,10 +3389,6 @@ self.onmessage = (event: MessageEvent) => {
     }
 
     case 'PAUSE':
-      if (architectureExperimentSuite) {
-        postArchitectureExperimentStatus(Math.max(lastChaserMetrics?.generation || 0, lastEvaderMetrics?.generation || 0), 'Use Cancel experiments to stop the suite safely.');
-        break;
-      }
       isRunning = false;
       if (timerId) clearTimeout(timerId);
       currentTrainingSpeedX = 0;
@@ -3789,7 +3411,6 @@ self.onmessage = (event: MessageEvent) => {
       break;
 
     case 'SET_WEIGHTS':
-      if (architectureExperimentSuite) break;
       seedPopulations(payload?.chaserWeights, payload?.evaderWeights, true);
       seededFromStart = true;
       if (typeof payload?.chaserElo === 'number') chaserElo = payload.chaserElo;
@@ -3799,10 +3420,6 @@ self.onmessage = (event: MessageEvent) => {
       break;
 
     case 'CHECKPOINT_REQUEST': {
-      if (architectureExperimentSuite) {
-        self.postMessage({ type: 'CHECKPOINT_RESPONSE', payload: { requestId: payload?.requestId ?? null, error: 'Checkpoint capture is disabled while architecture experiments are running.' } });
-        break;
-      }
       const checkpoint = checkpointWithRecentAnalysis(latestSafeCheckpoint, MAX_CHECKPOINT_ANALYSIS_HISTORY);
       self.postMessage({
         type: 'CHECKPOINT_RESPONSE',
@@ -3840,7 +3457,6 @@ self.onmessage = (event: MessageEvent) => {
     }
 
     case 'RESET':
-      if (architectureExperimentSuite) break;
       resetEntireEvolutionRun();
       break;
   }

@@ -38,7 +38,6 @@ import type {
   SprintUpgradeRule,
   ActiveUpgradeState,
   TrainingFitnessConfig,
-  PursuitDesignConfig,
   TerrainVarietyConfig,
 } from './types';
 import { AgentStatus } from './types';
@@ -194,32 +193,6 @@ const loadNetworkArchitecture = (): NetworkArchitectureSuiteConfig => {
   }
 };
 
-type ArchitectureExperimentUiState = {
-  running: boolean;
-  currentIndex: number;
-  totalExperiments: number;
-  experimentId: string | null;
-  label: string;
-  generation: number;
-  targetGeneration: number;
-  completedExperiments: number;
-  message: string | null;
-  pursuitDesign: PursuitDesignConfig | null;
-};
-
-const IDLE_ARCHITECTURE_EXPERIMENT_STATE: ArchitectureExperimentUiState = {
-  running: false,
-  currentIndex: 0,
-  totalExperiments: 1,
-  experimentId: null,
-  label: 'Ready',
-  generation: 0,
-  targetGeneration: 275,
-  completedExperiments: 0,
-  message: null,
-  pursuitDesign: null,
-};
-
 export const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -246,12 +219,6 @@ export const App: React.FC = () => {
   const visualStepAccumulatorRef = useRef(0);
   const wakeLockRef = useRef<any>(null);
   const [trainingWakeLockActive, setTrainingWakeLockActive] = useState(false);
-  const [architectureExperimentStatus, setArchitectureExperimentStatus] = useState<ArchitectureExperimentUiState>(IDLE_ARCHITECTURE_EXPERIMENT_STATE);
-  const architectureExperimentRunningRef = useRef(false);
-  const architectureExperimentDiagnosticsSnapshotRef = useRef<DiagnosticsState | null>(null);
-  const architectureExperimentArchitectureSnapshotRef = useRef<NetworkArchitectureSuiteConfig | null>(null);
-  const architectureExperimentPreviousPauseRef = useRef(false);
-  const architectureExperimentPreviousSimulatingRef = useRef(false);
 
   const [diagnosticsState, setDiagnosticsState] = useState<DiagnosticsState>(() => ({
     chaserNeatHistory: [],
@@ -501,7 +468,7 @@ export const App: React.FC = () => {
           if (typeof payload.totalTags === 'number') totalTagsRef.current = payload.totalTags;
           if (typeof payload.totalFalls === 'number') totalFallsRef.current = payload.totalFalls;
           if (typeof payload.totalJumps === 'number') totalJumpsRef.current = payload.totalJumps;
-          if (payload.networkArchitecture && !architectureExperimentRunningRef.current) {
+          if (payload.networkArchitecture) {
             const incomingArchitecture = sanitizeNetworkArchitectureSuite(payload.networkArchitecture);
             setNetworkArchitecture(prev => JSON.stringify(prev) === JSON.stringify(incomingArchitecture) ? prev : incomingArchitecture);
           }
@@ -618,71 +585,13 @@ export const App: React.FC = () => {
               terrainVarietyConfig: payload.terrainVarietyConfig || prev.terrainVarietyConfig,
               networkArchitecture: payload.networkArchitecture || prev.networkArchitecture,
               pursuitDesign: payload.pursuitDesign !== undefined ? payload.pursuitDesign : (prev.pursuitDesign ?? null),
-              pursuitExperimentFlags: payload.pursuitExperimentFlags || prev.pursuitExperimentFlags,
+              pursuitDesignFlags: payload.pursuitDesignFlags || prev.pursuitDesignFlags,
               selectionAggregation: payload.selectionAggregation || prev.selectionAggregation,
               historicalOpponentPanel: payload.historicalOpponentPanel || prev.historicalOpponentPanel,
               eliteSeeding: payload.eliteSeeding || prev.eliteSeeding,
             };
           });
 
-        } else if (type === 'ARCHITECTURE_EXPERIMENT_STATUS') {
-          architectureExperimentRunningRef.current = true;
-          setArchitectureExperimentStatus({
-            running: true,
-            currentIndex: Number(payload?.currentIndex) || 0,
-            totalExperiments: Number(payload?.totalExperiments) || 1,
-            experimentId: payload?.experimentId || null,
-            label: payload?.label || 'Running pursuit-design experiment',
-            generation: Number(payload?.generation) || 0,
-            targetGeneration: Number(payload?.targetGeneration) || 275,
-            completedExperiments: Number(payload?.completedExperiments) || 0,
-            message: payload?.message || null,
-            pursuitDesign: payload?.pursuitDesign || null,
-          });
-        } else if (type === 'ARCHITECTURE_EXPERIMENT_COMPLETE') {
-          architectureExperimentRunningRef.current = false;
-          const reportJson = typeof payload?.reportJson === 'string' ? payload.reportJson : '';
-          if (reportJson) {
-            const blob = new Blob([reportJson], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `neat_tag_pursuit_design_experiments_gen${Number(payload?.targetGeneration) || 0}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-          }
-          if (architectureExperimentDiagnosticsSnapshotRef.current) {
-            setDiagnosticsState(architectureExperimentDiagnosticsSnapshotRef.current);
-          }
-          if (architectureExperimentArchitectureSnapshotRef.current) {
-            setNetworkArchitecture(architectureExperimentArchitectureSnapshotRef.current);
-          }
-          setIsTrainingPaused(architectureExperimentPreviousPauseRef.current);
-          setIsSimulating(architectureExperimentPreviousSimulatingRef.current);
-          architectureExperimentDiagnosticsSnapshotRef.current = null;
-          architectureExperimentArchitectureSnapshotRef.current = null;
-          setArchitectureExperimentStatus(prev => ({
-            ...prev,
-            running: false,
-            completedExperiments: prev.totalExperiments,
-            generation: prev.targetGeneration,
-            label: 'Experiment suite complete',
-            message: 'Combined comparison JSON exported. Your original run was restored.',
-          }));
-        } else if (type === 'ARCHITECTURE_EXPERIMENT_CANCELLED') {
-          architectureExperimentRunningRef.current = false;
-          if (architectureExperimentDiagnosticsSnapshotRef.current) setDiagnosticsState(architectureExperimentDiagnosticsSnapshotRef.current);
-          if (architectureExperimentArchitectureSnapshotRef.current) setNetworkArchitecture(architectureExperimentArchitectureSnapshotRef.current);
-          setIsTrainingPaused(architectureExperimentPreviousPauseRef.current);
-          setIsSimulating(architectureExperimentPreviousSimulatingRef.current);
-          architectureExperimentDiagnosticsSnapshotRef.current = null;
-          architectureExperimentArchitectureSnapshotRef.current = null;
-          setArchitectureExperimentStatus(prev => ({ ...prev, running: false, label: 'Experiment suite cancelled', message: payload?.message || 'Original run restored.' }));
-        } else if (type === 'ARCHITECTURE_EXPERIMENT_ERROR') {
-          architectureExperimentRunningRef.current = false;
-          setIsTrainingPaused(architectureExperimentPreviousPauseRef.current);
-          setIsSimulating(architectureExperimentPreviousSimulatingRef.current);
-          setArchitectureExperimentStatus(prev => ({ ...prev, running: false, label: 'Experiment suite error', message: payload?.message || 'Experiment suite failed to start.' }));
         } else if (type === 'ANALYSIS_EXPORT_RESPONSE') {
           if (payload?.error || !payload?.analysis) {
             console.error('Failed to build training analysis export:', payload?.error || 'Unknown analysis export error');
@@ -1012,9 +921,7 @@ export const App: React.FC = () => {
         // 3. Update Physics & Boundaries through the shared simulation core. The core was
         // extracted from this visual loop, so presentation behavior remains authoritative while
         // headless training now executes the exact same movement/fall rules.
-        const activePursuitDesign = architectureExperimentStatus.running
-          ? architectureExperimentStatus.pursuitDesign
-          : diagnosticsStateRef.current.pursuitDesign;
+        const activePursuitDesign = diagnosticsStateRef.current.pursuitDesign;
         const activeUpgrades: ActiveUpgradeState = {
           sprint: sprintUpgradeActive,
           controlledJump: controlledJumpUpgradeActive,
@@ -1203,7 +1110,7 @@ export const App: React.FC = () => {
         return newState;
       });
     },
-    [isSimulating, viewportSize, sprintUpgradeActive, controlledJumpUpgradeActive, upgradeConfig, architectureExperimentStatus, terrainVarietyConfig, showSenses]
+    [isSimulating, viewportSize, sprintUpgradeActive, controlledJumpUpgradeActive, upgradeConfig, terrainVarietyConfig, showSenses]
   );
 
   const updateSimulation = useCallback(
@@ -1317,7 +1224,6 @@ export const App: React.FC = () => {
   }, [viewportSize]);
 
   const handleApplyNetworkArchitecture = useCallback((next: NetworkArchitectureSuiteConfig) => {
-    if (architectureExperimentRunningRef.current) return;
     const sanitized = sanitizeNetworkArchitectureSuite(next);
     setNetworkArchitecture(sanitized);
     localStorage.setItem(NETWORK_ARCHITECTURE_STORAGE_KEY, JSON.stringify(sanitized));
@@ -1349,7 +1255,6 @@ export const App: React.FC = () => {
   }, []);
 
   const handleResetWeights = () => {
-    if (architectureExperimentRunningRef.current) return;
     installedChampionGenerationRef.current = { chaser: -1, evader: -1 };
     installedChampionGenomeIdRef.current = { chaser: null, evader: null };
     if (workerRef.current) {
@@ -1499,14 +1404,12 @@ export const App: React.FC = () => {
   };
 
   const handleSaveCheckpoint = (name: string) => {
-    if (architectureExperimentRunningRef.current) return;
     setCheckpointLibraryBusy(true);
     setCheckpointLibraryMessage('Capturing the next safe completed-generation checkpoint…');
     requestFullCheckpoint('library', name);
   };
 
   const handleLoadStoredCheckpoint = async (id: string): Promise<boolean> => {
-    if (architectureExperimentRunningRef.current) return false;
     setCheckpointLibraryBusy(true);
     setCheckpointLibraryMessage('Reading checkpoint from the local library…');
     try {
@@ -1562,7 +1465,6 @@ export const App: React.FC = () => {
   };
 
   const handleExportModels = () => {
-    if (architectureExperimentRunningRef.current) return;
     setCheckpointLibraryBusy(true);
     setCheckpointLibraryMessage('Capturing the next safe completed-generation checkpoint for export…');
     requestFullCheckpoint('export');
@@ -1574,7 +1476,6 @@ export const App: React.FC = () => {
   };
 
   const handleImportModels = async (jsonString: string, fileName?: string): Promise<boolean> => {
-    if (architectureExperimentRunningRef.current) return false;
     setCheckpointLibraryBusy(true);
     setCheckpointLibraryMessage('Validating imported model file…');
     try {
@@ -1602,37 +1503,6 @@ export const App: React.FC = () => {
       setCheckpointLibraryBusy(false);
       return false;
     }
-  };
-
-  const handleRunArchitectureExperiments = (targetGeneration: number) => {
-    if (!workerRef.current || architectureExperimentRunningRef.current) return;
-    const target = Math.max(50, Math.min(1500, Math.round(Number(targetGeneration) || 275)));
-    architectureExperimentDiagnosticsSnapshotRef.current = JSON.parse(JSON.stringify(diagnosticsStateRef.current)) as DiagnosticsState;
-    architectureExperimentArchitectureSnapshotRef.current = sanitizeNetworkArchitectureSuite(networkArchitecture);
-    architectureExperimentPreviousPauseRef.current = isTrainingPaused;
-    architectureExperimentPreviousSimulatingRef.current = isSimulating;
-    architectureExperimentRunningRef.current = true;
-    setIsSimulating(true);
-    setIsTrainingPaused(false);
-    setArchitectureExperimentStatus({
-      running: true,
-      currentIndex: 0,
-      totalExperiments: 1,
-      experimentId: 'hybrid_soft_pursuit',
-      label: 'Preparing D · Hybrid soft-pursuit league',
-      generation: 0,
-      targetGeneration: target,
-      completedExperiments: 0,
-      message: 'Current run snapshotted at its last safe generation boundary.',
-      pursuitDesign: null,
-    });
-    workerRef.current.postMessage({ type: 'START_ARCHITECTURE_EXPERIMENT_SUITE', payload: { targetGeneration: target } });
-  };
-
-  const handleCancelArchitectureExperiments = () => {
-    if (!workerRef.current || !architectureExperimentRunningRef.current) return;
-    workerRef.current.postMessage({ type: 'CANCEL_ARCHITECTURE_EXPERIMENT_SUITE' });
-    setArchitectureExperimentStatus(prev => ({ ...prev, message: 'Cancelling after the current worker step and restoring your original run…' }));
   };
 
   const handleStepFrame = () => {
@@ -1828,7 +1698,6 @@ export const App: React.FC = () => {
           onUpdateTrainingFitnessConfig={updateTrainingFitnessConfig}
           terrainVarietyConfig={terrainVarietyConfig}
           onUpdateTerrainVarietyConfig={updateTerrainVarietyConfig}
-          settingsLocked={architectureExperimentStatus.running}
         />
       </div>
 
@@ -1860,9 +1729,6 @@ export const App: React.FC = () => {
         onImportModels={handleImportModels}
         networkArchitecture={networkArchitecture}
         onApplyNetworkArchitecture={handleApplyNetworkArchitecture}
-        architectureExperimentStatus={architectureExperimentStatus}
-        onRunArchitectureExperiments={handleRunArchitectureExperiments}
-        onCancelArchitectureExperiments={handleCancelArchitectureExperiments}
       />
     </div>
   );

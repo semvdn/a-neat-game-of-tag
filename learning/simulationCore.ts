@@ -19,8 +19,9 @@ import {
   JUMP_RELEASE_THRESHOLD,
   MAX_SPEED,
   MIN_PLATFORM_GAP_X,
+  MIN_PLATFORM_CLEARANCE_X,
+  MIN_PLATFORM_CLEARANCE_Y,
   MAX_PLATFORM_GAP_X,
-  MAX_PLATFORM_GAP_Y,
   PLATFORM_HEIGHT,
   PLATFORM_MAX_WIDTH,
   PLATFORM_MIN_WIDTH,
@@ -29,6 +30,8 @@ import {
   BRANCH_STRUCTURE_MIN_X,
   BRANCH_STRUCTURE_BASE_CHANCE,
   BRANCH_STRUCTURE_MAX_CHANCE,
+  BRANCH_MIN_PLATFORM_Y,
+  BRANCH_BOTTOM_MARGIN,
   SPRINT_ACCELERATION_MULTIPLIER,
   TAG_COOLDOWN,
   NEW_CHASER_TAG_DELAY_MS,
@@ -609,13 +612,31 @@ function envelopesOverlap(a: PlatformEnvelope, b: PlatformEnvelope): boolean {
   return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 }
 
-function overlapsAnyPlatform(candidate: PlatformState, existing: PlatformState[]): boolean {
-  const envelope = platformEnvelope(candidate);
-  return existing.some(platform => envelopesOverlap(envelope, platformEnvelope(platform)));
+function envelopeAxisGap(aMin: number, aMax: number, bMin: number, bMax: number): number {
+  if (aMax <= bMin) return bMin - aMax;
+  if (bMax <= aMin) return aMin - bMax;
+  return 0;
 }
 
-/** Diagnostics/test helper. Moving-platform sweep envelopes are included, so an empty result means
- * generated platforms cannot overlap now or later while oscillating. */
+/**
+ * Treat near-misses as generation conflicts as well. Exact rectangle non-overlap is not enough for
+ * readable platforming: when X ranges overlap there must be at least one agent-height of vertical
+ * breathing room, and platforms on nearly the same Y band need a visible horizontal gap. Moving
+ * platforms are represented by their complete sweep envelope, so satisfying this predicate also
+ * guarantees clearance throughout their entire motion.
+ */
+function envelopesViolateClearance(a: PlatformEnvelope, b: PlatformEnvelope): boolean {
+  const gapX = envelopeAxisGap(a.left, a.right, b.left, b.right);
+  const gapY = envelopeAxisGap(a.top, a.bottom, b.top, b.bottom);
+  return gapX < MIN_PLATFORM_CLEARANCE_X && gapY < MIN_PLATFORM_CLEARANCE_Y;
+}
+
+function overlapsAnyPlatform(candidate: PlatformState, existing: PlatformState[]): boolean {
+  const envelope = platformEnvelope(candidate);
+  return existing.some(platform => envelopesViolateClearance(envelope, platformEnvelope(platform)));
+}
+
+/** Diagnostics/test helper for literal swept-envelope overlaps. */
 export function findPlatformOverlapPairs(platforms: PlatformState[]): Array<[number, number]> {
   const overlaps: Array<[number, number]> = [];
   for (let i = 0; i < platforms.length; i++) {
@@ -627,23 +648,53 @@ export function findPlatformOverlapPairs(platforms: PlatformState[]): Array<[num
   return overlaps;
 }
 
+/**
+ * Diagnostics/test helper for the stronger readability invariant. An empty result means every
+ * stationary rectangle and every full moving sweep keeps the configured horizontal/vertical
+ * safety clearance from every other platform.
+ */
+export function findPlatformClearanceViolations(platforms: PlatformState[]): Array<[number, number]> {
+  const violations: Array<[number, number]> = [];
+  for (let i = 0; i < platforms.length; i++) {
+    const a = platformEnvelope(platforms[i]);
+    for (let j = i + 1; j < platforms.length; j++) {
+      if (envelopesViolateClearance(a, platformEnvelope(platforms[j]))) violations.push([platforms[i].id, platforms[j].id]);
+    }
+  }
+  return violations;
+}
+
 function placeTrunkPlatformWithoutOverlap(
   platform: PlatformState,
   existing: PlatformState[],
   toLeft: boolean
 ): PlatformState {
   // Trunk geometry has no fixed slot, so the safest correction is to increase the horizontal gap.
-  // This preserves the intended Y profile rather than unexpectedly creating a large jump.
-  for (let guard = 0; guard < 32; guard++) {
+  // Each correction moves beyond at least one conflicting swept envelope; existing.length + 2 is
+  // therefore enough to converge even in a pathological imported/dense world.
+  const clearance = Math.max(MIN_PLATFORM_GAP_X, MIN_PLATFORM_CLEARANCE_X);
+  for (let guard = 0; guard < existing.length + 2; guard++) {
     const envelope = platformEnvelope(platform);
-    const conflicts = existing.filter(other => envelopesOverlap(envelope, platformEnvelope(other)));
+    const conflicts = existing.filter(other => envelopesViolateClearance(envelope, platformEnvelope(other)));
     if (conflicts.length === 0) return platform;
     if (toLeft) {
       const leftEdge = Math.min(...conflicts.map(other => platformEnvelope(other).left));
-      platform.position.x = leftEdge - MIN_PLATFORM_GAP_X - platform.width;
+      platform.position.x = leftEdge - clearance - platform.width;
     } else {
       const rightEdge = Math.max(...conflicts.map(other => platformEnvelope(other).right));
-      platform.position.x = rightEdge + MIN_PLATFORM_GAP_X;
+      platform.position.x = rightEdge + clearance;
+    }
+  }
+
+  // Mathematical final fallback: place completely beyond every existing swept envelope. This is
+  // rarely reached, but makes the generation invariant unconditional rather than probabilistic.
+  if (existing.length > 0) {
+    if (toLeft) {
+      const leftEdge = Math.min(...existing.map(other => platformEnvelope(other).left));
+      platform.position.x = leftEdge - clearance - platform.width;
+    } else {
+      const rightEdge = Math.max(...existing.map(other => platformEnvelope(other).right));
+      platform.position.x = rightEdge + clearance;
     }
   }
   return platform;
@@ -655,23 +706,28 @@ function placeBranchPlatformWithoutOverlap(
   viewportHeight: number,
   slotStart: number,
   slotEnd: number,
-  preferredY: number
+  preferredY: number,
+  corridorMinValue = BRANCH_MIN_PLATFORM_Y,
+  corridorMaxValue = viewportHeight - BRANCH_BOTTOM_MARGIN
 ): PlatformState {
-  const minY = 250;
-  const maxY = viewportHeight - 120;
+  const worldMinY = BRANCH_MIN_PLATFORM_Y;
+  const worldMaxY = viewportHeight - BRANCH_BOTTOM_MARGIN;
+  const minY = Math.max(worldMinY, Math.min(worldMaxY, corridorMinValue));
+  const maxY = Math.max(minY, Math.min(worldMaxY, corridorMaxValue));
   const minX = slotStart + 6;
   const maxX = Math.max(minX, slotEnd - platform.width - 6);
   const preferredX = Math.max(minX, Math.min(maxX, platform.position.x));
+  const clampedPreferredY = Math.max(minY, Math.min(maxY, preferredY));
 
-  // Search nearest-to-designed placement first, then exhaust the usable lane grid. Max recursive
-  // depth is four (16 leaf routes), which fits comfortably in the 250..680 vertical band at 20px
-  // platform height without overlap.
-  const yCandidates: number[] = [Math.max(minY, Math.min(maxY, preferredY))];
-  for (let delta = PLATFORM_HEIGHT + 2; delta <= maxY - minY + PLATFORM_HEIGHT; delta += PLATFORM_HEIGHT + 2) {
-    yCandidates.push(Math.max(minY, Math.min(maxY, preferredY - delta)));
-    yCandidates.push(Math.max(minY, Math.min(maxY, preferredY + delta)));
+  // Keep route identity geometric as well as logical. Earlier versions searched the entire vertical
+  // world when a slot was crowded, which was collision-safe but could move one ledge into another
+  // route's visual corridor. Search only a modest band around the designed lane; if that fails we
+  // resolve the crowding horizontally instead.
+  const yCandidates: number[] = [clampedPreferredY];
+  for (const delta of [18, 36, 54, 72]) {
+    yCandidates.push(Math.max(minY, clampedPreferredY - delta));
+    yCandidates.push(Math.min(maxY, clampedPreferredY + delta));
   }
-  for (let y = minY; y <= maxY; y += PLATFORM_HEIGHT + 2) yCandidates.push(y);
 
   const xCandidates: number[] = [preferredX, minX, maxX];
   for (let x = minX; x <= maxX; x += 18) xCandidates.push(x);
@@ -689,12 +745,12 @@ function placeBranchPlatformWithoutOverlap(
   }
 
   // Extremely dense recursive geometry can exhaust a slot. Narrowing the platform is preferable to
-  // ever emitting an overlapping rectangle; route reachability remains intact above 80px width.
+  // abandoning the route lane; route reachability remains healthy above 80px width.
   for (let width = Math.min(platform.width, 110); width >= 80; width -= 10) {
     platform.width = width;
     const localMaxX = Math.max(minX, slotEnd - width - 6);
     for (let x = minX; x <= localMaxX; x += 12) {
-      for (let y = minY; y <= maxY; y += PLATFORM_HEIGHT + 1) {
+      for (const y of yCandidates) {
         platform.position.x = x;
         platform.position.y = y;
         if (!overlapsAnyPlatform(platform, existing)) return platform;
@@ -702,11 +758,25 @@ function placeBranchPlatformWithoutOverlap(
     }
   }
 
-  // This should be unreachable with the configured depth/viewport limits. Keep a deterministic
-  // non-overlapping emergency placement rather than silently violating the generator invariant.
-  const rightmostEnvelope = existing.reduce((right, other) => Math.max(right, platformEnvelope(other).right), slotEnd);
-  platform.position.x = rightmostEnvelope + MIN_PLATFORM_GAP_X;
-  platform.position.y = Math.max(minY, Math.min(maxY, preferredY));
+  // If the intended slot is genuinely full, preserve Y and advance only as far right as necessary.
+  // Each pass clears at least one swept envelope. The outer merge is subsequently moved to the
+  // resolved route endpoint, so this never strands a ledge beyond its own rejoin point.
+  const clearance = Math.max(MIN_PLATFORM_GAP_X, MIN_PLATFORM_CLEARANCE_X);
+  platform.position.x = Math.max(minX, slotEnd + clearance);
+  platform.position.y = clampedPreferredY;
+  for (let guard = 0; guard < existing.length + 2; guard++) {
+    const envelope = platformEnvelope(platform);
+    const conflicts = existing.filter(other => envelopesViolateClearance(envelope, platformEnvelope(other)));
+    if (conflicts.length === 0) return platform;
+    const conflictRight = Math.max(...conflicts.map(other => platformEnvelope(other).right));
+    platform.position.x = conflictRight + clearance;
+  }
+
+  // Absolute final fallback. It is intentionally horizontal so route elevation is never sacrificed
+  // merely to satisfy collision avoidance.
+  if (existing.length > 0) {
+    platform.position.x = Math.max(...existing.map(other => platformEnvelope(other).right)) + clearance;
+  }
   return platform;
 }
 
@@ -732,8 +802,11 @@ function maybeMakeMoving(
   const axisOrder: Array<'x' | 'y'> = inBranch
     ? ['x']
     : (preferredAxis === 'x' ? ['x', 'y'] : ['y', 'x']);
-  const baseRangeX = 35 + rng() * 85;
-  const baseRangeY = 28 + rng() * 62;
+  // Keep oscillation useful without turning ordinary transitions into extreme timing puzzles.
+  // The full sweep is still validated below; these natural ranges also preserve reachability when
+  // a platform happens to be at the far end of its travel.
+  const baseRangeX = 18 + rng() * 32;
+  const baseRangeY = 12 + rng() * 18;
   const directions: Array<-1 | 1> = rng() < 0.5 ? [-1, 1] : [1, -1];
 
   const tryMotion = (axis: 'x' | 'y', min: number, max: number, direction: -1 | 1): PlatformState | null => {
@@ -795,16 +868,38 @@ function generatePlatform(
   forceMoving = false,
   existingPlatforms: PlatformState[] = []
 ): PlatformState {
-  let gapX = MIN_PLATFORM_GAP_X + rng() * (MAX_PLATFORM_GAP_X - MIN_PLATFORM_GAP_X);
-  const gapY = (rng() - 0.5) * MAX_PLATFORM_GAP_Y * 1.5;
-  const newY = baseY + gapY;
-  const clampedY = Math.min(viewportHeight - 120, Math.max(250, newY));
+  const minY = 250;
+  const maxY = viewportHeight - 120;
+
+  // A reflected, mode-based random walk looks less like white-noise stairs. Most transitions are
+  // gentle, with occasional meaningful climbs/descents; near the vertical limits the walk bends
+  // back toward the play band instead of repeatedly clamping platforms onto the exact same line.
+  const mode = rng();
+  let deltaY: number;
+  if (mode < 0.42) deltaY = (rng() - 0.5) * 42;
+  else if (mode < 0.71) deltaY = -(30 + rng() * 50);
+  else deltaY = 30 + rng() * 50;
+
+  if (baseY < minY + 72 && deltaY < 0) deltaY = Math.abs(deltaY) * (0.55 + rng() * 0.25);
+  if (baseY > maxY - 72 && deltaY > 0) deltaY = -Math.abs(deltaY) * (0.55 + rng() * 0.25);
+
+  let proposedY = baseY + deltaY;
+  if (proposedY < minY) proposedY = minY + (minY - proposedY) * 0.55;
+  else if (proposedY > maxY) proposedY = maxY - (proposedY - maxY) * 0.55;
+  const clampedY = Math.max(minY, Math.min(maxY, proposedY));
   const verticalDifference = clampedY - baseY;
 
-  if (verticalDifference < -100) gapX = Math.max(MIN_PLATFORM_GAP_X, Math.min(gapX, 90));
-  else if (verticalDifference > 80) gapX = Math.max(gapX, 140);
+  let gapX = MIN_PLATFORM_GAP_X + rng() * (MAX_PLATFORM_GAP_X - MIN_PLATFORM_GAP_X);
+  // Uphill jumps need slightly shorter reaches; downhill/flat runs can breathe more.
+  if (verticalDifference < -55) gapX = Math.min(gapX, 128);
+  else if (verticalDifference > 55) gapX = Math.max(gapX, 105);
+  else if (Math.abs(verticalDifference) < 18 && rng() < 0.35) gapX = Math.min(MAX_PLATFORM_GAP_X, gapX + 24);
 
-  const newWidth = rng() * (PLATFORM_MAX_WIDTH - PLATFORM_MIN_WIDTH) + PLATFORM_MIN_WIDTH;
+  let newWidth = rng() * (PLATFORM_MAX_WIDTH - PLATFORM_MIN_WIDTH) + PLATFORM_MIN_WIDTH;
+  // Difficult elevation changes get a slightly more generous landing target without turning every
+  // platform into the same width.
+  if (Math.abs(verticalDifference) > 70) newWidth = Math.min(PLATFORM_MAX_WIDTH, newWidth + 25);
+
   const stationary = placeTrunkPlatformWithoutOverlap({
     id,
     width: newWidth,
@@ -819,7 +914,9 @@ function generatePlatform(
 }
 
 function clampPlatformY(y: number, viewportHeight: number): number {
-  return Math.min(viewportHeight - 120, Math.max(250, y));
+  // Branches use a taller play band than ordinary trunk terrain. This extra room is important for
+  // clear recursive lanes while still leaving enough camera space above/below the agent body.
+  return Math.min(viewportHeight - BRANCH_BOTTOM_MARGIN, Math.max(BRANCH_MIN_PLATFORM_Y, y));
 }
 
 function branchChanceAtX(x: number, branchMinX: number, terrain: TerrainRuntimeConfig): number {
@@ -837,56 +934,120 @@ function routeLanePair(
   depth: number,
   viewportHeight: number,
   rng: () => number,
-  parentRoutePath: string | null,
-  stepsToLane: number
+  stepsToLane: number,
+  corridorMinValue: number,
+  corridorMaxValue: number,
+  nestUpper: boolean,
+  nestLower: boolean
 ): [number, number] {
-  const minWorldY = 250;
-  const maxWorldY = viewportHeight - 120;
-  let corridorMin = minWorldY;
-  let corridorMax = maxWorldY;
+  const minWorldY = BRANCH_MIN_PLATFORM_Y;
+  const maxWorldY = viewportHeight - BRANCH_BOTTOM_MARGIN;
+  // Branch siblings are separated more strongly than unrelated platforms so a fork reads as two
+  // distinct routes even after the small per-platform contour jitter is applied.
+  const minimumForkSeparation = MIN_PLATFORM_CLEARANCE_Y + PLATFORM_HEIGHT + 24;
+  const corridorMin = Math.max(minWorldY, Math.min(maxWorldY, corridorMinValue));
+  const corridorMax = Math.max(corridorMin, Math.min(maxWorldY, corridorMaxValue));
 
-  // Every committed route owns one half of its parent's vertical corridor. Nested branches split
-  // that corridor again, so route geometry stays ordered and visually legible instead of weaving
-  // back through sibling paths. Root branches therefore get the largest separation; deeper forks
-  // remain distinct without requiring an unbounded vertical world.
-  const ancestors = (parentRoutePath || '').split('/').filter(Boolean);
-  for (const token of ancestors) {
-    const midpoint = (corridorMin + corridorMax) * 0.5;
-    if (token.endsWith('U')) corridorMax = midpoint;
-    else if (token.endsWith('L')) corridorMin = midpoint;
+  // Never expand a nested corridor outside its parent. Older fallback expansion could make a deep
+  // child visually leak into its sibling route. Recursion is filtered by corridor capacity before
+  // the child is built, so supported nested forks already have enough room here.
+  const span = Math.max(1, corridorMax - corridorMin);
+  const edgeInset = Math.min(28, Math.max(8, span * 0.10));
+  const usableMin = Math.min(corridorMax, corridorMin + edgeInset);
+  const usableMax = Math.max(usableMin, corridorMax - edgeInset);
+  const usableSpan = Math.max(1, usableMax - usableMin);
+  const jitter = Math.min(9, usableSpan * 0.045);
+
+  // Bias extra vertical budget toward whichever side is going to recurse. This produces irregular
+  // ravine/canopy-like structures rather than a perfectly mirrored binary circuit diagram.
+  let upperFraction = 0.18;
+  let lowerFraction = 0.82;
+  if (nestUpper && !nestLower) {
+    // Put the simple sibling near the far edge so the recursive side keeps most of the inherited
+    // corridor. That makes depth 3–4 possible without ever trespassing into the sibling route.
+    upperFraction = 0.14;
+    lowerFraction = 0.96;
+  } else if (nestLower && !nestUpper) {
+    upperFraction = 0.04;
+    lowerFraction = 0.86;
   }
+  let upper = usableMin + usableSpan * upperFraction + (rng() - 0.5) * jitter;
+  let lower = usableMin + usableSpan * lowerFraction + (rng() - 0.5) * jitter;
 
-  const span = Math.max(36, corridorMax - corridorMin);
-  const edgeInset = Math.min(26, span * 0.12);
-  const usableMin = corridorMin + edgeInset;
-  const usableMax = corridorMax - edgeInset;
-  const usableSpan = Math.max(24, usableMax - usableMin);
-  const jitter = Math.min(10, usableSpan * 0.06);
-  const upper = usableMin + usableSpan * 0.10 + (rng() - 0.5) * jitter;
-  const lower = usableMin + usableSpan * 0.90 + (rng() - 0.5) * jitter;
+  // Divergence is a short ramp, not a teleport. Cap total displacement per commitment platform so
+  // either first choice remains learnable from high and low incoming ledges.
+  const maxVerticalOffset = Math.max(134, Math.max(1, stepsToLane) * 134);
+  upper = clampPlatformY(Math.max(baseY - maxVerticalOffset, Math.min(baseY + maxVerticalOffset, upper)), viewportHeight);
+  lower = clampPlatformY(Math.max(baseY - maxVerticalOffset, Math.min(baseY + maxVerticalOffset, lower)), viewportHeight);
 
-  // Keep every divergence physically reachable. The route ramp below advances toward these lanes
-  // over stepsToLane platforms, so limiting total vertical displacement to ~145 px per step keeps
-  // upward choices inside the normal jump envelope even when the incoming trunk sits near the top
-  // or bottom of the world. Within that reachability constraint we preserve as much corridor
-  // separation as possible.
-  const maxVerticalOffset = Math.max(145, Math.max(1, stepsToLane) * 145);
-  const reachableUpper = Math.max(baseY - maxVerticalOffset, Math.min(baseY + maxVerticalOffset, upper));
-  const reachableLower = Math.max(baseY - maxVerticalOffset, Math.min(baseY + maxVerticalOffset, lower));
-  return [
-    clampPlatformY(reachableUpper, viewportHeight),
-    clampPlatformY(reachableLower, viewportHeight),
-  ];
+  const requiredSeparation = Math.min(minimumForkSeparation, usableSpan);
+  if (lower - upper < requiredSeparation) {
+    let center = (upper + lower) * 0.5;
+    const half = requiredSeparation * 0.5;
+    const minCenter = usableMin + half;
+    const maxCenter = usableMax - half;
+    center = minCenter <= maxCenter ? Math.max(minCenter, Math.min(maxCenter, center)) : (usableMin + usableMax) * 0.5;
+    upper = center - half;
+    lower = center + half;
+  }
+  return [upper, lower];
 }
 
-function branchSpan(terrain: TerrainRuntimeConfig, depth: number): number {
-  // Give each route enough horizontal runway to read as a path rather than a dense knot.
-  // Longer branches also make the commitment strategically meaningful before the merge.
-  const localSpan = 520 + Math.max(1, terrain.maxPlatformsPerBranch) * 190;
-  if (terrain.subBranchingEnabled && depth < terrain.maxBranchDepth) {
-    return localSpan + branchSpan(terrain, depth + 1);
+function corridorSupportsNestedFork(corridor: [number, number]): boolean {
+  // A child needs two rows, the stronger sibling separation, and a little edge breathing room. If
+  // the inherited corridor cannot provide that, maxBranchDepth remains a true ceiling rather than
+  // forcing a cramped split that collision fallbacks would have to distort horizontally.
+  const minimumForkSeparation = MIN_PLATFORM_CLEARANCE_Y + PLATFORM_HEIGHT + 24;
+  return corridor[1] - corridor[0] >= minimumForkSeparation + 28;
+}
+
+function intersectCorridors(a: [number, number], b: [number, number]): [number, number] {
+  const min = Math.max(a[0], b[0]);
+  const max = Math.min(a[1], b[1]);
+  return [min, Math.max(min, max)];
+}
+
+function commitmentLanePair(
+  entryY: number,
+  viewportHeight: number,
+  corridorMinValue: number,
+  corridorMaxValue: number
+): [number, number] {
+  // The fork itself must already read as two distinct choices. Put the first two ledges around the
+  // incoming height with enough separation for the global clearance rule, then let later ledges
+  // continue toward the wider route lanes. Both commitment jumps remain modest and symmetric.
+  const worldMinY = BRANCH_MIN_PLATFORM_Y;
+  const worldMaxY = viewportHeight - BRANCH_BOTTOM_MARGIN;
+  const minY = Math.max(worldMinY, Math.min(worldMaxY, corridorMinValue));
+  const maxY = Math.max(minY, Math.min(worldMaxY, corridorMaxValue));
+  const separation = MIN_PLATFORM_CLEARANCE_Y + PLATFORM_HEIGHT + 12;
+  const half = Math.min(separation, maxY - minY) * 0.5;
+  const center = Math.max(minY + half, Math.min(maxY - half, entryY));
+  return [center - half, center + half];
+}
+
+function childBranchCorridor(
+  side: 'upper' | 'lower',
+  corridorMin: number,
+  corridorMax: number,
+  upperY: number,
+  lowerY: number,
+  bothSidesNest: boolean
+): [number, number] {
+  const routeClearance = MIN_PLATFORM_CLEARANCE_Y + PLATFORM_HEIGHT;
+  if (bothSidesNest) {
+    const midpoint = (upperY + lowerY) * 0.5;
+    // When both siblings recurse, their child corridors themselves need a full vertical safety
+    // channel between them. A small aesthetic center gap is not enough because descendants from
+    // both subtrees occupy the same horizontal chapter and would otherwise force sideways fallback.
+    const centerGap = Math.max(routeClearance * 0.5 + 10, Math.min(72, (lowerY - upperY) * 0.22));
+    return side === 'upper'
+      ? [corridorMin, midpoint - centerGap]
+      : [midpoint + centerGap, corridorMax];
   }
-  return localSpan;
+  return side === 'upper'
+    ? [corridorMin, Math.min(corridorMax, lowerY - routeClearance)]
+    : [Math.max(corridorMin, upperY + routeClearance), corridorMax];
 }
 
 interface BranchBuildResult {
@@ -910,11 +1071,15 @@ function addRoutePlatforms(
   rng: () => number,
   terrain: TerrainRuntimeConfig,
   forceFirstMoving = false,
-  startLaneY?: number
+  firstPlatformY?: number,
+  corridorMinValue = BRANCH_MIN_PLATFORM_Y,
+  corridorMaxValue = viewportHeight - BRANCH_BOTTOM_MARGIN
 ): { last: PlatformState; nextPlatformId: number } {
   const safeCount = Math.max(1, count);
   const span = Math.max(180, endX - startX);
   const preferredWidth = Math.max(115, Math.min(185, span / safeCount - 90));
+  const routeMinY = Math.max(BRANCH_MIN_PLATFORM_Y, Math.min(viewportHeight - BRANCH_BOTTOM_MARGIN, corridorMinValue));
+  const routeMaxY = Math.max(routeMinY, Math.min(viewportHeight - BRANCH_BOTTOM_MARGIN, corridorMaxValue));
   let last: PlatformState | null = null;
 
   for (let i = 0; i < safeCount; i++) {
@@ -924,11 +1089,23 @@ function addRoutePlatforms(
     const width = Math.max(105, Math.min(preferredWidth + (rng() - 0.5) * 24, slotWidth - 54));
     const x = slotStart + Math.max(27, (slotWidth - width) * 0.5);
     const laneJitter = Math.max(4, 12 - (depth - 1) * 2);
-    const routeProgress = (i + 1) / safeCount;
-    const designedY = startLaneY == null
+    const routeProgress = safeCount <= 1 ? 0 : i / (safeCount - 1);
+    const designedY = firstPlatformY == null
       ? laneY
-      : startLaneY + (laneY - startLaneY) * routeProgress;
-    const y = clampPlatformY(designedY + (rng() - 0.5) * laneJitter, viewportHeight);
+      : firstPlatformY + (laneY - firstPlatformY) * routeProgress;
+    let y = Math.max(routeMinY, Math.min(routeMaxY, clampPlatformY(designedY + (rng() - 0.5) * laneJitter, viewportHeight)));
+    // Keep consecutive ledges comfortably inside the ordinary jump envelope. Collision avoidance
+    // should never turn a readable route into a near-max-height jump simply because its target lane
+    // is far away. Nested forks use their own commitment ledges to make larger vertical changes.
+    if (last) {
+      const maxRise = 124;
+      const maxDrop = 146;
+      y = Math.max(last.position.y - maxRise, Math.min(last.position.y + maxDrop, y));
+      y = Math.max(routeMinY, Math.min(routeMaxY, y));
+    }
+    const sequenceStart = last
+      ? Math.max(slotStart, platformEnvelope(last).right + MIN_PLATFORM_GAP_X)
+      : slotStart;
     const stationary = placeBranchPlatformWithoutOverlap({
       id: nextPlatformId++,
       width,
@@ -939,16 +1116,24 @@ function addRoutePlatforms(
       branchDepth: depth,
       routePath,
       rootBranchGroupId: rootGroupId,
-    }, platforms, viewportHeight, slotStart, slotEnd, y);
-    const platform = maybeMakeMoving(
-      stationary,
-      viewportHeight,
-      rng,
-      terrain,
-      true,
-      forceFirstMoving && i === 0,
-      platforms
-    );
+    }, platforms, viewportHeight, sequenceStart, slotEnd, y, routeMinY, routeMaxY);
+    const commitmentPlatform = firstPlatformY != null && i === 0;
+    const endpointPlatform = i === safeCount - 1;
+    const forcedMovingIndex = forceFirstMoving && safeCount >= 3 ? 1 : -1;
+    // Fork commitment and route endpoints stay fixed. Stable endpoints make both the choice and
+    // the merge readable; moving terrain belongs inside a route rather than at its doorway.
+    const allowMotion = !commitmentPlatform && !endpointPlatform;
+    const platform = allowMotion
+      ? maybeMakeMoving(
+          stationary,
+          viewportHeight,
+          rng,
+          terrain,
+          true,
+          forcedMovingIndex === i,
+          platforms
+        )
+      : stationary;
     platforms.push(platform);
     last = platform;
   }
@@ -956,9 +1141,61 @@ function addRoutePlatforms(
   return { last: last!, nextPlatformId };
 }
 
-/** Build a full binary branch tree. Every route at a level gets the same horizontal allocation,
- * so recursively branching siblings still arrive at the same outer merge. Collision route locks,
- * not merely vertical spacing, make sibling paths truly mutually exclusive. */
+/** Add stationary connective ledges when one sibling route contains a longer nested detour.
+ * These are not new choices; they simply keep the unsplit/shorter sibling traversable until both
+ * routes reach the same rejoin chapter. */
+function extendRouteTowardX(
+  platforms: PlatformState[],
+  last: PlatformState,
+  targetRight: number,
+  laneY: number,
+  side: 'upper' | 'lower',
+  routePath: string,
+  groupId: number,
+  rootGroupId: number,
+  depth: number,
+  viewportHeight: number,
+  nextPlatformId: number,
+  rng: () => number,
+  terrain: TerrainRuntimeConfig,
+  corridorMin: number,
+  corridorMax: number
+): { last: PlatformState; nextPlatformId: number } {
+  const currentRight = platformEnvelope(last).right;
+  const remaining = targetRight - currentRight;
+  if (remaining <= 155) return { last, nextPlatformId };
+
+  // Keep connector edge gaps in the ordinary jumpable range. Connectors stay stationary so two
+  // sibling endpoints do not chase one another horizontally while the parent branch is aligning.
+  const startX = currentRight + 68;
+  const usableSpan = Math.max(180, targetRight - startX);
+  const count = Math.max(1, Math.ceil(usableSpan / 255));
+  const stationaryTerrain: TerrainRuntimeConfig = { ...terrain, movingPlatformsEnabled: false };
+  return addRoutePlatforms(
+    platforms,
+    count,
+    startX,
+    startX + usableSpan,
+    laneY,
+    side,
+    routePath,
+    groupId,
+    rootGroupId,
+    depth,
+    viewportHeight,
+    nextPlatformId,
+    rng,
+    stationaryTerrain,
+    false,
+    last.position.y,
+    corridorMin,
+    corridorMax
+  );
+}
+
+/** Build an asymmetric branch tree. Each fork has a naturally sized local runway; recursive child
+ * forks determine their own length and shorter siblings receive connective ledges afterward. This
+ * avoids giant empty gaps while preserving route locks and explicit merge checkpoints. */
 function buildBranchTree(
   platforms: PlatformState[],
   entryPlatform: PlatformState,
@@ -969,87 +1206,214 @@ function buildBranchTree(
   depth: number,
   parentRoutePath: string | null,
   rootGroupId: number,
-  forcedMergeRightX?: number,
-  forceMovingExposure = false
+  forceMovingExposure = false,
+  corridorMin = BRANCH_MIN_PLATFORM_Y,
+  corridorMax = viewportHeight - BRANCH_BOTTOM_MARGIN
 ): BranchBuildResult {
   const groupId = nextPlatformId;
-  const entryRight = entryPlatform.position.x + entryPlatform.width;
-  const totalSpan = Math.max(420, forcedMergeRightX !== undefined ? forcedMergeRightX - entryRight : branchSpan(terrain, depth));
+  const entryRight = platformEnvelope(entryPlatform).right;
   const mergeWidth = 240;
-  const mergeRightX = forcedMergeRightX ?? entryRight + totalSpan;
-  const mergeLeftX = mergeRightX - mergeWidth;
-  const entryGap = depth === 1 ? 105 : 85;
-  const mergeGap = depth === 1 ? 115 : 90;
-  const maxRouteCount = Math.max(1, terrain.maxPlatformsPerBranch);
+  const entryGap = depth === 1 ? 92 : 76;
+  const mergeGap = depth === 1 ? 108 : 88;
+
+  // The configured value is a per-fork ceiling. Deeper forks tend to be shorter and less regular.
+  const maxRouteCount = Math.max(1, terrain.maxPlatformsPerBranch - Math.max(0, depth - 1));
   const minRouteCount = maxRouteCount >= 2 ? 2 : 1;
   const routeCount = minRouteCount + Math.floor(rng() * (maxRouteCount - minRouteCount + 1));
-  const hasNested = terrain.subBranchingEnabled && depth < terrain.maxBranchDepth;
-  // Give a route at least two commitment platforms before a nested fork whenever the user's
-  // per-route limit permits it. The first is a reachable fork landing; the next completes the
-  // divergence into the route's corridor before that route can split again.
-  const preCount = hasNested
-    ? Math.min(routeCount, Math.max(routeCount >= 2 ? 2 : 1, Math.ceil(routeCount * 0.6)))
-    : routeCount;
-  const postCount = hasNested ? Math.max(0, routeCount - preCount) : 0;
-  const [upperY, lowerY] = routeLanePair(
+
+  const canNest = terrain.subBranchingEnabled && depth < terrain.maxBranchDepth;
+  let nestUpper = false;
+  let nestLower = false;
+  const nestChance = depth === 1 ? 0.74 : depth === 2 ? 0.56 : 0.38;
+  if (canNest && rng() < nestChance) {
+    if (rng() < 0.5) nestUpper = true;
+    else nestLower = true;
+    const bothChance = depth === 1 ? 0.30 : depth === 2 ? 0.17 : 0.08;
+    if (rng() < bothChance) {
+      nestUpper = true;
+      nestLower = true;
+    }
+  }
+  const routeCountsForNesting = (nested: boolean): { preCount: number; postCount: number } => {
+    if (!nested || routeCount < 2) return { preCount: routeCount, postCount: 0 };
+    const preCount = routeCount >= 3
+      ? Math.min(routeCount - 1, Math.max(2, Math.ceil(routeCount * 0.55)))
+      : 1;
+    return { preCount, postCount: routeCount - preCount };
+  };
+
+  const [upperCommitY, lowerCommitY] = commitmentLanePair(
     entryPlatform.position.y,
-    depth,
     viewportHeight,
-    rng,
-    parentRoutePath,
-    preCount
+    corridorMin,
+    corridorMax
   );
-  const childSpan = hasNested ? branchSpan(terrain, depth + 1) : 0;
-  const availableLocal = Math.max(260, totalSpan - childSpan - mergeWidth);
-  const beforeLocal = hasNested ? availableLocal * 0.54 : availableLocal;
-  const afterLocal = hasNested ? availableLocal - beforeLocal : 0;
+  const routeClearance = MIN_PLATFORM_CLEARANCE_Y + PLATFORM_HEIGHT;
+  const routeSplitCenter = (upperCommitY + lowerCommitY) * 0.5;
+  const routeSplitHalfGap = routeClearance * 0.5 + 4;
+  const upperRouteCorridor: [number, number] = [
+    corridorMin,
+    Math.max(corridorMin, routeSplitCenter - routeSplitHalfGap),
+  ];
+  const lowerRouteCorridor: [number, number] = [
+    Math.min(corridorMax, routeSplitCenter + routeSplitHalfGap),
+    corridorMax,
+  ];
+  const computeReachableRouteLanes = (count: number, recurseUpper: boolean, recurseLower: boolean): [number, number] => {
+    let [upper, lower] = routeLanePair(
+      entryPlatform.position.y,
+      depth,
+      viewportHeight,
+      rng,
+      count,
+      corridorMin,
+      corridorMax,
+      recurseUpper,
+      recurseLower
+    );
+    const remainingTransitions = Math.max(0, count - 1);
+    if (remainingTransitions === 0) return [upperCommitY, lowerCommitY];
+    const maxLaneDelta = remainingTransitions * 134;
+    upper = Math.max(upperCommitY - maxLaneDelta, Math.min(upperCommitY + maxLaneDelta, upper));
+    lower = Math.max(lowerCommitY - maxLaneDelta, Math.min(lowerCommitY + maxLaneDelta, lower));
+    upper = Math.max(upperRouteCorridor[0], Math.min(upperRouteCorridor[1], upper));
+    lower = Math.max(lowerRouteCorridor[0], Math.min(lowerRouteCorridor[1], lower));
+    return [upper, lower];
+  };
+
+  let { preCount, postCount } = routeCountsForNesting(nestUpper || nestLower);
+  let [upperY, lowerY] = computeReachableRouteLanes(preCount, nestUpper, nestLower);
+
+  // A recursive child is only materialized when its inherited vertical corridor can actually fit
+  // another readable fork. This makes maxBranchDepth a ceiling instead of a command to squeeze a
+  // fork into insufficient space. Recompute the local ramp when one proposed child is rejected.
+  let bothSidesNest = nestUpper && nestLower;
+  let upperChildCorridor = intersectCorridors(
+    childBranchCorridor('upper', corridorMin, corridorMax, upperY, lowerY, bothSidesNest),
+    upperRouteCorridor
+  );
+  let lowerChildCorridor = intersectCorridors(
+    childBranchCorridor('lower', corridorMin, corridorMax, upperY, lowerY, bothSidesNest),
+    lowerRouteCorridor
+  );
+  const initialNestUpper = nestUpper;
+  const initialNestLower = nestLower;
+  if (nestUpper && !corridorSupportsNestedFork(upperChildCorridor)) nestUpper = false;
+  if (nestLower && !corridorSupportsNestedFork(lowerChildCorridor)) nestLower = false;
+
+  if (nestUpper !== initialNestUpper || nestLower !== initialNestLower) {
+    ({ preCount, postCount } = routeCountsForNesting(nestUpper || nestLower));
+    [upperY, lowerY] = computeReachableRouteLanes(preCount, nestUpper, nestLower);
+    bothSidesNest = nestUpper && nestLower;
+    upperChildCorridor = intersectCorridors(
+      childBranchCorridor('upper', corridorMin, corridorMax, upperY, lowerY, bothSidesNest),
+      upperRouteCorridor
+    );
+    lowerChildCorridor = intersectCorridors(
+      childBranchCorridor('lower', corridorMin, corridorMax, upperY, lowerY, bothSidesNest),
+      lowerRouteCorridor
+    );
+  }
+
+  const hasNested = nestUpper || nestLower;
 
   const branchBaseToken = `g${groupId}`;
   const upperPath = parentRoutePath ? `${parentRoutePath}/${branchBaseToken}U` : `${branchBaseToken}U`;
   const lowerPath = parentRoutePath ? `${parentRoutePath}/${branchBaseToken}L` : `${branchBaseToken}L`;
 
+  // Use a bounded slot pitch rather than stretching a small route count across the whole recursive
+  // branch. This keeps the first commitment landing and every ordinary continuation jumpable.
+  const routePitch = Math.max(205, 248 - (depth - 1) * 10 + (rng() - 0.5) * 30);
   const preStart = entryRight + entryGap;
-  const preEnd = Math.min(mergeLeftX - mergeGap - 120, entryRight + beforeLocal);
-  const upperPre = addRoutePlatforms(platforms, preCount, preStart, preEnd, upperY, 'upper', upperPath, groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain, forceMovingExposure, entryPlatform.position.y);
+  const preEnd = preStart + preCount * routePitch;
+  const upperPre = addRoutePlatforms(
+    platforms, preCount, preStart, preEnd, upperY, 'upper', upperPath, groupId, rootGroupId,
+    depth, viewportHeight, nextPlatformId, rng, terrain, forceMovingExposure, upperCommitY,
+    upperRouteCorridor[0], upperRouteCorridor[1]
+  );
   nextPlatformId = upperPre.nextPlatformId;
-  const lowerPre = addRoutePlatforms(platforms, preCount, preStart, preEnd, lowerY, 'lower', lowerPath, groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain, forceMovingExposure, entryPlatform.position.y);
+  const lowerPre = addRoutePlatforms(
+    platforms, preCount, preStart, preEnd, lowerY, 'lower', lowerPath, groupId, rootGroupId,
+    depth, viewportHeight, nextPlatformId, rng, terrain, forceMovingExposure, lowerCommitY,
+    lowerRouteCorridor[0], lowerRouteCorridor[1]
+  );
   nextPlatformId = lowerPre.nextPlatformId;
 
   let upperLast = upperPre.last;
   let lowerLast = lowerPre.last;
 
   if (hasNested) {
-    // Both sibling routes recursively split. Giving both child trees the same merge-right target
-    // preserves reachability while still allowing their internal geometry to differ vertically.
-    const childEntryRight = Math.max(
-      upperLast.position.x + upperLast.width,
-      lowerLast.position.x + lowerLast.width
-    );
-    const childMergeRight = Math.min(mergeLeftX - mergeGap - 90, childEntryRight + childSpan);
+    if (nestUpper) {
+      const child = buildBranchTree(
+        platforms, upperLast, viewportHeight, nextPlatformId, rng, terrain, depth + 1, upperPath,
+        rootGroupId, false, upperChildCorridor[0], upperChildCorridor[1]
+      );
+      nextPlatformId = child.nextPlatformId;
+      upperLast = child.merge;
+    }
+    if (nestLower) {
+      const child = buildBranchTree(
+        platforms, lowerLast, viewportHeight, nextPlatformId, rng, terrain, depth + 1, lowerPath,
+        rootGroupId, false, lowerChildCorridor[0], lowerChildCorridor[1]
+      );
+      nextPlatformId = child.nextPlatformId;
+      lowerLast = child.merge;
+    }
 
-    const upperChild = buildBranchTree(platforms, upperLast, viewportHeight, nextPlatformId, rng, terrain, depth + 1, upperPath, rootGroupId, childMergeRight);
-    nextPlatformId = upperChild.nextPlatformId;
-    upperLast = upperChild.merge;
-
-    const lowerChild = buildBranchTree(platforms, lowerLast, viewportHeight, nextPlatformId, rng, terrain, depth + 1, lowerPath, rootGroupId, childMergeRight);
-    nextPlatformId = lowerChild.nextPlatformId;
-    lowerLast = lowerChild.merge;
+    // Align the shorter sibling with stationary transit ledges. Re-evaluate a few times because a
+    // collision-safe local fallback can legitimately move one connector slightly farther right.
+    for (let pass = 0; pass < 3; pass++) {
+      const targetRight = Math.max(platformEnvelope(upperLast).right, platformEnvelope(lowerLast).right);
+      const upperAligned = extendRouteTowardX(
+        platforms, upperLast, targetRight, upperY, 'upper', upperPath, groupId, rootGroupId,
+        depth, viewportHeight, nextPlatformId, rng, terrain,
+        upperRouteCorridor[0], upperRouteCorridor[1]
+      );
+      nextPlatformId = upperAligned.nextPlatformId;
+      upperLast = upperAligned.last;
+      const lowerAligned = extendRouteTowardX(
+        platforms, lowerLast, Math.max(targetRight, platformEnvelope(upperLast).right), lowerY, 'lower', lowerPath,
+        groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain,
+        lowerRouteCorridor[0], lowerRouteCorridor[1]
+      );
+      nextPlatformId = lowerAligned.nextPlatformId;
+      lowerLast = lowerAligned.last;
+      if (Math.abs(platformEnvelope(upperLast).right - platformEnvelope(lowerLast).right) <= 155) break;
+    }
 
     if (postCount > 0) {
-      const postStart = childMergeRight + 55;
-      const postEnd = Math.max(postStart + 160, mergeLeftX - mergeGap);
-      const upperPost = addRoutePlatforms(platforms, postCount, postStart, postEnd, upperY, 'upper', upperPath, groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain);
+      const alignedRight = Math.max(platformEnvelope(upperLast).right, platformEnvelope(lowerLast).right);
+      const postStart = alignedRight + 64;
+      const postPitch = Math.max(200, routePitch - 10);
+      const postEnd = postStart + postCount * postPitch;
+      const upperPost = addRoutePlatforms(
+        platforms, postCount, postStart, postEnd, upperY, 'upper', upperPath, groupId, rootGroupId,
+        depth, viewportHeight, nextPlatformId, rng, terrain, false, upperLast.position.y,
+        upperRouteCorridor[0], upperRouteCorridor[1]
+      );
       nextPlatformId = upperPost.nextPlatformId;
       upperLast = upperPost.last;
-      const lowerPost = addRoutePlatforms(platforms, postCount, postStart, postEnd, lowerY, 'lower', lowerPath, groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain);
+      const lowerPost = addRoutePlatforms(
+        platforms, postCount, postStart, postEnd, lowerY, 'lower', lowerPath, groupId, rootGroupId,
+        depth, viewportHeight, nextPlatformId, rng, terrain, false, lowerLast.position.y,
+        lowerRouteCorridor[0], lowerRouteCorridor[1]
+      );
       nextPlatformId = lowerPost.nextPlatformId;
       lowerLast = lowerPost.last;
     }
   }
 
-  // Merge platforms stay stationary even when branch moving-platform integration is enabled. This
-  // keeps the rejoin point a reliable route-unlock checkpoint while the route itself can move.
-  const mergeY = clampPlatformY((upperLast.position.y + lowerLast.position.y) / 2 + (rng() - 0.5) * 24, viewportHeight);
+  // The merge is positioned from the COMPLETE swept envelopes, so a nearby moving route platform
+  // can never sweep through the rejoin point. Merges themselves remain stationary checkpoints.
+  const resolvedRouteRight = Math.max(platformEnvelope(upperLast).right, platformEnvelope(lowerLast).right);
+  const mergeLeftX = resolvedRouteRight + mergeGap;
+  const mergeRightX = mergeLeftX + mergeWidth;
+  const naturalMergeY = clampPlatformY((upperLast.position.y + lowerLast.position.y) / 2 + (rng() - 0.5) * 20, viewportHeight);
+  // Rejoining should not secretly be the hardest upward jump in the branch. The lower route may
+  // need to climb back toward the midpoint, so cap that climb while allowing the upper route's
+  // descent to stay generous.
+  const mergeReachabilityFloor = Math.max(upperLast.position.y, lowerLast.position.y) - 126;
+  const mergeY = clampPlatformY(Math.max(naturalMergeY, mergeReachabilityFloor), viewportHeight);
   const merge = placeBranchPlatformWithoutOverlap({
     id: nextPlatformId++,
     width: mergeWidth,
@@ -1060,7 +1424,7 @@ function buildBranchTree(
     branchDepth: depth,
     mergeToRoutePath: parentRoutePath,
     rootBranchGroupId: rootGroupId,
-  }, platforms, viewportHeight, mergeLeftX, mergeRightX, mergeY);
+  }, platforms, viewportHeight, mergeLeftX, mergeRightX, mergeY, corridorMin, corridorMax);
   platforms.push(merge);
   return { merge, nextPlatformId };
 }
@@ -1110,10 +1474,30 @@ function appendForwardSegment(
     return { rightmost: p, nextPlatformId };
   }
 
+  // A route decision should begin from a stable staging ledge. Branching directly from an
+  // oscillating platform made the apparent first jump vary by motion phase and could turn a clean
+  // fork into a timing accident. Insert one ordinary stationary transition when necessary.
+  let branchEntry = rightmostPlatform;
+  if (rightmostPlatform.motion) {
+    const stationaryTerrain: TerrainRuntimeConfig = { ...terrain, movingPlatformsEnabled: false };
+    branchEntry = generatePlatform(
+      baseRight,
+      rightmostPlatform.position.y,
+      viewportHeight,
+      nextPlatformId++,
+      rng,
+      false,
+      stationaryTerrain,
+      false,
+      platforms
+    );
+    platforms.push(branchEntry);
+  }
+
   const rootGroupId = nextPlatformId;
   const built = buildBranchTree(
     platforms,
-    rightmostPlatform,
+    branchEntry,
     viewportHeight,
     nextPlatformId,
     rng,
@@ -1121,7 +1505,6 @@ function appendForwardSegment(
     1,
     null,
     rootGroupId,
-    undefined,
     needsGuaranteedMoving && terrain.movingPlatformsInBranches
   );
   return { rightmost: built.merge, nextPlatformId: built.nextPlatformId };

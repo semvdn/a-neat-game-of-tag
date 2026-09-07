@@ -34,7 +34,7 @@ Nearby platforms use **stable semantic slots** (`next`, `next2`, `previous`) rat
 
 Cooldown sensing is continuous rather than boolean. A value of `1` means the relevant body has just entered a protected/no-tag window and it falls smoothly to `0` as that window expires.
 
-> **Compatibility:** this experiment requires fresh policies. Older 39-input, 25-input camera-relative, and four-output left/right checkpoints are intentionally rejected rather than silently remapped.
+> **Compatibility:** the current controller requires 23-input world-relative policies with three factorized outputs. Older 39-input, 25-input camera-relative, and four-output left/right checkpoints are intentionally rejected rather than silently remapped.
 
 ## Manual abilities only
 
@@ -112,11 +112,15 @@ Every candidate in a role sees the same opponent identities and scenario seeds f
 
 ## Recursive route terrain and moving platforms
 
-The procedural terrain generator now builds **true route trees** rather than a one-platform upper/lower detour. Root forks deliberately diverge into wide upper/lower corridors, and each nested fork splits only inside its parent corridor so routes stay visually ordered instead of weaving through one another. The first commitment landing stays within a reachable transition step; subsequent route platforms complete the separation before another nested fork can occur. Landing on one side of a split commits that agent to the chosen route: sibling-route platforms stop being collidable until the matching merge checkpoint is reached. An uncommitted trunk agent may enter only a first-level fork, so it cannot skip the branch point by landing directly on a nested descendant. A committed route can split again when sub-branching is enabled, producing nested exclusive choices up to the configured depth. Nested merges unlock only their child choice; the outer route remains locked until its own merge, so route commitment is preserved correctly through the full tree. Agents on divergent sibling routes also cannot tag through one another if route geometry happens to cross; parent/child route states become physically interactive again at their shared merge approach. Pursuit-distance telemetry uses the same route rule, preventing impossible cross-route proximity from being rewarded.
+The procedural terrain generator builds **true route trees** rather than a one-platform upper/lower detour. Every branch begins from a stable staging ledge and two reachable commitment platforms. Choosing either commitment platform locks the agent to that sibling route until its matching merge. Nested forks inherit a **hard vertical corridor** from their parent route, so descendants cannot leak into sibling territory merely because a crowded placement would be convenient. If an inherited corridor does not have enough room for another clean split, recursion stops early even when the configured maximum depth is higher. This makes maximum depth a ceiling, not an instruction to generate cramped or impossible geometry.
 
-Moving platforms use deterministic oscillation and share the same implementation in headless training and the continuous champion view. Trunk platforms may move horizontally or vertically; branch-route platforms move horizontally only so the upper/lower route identity stays visually clear. Grounded agents are carried by their platform before the next policy decision, while merge checkpoints remain stationary so route rejoin points are reliable. Moving platforms may optionally appear inside branch routes. Policy sensing filters out inaccessible sibling-route platforms, and fair respawn respects the active route lock instead of teleporting an agent onto the route it did not choose.
+Route geometry is intentionally asymmetric. Recursion is probabilistic, one side may continue while the other receives ordinary transit ledges, and route lengths are generated from bounded platform pitches rather than stretching a small number of ledges across a large recursive span. Consecutive route climbs are kept comfortably inside the normal jump envelope, first-fork and merge transitions stay conservative, and explicit merge checkpoints slide forward to the actual resolved route endpoints. Landing on one side of a split still makes sibling-route platforms non-collidable and sibling-route agents non-taggable until the appropriate merge; sensing, pursuit distance and fair respawn use the same route-accessibility rules.
 
-Platform generation now enforces a **hard no-overlap invariant**. Normal trunk platforms expand their horizontal gap when necessary; recursive branch platforms search nearby free route lanes/slots (and may narrow slightly only as a dense-tree fallback). Moving platforms are validated using their **entire swept oscillation envelope**, so two platforms cannot become overlapping later in their motion even if their starting rectangles were separate. Unsafe movement ranges are reduced, made one-sided, switched to the other axis, or left stationary rather than violating the invariant.
+Ordinary trunk terrain uses a reflected random-walk profile instead of independent height noise. Most runs are gentle, with occasional climbs and descents, wider breathing room on flat sections and shorter reaches for uphill jumps. This produces recognizable runs and elevation changes without long rows of identical platforms or white-noise staircases.
+
+Moving platforms use deterministic oscillation and share the same implementation in headless training and the continuous champion view. Trunk platforms may move horizontally or vertically; branch-route platforms move horizontally only and only on internal route ledges. Commitment platforms, route endpoints and merge checkpoints stay stationary so choosing and rejoining a path remains readable. A branch that follows a moving trunk platform first inserts a stationary staging ledge, preventing route choice from depending on an arbitrary motion phase.
+
+Platform generation enforces both a **hard no-overlap invariant** and a real safety-clearance invariant. Platforms whose horizontal ranges coincide keep substantial vertical breathing room, while near-level neighbors retain a readable horizontal gap. A moving platform is checked against every other platform using its **complete swept oscillation envelope**, not just its starting rectangle or sampled frames. Unsafe motion is shortened, made one-sided, moved to the alternate axis where allowed, or removed entirely. The generator never accepts an overlap as a fallback.
 
 The sidebar **Terrain variety** menu controls the distribution independently for training and display:
 
@@ -128,7 +132,7 @@ The sidebar **Terrain variety** menu controls the distribution independently for
 The platform collection is no longer assumed to be spatially sorted; generation follows the forward trunk/outer merge while complete active branch trees are retained until the agents have cleared them. This prevents recursive sibling routes or moving platforms from corrupting rolling terrain generation.
 
 
-## Configurable and evolvable network architecture experiments
+## Configurable and evolvable network architecture
 
 The Diagnostics suite includes an **Architecture** tab where architecture is split into three separate ideas: the **generation-1 starting architecture**, whether each structural dimension is allowed to **evolve**, and a **hard cap** that evolution cannot exceed. Changes remain staged until **Apply architecture & restart** is pressed, which intentionally starts fresh populations at generation 1.
 
@@ -232,7 +236,7 @@ The normal sidebar intentionally shows only live role/action/stamina/Elo informa
 
 ## Coding-agent guidance
 
-The repository now includes both `AGENTS.md` (the cross-agent autodiscovery convention) and the requested `agent.md` copy. Project-local Agent Skills live under `skills/*/SKILL.md`. They capture the recurring workflows for NEAT co-evolution, procedural terrain, experiment diagnostics, UI telemetry, and release/Git packaging. Agents should read the relevant skill before making substantial changes and must make a real Git commit before packaging a handoff ZIP.
+The repository now includes both `AGENTS.md` (the cross-agent autodiscovery convention) and the requested `agent.md` copy. Project-local Agent Skills live under `skills/*/SKILL.md`. They capture the recurring workflows for NEAT co-evolution, procedural terrain, training diagnostics, UI telemetry, and release/Git packaging. Agents should read the relevant skill before making substantial changes and must make a real Git commit before packaging a handoff ZIP.
 
 ## Important files
 
@@ -283,7 +287,7 @@ The persistence controls now save **full NEAT evolutionary checkpoints**, not on
 - the accumulated per-generation analysis log;
 - UI diagnostic histories when saved/exported through the app.
 
-Checkpoints are captured at **completed-generation boundaries**. If Save/Export is pressed while evaluator workers are halfway through the next generation, the latest complete boundary is written rather than serializing an inconsistent subset of completed worker batches. Restoring resumes that full population at the beginning of its next evaluation. Champion-only JSON created by the factorized-control builds can seed fresh populations/species/Hall-of-Fame state. This temporary experiment build uses three policy outputs (`signed horizontal drive`, `jump`, `sprint`) and the new 23-input world-relative state schema. Older four-output or 25-input camera-relative checkpoints are rejected rather than silently remapped; start a fresh run for this experiment. Checkpoints created by this build remain fully restorable.
+Checkpoints are captured at **completed-generation boundaries**. If Save/Export is pressed while evaluator workers are halfway through the next generation, the latest complete boundary is written rather than serializing an inconsistent subset of completed worker batches. Restoring resumes that full population at the beginning of its next evaluation. Champion-only JSON created by the factorized-control builds can seed fresh populations/species/Hall-of-Fame state. The current controller uses three policy outputs (`signed horizontal drive`, `jump`, `sprint`) and the 23-input world-relative state schema. Older four-output or 25-input camera-relative checkpoints are rejected rather than silently remapped; current-schema checkpoints remain fully restorable.
 
 The full checkpoint JSON can become much larger than a champion-only file; **Export checkpoint** is therefore the most robust long-term archive path. Browser-local Save still uses local storage and can hit the browser's quota on very large, highly complex populations.
 
@@ -340,8 +344,6 @@ For training episodes selected to contain branching terrain, route exposure begi
 
 At evolution boundaries, up to two **distinct-generation retained/recent elites per role** may replace tail offspring. Their fitness is reset to zero, they re-enter normal speciation and evaluation, and they receive no artificial score. This provides a small genetic memory without freezing the population.
 
-The Architecture diagnostics **Run experiment** tool now performs one fresh **D · Hybrid soft-pursuit league** validation run using exactly this integrated setup. The original run is restored automatically after export or **Cancel & restore**. The default target remains **275 generations**, configurable from 50–1500, and the report includes soft-pursuit components plus elite-seeding provenance.
-
 ### Camera is observational only
 
 Agents are never clamped to the left or right viewport edge, and fair respawn is performed entirely in world coordinates. Rolling platform retention expands to include the leftmost and rightmost active agents, so a lagging Chaser keeps traversable terrain even when temporarily off-screen. The presentation camera dynamically frames the active chase group and ignores bodies once they have clearly fallen more than the normal traversal band below their last grounded support, so a missed platform cannot drag the camera downward. If every body is falling, the presentation holds its previous framing until somebody respawns. The user's zoom setting is treated as the preferred maximum zoom, but automatic framing never shrinks below **50% of the invariant reference view**. If the Chaser exceeds that readable envelope relative to **every Runner**, training applies one Chaser failure event and terminates the episode. In the continuous champion view the world is not reset: only the Chaser is teleported to a legal platform roughly 220–360 px behind the trailing Runner, placed on the Runner's active route, and given the normal brief tag re-arm delay. Runner–Runner separation alone does not trigger the Chaser failure. Horizontal/vertical safety clamps still keep an active Chaser–Runner pair inside the padded frame up to that boundary.
@@ -373,6 +375,4 @@ The training header shows `awake` while the screen wake lock is active. A `↻N`
 Browsers cannot keep JavaScript running if the operating system fully suspends/hibernates the computer or the browser process is explicitly discarded, but the trainer will recover outstanding evaluator work when execution resumes.
 
 
-### Memory-safe long runs and experiment export
-
-The pursuit experiment runner avoids large transient browser allocations: generation-boundary restart checkpoints no longer duplicate the full analysis history, explicit model checkpoints retain only the latest 500 diagnostic generations, and the temporary two-condition report stores compact trajectory points every 5 generations while keeping final metrics and probes at full detail. The final experiment report is serialized inside the training worker and handed to the UI as a single JSON string, avoiding a second structured-cloned report object plus another renderer-side stringify copy. This is intended to prevent V8/renderer out-of-memory crashes even when the operating system still has substantial free RAM.
+### Memory-safe long runs and analysis export

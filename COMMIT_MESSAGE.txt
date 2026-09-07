@@ -1,8 +1,9 @@
-Streamline telemetry and add repository agent skills
+Refine natural terrain generation and remove experiment runner
 
-- reduce the sidebar to compact live role/action/stamina telemetry and remove duplicated Elo/debug internals
-- simplify the Diagnostics overview to essential training-health and gameplay signals while preserving detailed exports/tabs
-- remove the unused per-frame visual reward-breakdown calculation and only attach live policy vectors when the senses overlay is enabled
-- add AGENTS.md plus the requested agent.md with project invariants, workflow, validation, Git, and packaging requirements
-- add portable project-local SKILL.md workflows for NEAT co-evolution, terrain generation, training diagnostics, UI telemetry, and release/Git handoffs
-- correct stale architecture documentation to the current 23-input / 3-output policy schema
+- remove the temporary architecture/pursuit experiment runner and its UI/worker lifecycle
+- enforce platform safety clearance using complete moving-platform sweep envelopes
+- keep recursive branches inside inherited vertical corridors and stop recursion when space is insufficient
+- make recursive branching asymmetric and probabilistic for more natural-looking route structures
+- add stationary staging/commitment ledges and cap route/merge climbs for reliable reachability
+- refine trunk height variation, branch spacing, merge placement, and moving-platform motion ranges
+- update terrain documentation, agent guidance, diagnostics wording, and gameplay-objective versioning

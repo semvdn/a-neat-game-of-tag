@@ -53,19 +53,6 @@ interface PerformanceDiagnosticsProps {
   onExportStoredCheckpoint: (id: string) => Promise<void>;
   networkArchitecture: NetworkArchitectureSuiteConfig;
   onApplyNetworkArchitecture: (config: NetworkArchitectureSuiteConfig) => void;
-  architectureExperimentStatus: {
-    running: boolean;
-    currentIndex: number;
-    totalExperiments: number;
-    experimentId: string | null;
-    label: string;
-    generation: number;
-    targetGeneration: number;
-    completedExperiments: number;
-    message: string | null;
-  };
-  onRunArchitectureExperiments: (targetGeneration: number) => void;
-  onCancelArchitectureExperiments: () => void;
 }
 
 const fmt = (v: number | undefined, digits = 2) => (Number.isFinite(v) ? Number(v).toFixed(digits) : '—');
@@ -437,9 +424,6 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   onExportStoredCheckpoint,
   networkArchitecture,
   onApplyNetworkArchitecture,
-  architectureExperimentStatus,
-  onRunArchitectureExperiments,
-  onCancelArchitectureExperiments,
 }) => {
   const [tab, setTab] = useState<'overview' | 'fitness' | 'network' | 'architecture' | 'actions' | 'models'>('overview');
   const [role, setRole] = useState<'chaser' | 'evader'>('chaser');
@@ -449,7 +433,6 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   const [pendingLoadId, setPendingLoadId] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [architectureDraft, setArchitectureDraft] = useState<NetworkArchitectureSuiteConfig>(() => sanitizeNetworkArchitectureSuite(networkArchitecture));
-  const [experimentTargetGeneration, setExperimentTargetGeneration] = useState(275);
   useEffect(() => setArchitectureDraft(sanitizeNetworkArchitectureSuite(networkArchitecture)), [networkArchitecture]);
   const architectureDirty = JSON.stringify(sanitizeNetworkArchitectureSuite(architectureDraft)) !== JSON.stringify(sanitizeNetworkArchitectureSuite(networkArchitecture));
   const selectedSuitePreset = (Object.entries(NETWORK_ARCHITECTURE_SUITE_PRESETS) as [NetworkArchitectureSuitePreset, typeof NETWORK_ARCHITECTURE_SUITE_PRESETS[NetworkArchitectureSuitePreset]][]).find(([, recipe]) => JSON.stringify(sanitizeNetworkArchitectureSuite(recipe.config)) === JSON.stringify(sanitizeNetworkArchitectureSuite(architectureDraft)))?.[0] || null;
@@ -648,18 +631,18 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             <div className="rounded-xl border border-violet-500/25 bg-violet-950/10 p-4">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="max-w-3xl">
-                  <div className="flex items-center gap-2"><Brain className="h-4 w-4 text-violet-300" /><h3 className="font-semibold text-white">Network architecture experiment suite</h3></div>
+                  <div className="flex items-center gap-2"><Brain className="h-4 w-4 text-violet-300" /><h3 className="font-semibold text-white">Network architecture</h3></div>
                   <p className="mt-1 text-xs leading-relaxed text-gray-500">Configure generation-1 depth/width/memory and independently decide whether hidden layers, hidden nodes, and recurrent connections may evolve afterward. Applying a new architecture intentionally starts both populations at generation 1 so benchmark comparisons are clean. The settings are stored in full checkpoints and analysis exports.</p>
                 </div>
-                <label className={`flex items-center gap-2 rounded border border-gray-700 bg-black/20 px-3 py-2 text-xs text-gray-300 ${architectureExperimentStatus.running ? 'opacity-45' : ''}`}><input type="checkbox" disabled={architectureExperimentStatus.running} checked={architectureDraft.linkedRoles} onChange={e => setArchitectureDraft(prev => ({ ...prev, linkedRoles: e.target.checked, runner: e.target.checked ? { ...prev.chaser, hiddenLayers: [...prev.chaser.hiddenLayers] } : prev.runner }))} />Use same architecture for both roles</label>
+                <label className={`flex items-center gap-2 rounded border border-gray-700 bg-black/20 px-3 py-2 text-xs text-gray-300`}><input type="checkbox" checked={architectureDraft.linkedRoles} onChange={e => setArchitectureDraft(prev => ({ ...prev, linkedRoles: e.target.checked, runner: e.target.checked ? { ...prev.chaser, hiddenLayers: [...prev.chaser.hiddenLayers] } : prev.runner }))} />Use same architecture for both roles</label>
               </div>
               <div className="mt-4">
-                <div className="flex items-center justify-between gap-3"><div><div className="text-xs font-semibold text-white">Experiment recipes</div><div className="text-[10px] text-gray-500">Whole-suite presets make role comparisons reproducible. Selecting one only edits the draft; Apply architecture & restart still controls when it takes effect.</div></div></div>
+                <div className="flex items-center justify-between gap-3"><div><div className="text-xs font-semibold text-white">Architecture presets</div><div className="text-[10px] text-gray-500">Whole-suite presets provide repeatable starting topologies. Selecting one only edits the draft; Apply architecture & restart still controls when it takes effect.</div></div></div>
                 <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-6">
                   {(Object.entries(NETWORK_ARCHITECTURE_SUITE_PRESETS) as [NetworkArchitectureSuitePreset, typeof NETWORK_ARCHITECTURE_SUITE_PRESETS[NetworkArchitectureSuitePreset]][]).map(([id, recipe]) => {
                     const selected = selectedSuitePreset === id;
                     return (
-                      <button key={id} type="button" disabled={architectureExperimentStatus.running} aria-pressed={selected} onClick={() => setArchitectureDraft(sanitizeNetworkArchitectureSuite(recipe.config))} className={`rounded-lg border px-3 py-2 text-left transition-colors ${selected ? 'border-violet-400 bg-violet-500/20 ring-1 ring-violet-400/35' : 'border-gray-800 bg-black/20 hover:border-gray-700'} ${architectureExperimentStatus.running ? 'cursor-not-allowed opacity-45' : ''}`}>
+                      <button key={id} type="button" aria-pressed={selected} onClick={() => setArchitectureDraft(sanitizeNetworkArchitectureSuite(recipe.config))} className={`rounded-lg border px-3 py-2 text-left transition-colors ${selected ? 'border-violet-400 bg-violet-500/20 ring-1 ring-violet-400/35' : 'border-gray-800 bg-black/20 hover:border-gray-700'}`}>
                         <div className={`flex flex-wrap items-center gap-1.5 text-[11px] font-semibold ${selected ? 'text-violet-100' : 'text-gray-200'}`}><span>{recipe.label}</span>{selected && <span className="rounded-full bg-violet-400 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-black">selected</span>}{id === 'memory_discovery' && <span className="rounded-full border border-emerald-500/35 px-1.5 py-0.5 text-[8px] uppercase tracking-wide text-emerald-300">default</span>}{id === 'ff_control' && <span className="rounded-full border border-fuchsia-500/35 px-1.5 py-0.5 text-[8px] uppercase tracking-wide text-fuchsia-300">control</span>}</div>
                         <div className={`mt-1 text-[9px] leading-relaxed ${selected ? 'text-violet-200/70' : 'text-gray-600'}`}>{recipe.summary}</div>
                       </button>
@@ -673,41 +656,13 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               </div>
             </div>
 
-            <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/10 p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="max-w-3xl">
-                  <div className="flex items-center gap-2"><Play className="h-4 w-4 text-cyan-300" /><h3 className="font-semibold text-white">Temporary pursuit-design experiment runner</h3></div>
-                  <p className="mt-1 text-xs leading-relaxed text-gray-500">Runs a fresh validation of the integrated hybrid design using the current terrain settings: camera-decoupled physics, Memory Discovery, pressure starts, soft multi-distance Chaser retention, the 50/20/15/15 opponent league and light elite seeding. The current run is restored automatically after export.</p>
-                </div>
-                <span className="rounded-full border border-cyan-500/25 bg-black/25 px-2.5 py-1 text-[10px] font-mono text-cyan-200">temporary tool</span>
-              </div>
-              <div className="mt-3 grid gap-2 md:grid-cols-2 text-[10px]">
-                <div className="rounded border border-amber-500/20 bg-black/20 px-3 py-2"><span className="font-semibold text-amber-200">Permanent B physics</span><div className="mt-1 text-gray-600">23 world-relative inputs; Chaser 5.7 / 7.9 at 28/s; Runner 5.0 / 7.5 at 24/s; 900ms post-fall protection; pressure starts and proximity bootstrap.</div></div>
-                <div className="rounded border border-cyan-500/25 bg-black/20 px-3 py-2"><span className="font-semibold text-cyan-200">D · Hybrid soft-pursuit league</span><div className="mt-1 text-gray-600">70/30 benchmark+pursuit retention, 50/20/15/15 current/recent/strong/diverse league, current recursive terrain settings, and up to two zero-fitness elite seed clones per role.</div></div>
-              </div>
-              <div className="mt-4 grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-end">
-                <label className="block">
-                  <span className="text-[10px] uppercase tracking-wide text-gray-500">Generations per experiment</span>
-                  <input type="number" min={50} max={1500} step={50} disabled={architectureExperimentStatus.running} value={experimentTargetGeneration} onChange={e => setExperimentTargetGeneration(Math.max(50, Math.min(1500, Math.round(Number(e.target.value) || 275))))} className="mt-1 w-full rounded border border-gray-700 bg-gray-950 px-3 py-2 text-sm font-mono text-gray-200 disabled:opacity-50" />
-                </label>
-                <div>
-                  <div className="flex justify-between gap-3 text-[10px] text-gray-500"><span className="truncate">{architectureExperimentStatus.running ? architectureExperimentStatus.label : 'Ready to validate the integrated hybrid pursuit design'}</span><span className="shrink-0">{architectureExperimentStatus.running ? `Gen ${architectureExperimentStatus.generation}/${architectureExperimentStatus.targetGeneration}` : `${experimentTargetGeneration} generations`}</span></div>
-                  <div className="mt-2 h-2 overflow-hidden rounded bg-gray-800"><div className="h-full bg-cyan-400 transition-all" style={{ width: `${architectureExperimentStatus.running ? Math.max(0, Math.min(100, ((architectureExperimentStatus.completedExperiments + architectureExperimentStatus.generation / Math.max(1, architectureExperimentStatus.targetGeneration)) / Math.max(1, architectureExperimentStatus.totalExperiments)) * 100)) : 0}%` }} /></div>
-                  <div className="mt-1 text-[10px] text-gray-600">{architectureExperimentStatus.running ? `Experiment ${architectureExperimentStatus.currentIndex + 1} of ${architectureExperimentStatus.totalExperiments}` : 'The combined pursuit-design JSON downloads automatically when all runs finish.'}</div>
-                </div>
-                {!architectureExperimentStatus.running ? <button onClick={() => onRunArchitectureExperiments(experimentTargetGeneration)} className="rounded bg-cyan-400 px-4 py-2.5 text-xs font-bold text-black flex items-center justify-center gap-1.5"><Play className="h-3.5 w-3.5" />Run experiments</button> : <button onClick={onCancelArchitectureExperiments} className="rounded border border-red-500/40 px-4 py-2.5 text-xs font-semibold text-red-300">Cancel & restore</button>}
-              </div>
-              {architectureExperimentStatus.message && <div className="mt-3 rounded border border-cyan-500/20 bg-black/20 px-3 py-2 text-[10px] text-cyan-100">{architectureExperimentStatus.message}</div>}
-              <p className="mt-3 text-[10px] leading-relaxed text-gray-600">The default is 275 generations for one fresh validation run. Cancelling discards the temporary population and restores the snapshotted run.</p>
-            </div>
-
-            <ArchitectureRoleEditor role="chaser" config={architectureDraft.chaser} disabled={architectureExperimentStatus.running} onChange={next => setArchitectureDraft(prev => ({ ...prev, chaser: next, runner: prev.linkedRoles ? { ...next, hiddenLayers: [...next.hiddenLayers] } : prev.runner }))} />
-            <ArchitectureRoleEditor role="runner" config={architectureDraft.linkedRoles ? architectureDraft.chaser : architectureDraft.runner} disabled={architectureExperimentStatus.running || architectureDraft.linkedRoles} onChange={next => setArchitectureDraft(prev => ({ ...prev, runner: next }))} />
+            <ArchitectureRoleEditor role="chaser" config={architectureDraft.chaser} onChange={next => setArchitectureDraft(prev => ({ ...prev, chaser: next, runner: prev.linkedRoles ? { ...next, hiddenLayers: [...next.hiddenLayers] } : prev.runner }))} />
+            <ArchitectureRoleEditor role="runner" config={architectureDraft.linkedRoles ? architectureDraft.chaser : architectureDraft.runner} disabled={architectureDraft.linkedRoles} onChange={next => setArchitectureDraft(prev => ({ ...prev, runner: next }))} />
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div><h4 className="font-semibold text-white">Apply experiment</h4><p className="text-xs text-gray-500">Architecture changes cannot be mixed into an existing population. Applying resets populations, species, Hall of Fame, Elo, benchmark bank and generation history.</p></div>
-                <div className="flex gap-2"><button disabled={!architectureDirty || architectureExperimentStatus.running} onClick={() => setArchitectureDraft(sanitizeNetworkArchitectureSuite(networkArchitecture))} className="rounded border border-gray-700 px-3 py-2 text-xs disabled:opacity-35">Revert draft</button><button disabled={!architectureDirty || architectureExperimentStatus.running} onClick={() => { const applied = sanitizeNetworkArchitectureSuite(architectureDraft); onApplyNetworkArchitecture(applied); setArchitectureDraft(applied); setStatus('Architecture applied. Fresh populations started at generation 1.'); }} className="rounded bg-violet-400 px-3 py-2 text-xs font-bold text-black disabled:opacity-35">Apply architecture & restart</button></div>
+                <div><h4 className="font-semibold text-white">Apply architecture</h4><p className="text-xs text-gray-500">Architecture changes cannot be mixed into an existing population. Applying resets populations, species, Hall of Fame, Elo, benchmark bank and generation history.</p></div>
+                <div className="flex gap-2"><button disabled={!architectureDirty} onClick={() => setArchitectureDraft(sanitizeNetworkArchitectureSuite(networkArchitecture))} className="rounded border border-gray-700 px-3 py-2 text-xs disabled:opacity-35">Revert draft</button><button disabled={!architectureDirty} onClick={() => { const applied = sanitizeNetworkArchitectureSuite(architectureDraft); onApplyNetworkArchitecture(applied); setArchitectureDraft(applied); setStatus('Architecture applied. Fresh populations started at generation 1.'); }} className="rounded bg-violet-400 px-3 py-2 text-xs font-bold text-black disabled:opacity-35">Apply architecture & restart</button></div>
               </div>
               {!architectureDirty && <p className="mt-3 text-[10px] text-emerald-300">Draft matches the currently applied architecture.</p>}
             </div>
@@ -737,20 +692,19 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
 
         {tab === 'models' && (
           <div className="max-w-5xl mx-auto space-y-5">
-            {architectureExperimentStatus.running && <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/10 px-4 py-3 text-xs text-cyan-100">Pursuit-design experiments are running. Save/load/import/reset controls are temporarily locked so the comparison remains clean. Use Architecture → Cancel & restore to stop.</div>}
             <div className="rounded-xl border border-violet-500/25 bg-violet-950/10 p-4">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="max-w-3xl">
                   <div className="flex items-center gap-2"><Database className="w-4 h-4 text-violet-300" /><h3 className="font-semibold text-white">Checkpoint library</h3></div>
                   <p className="mt-1 text-xs leading-relaxed text-gray-500">Named full-run checkpoints are stored in IndexedDB rather than the old single localStorage slot, so large evolved populations can be kept without immediately hitting localStorage quota limits. Saves are captured only at a completed-generation boundary.</p>
                 </div>
-                <label className={`px-3 py-2 rounded border border-violet-500/40 text-violet-200 text-xs flex items-center gap-1 ${checkpointLibraryBusy || architectureExperimentStatus.running ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:bg-violet-950/30'}`}><Upload className="w-3.5 h-3.5" />Import run JSON & load<input type="file" accept="application/json,.json" aria-label="Import checkpoint JSON and load it" className="hidden" onChange={upload} disabled={checkpointLibraryBusy || architectureExperimentStatus.running} /></label>
+                <label className={`px-3 py-2 rounded border border-violet-500/40 text-violet-200 text-xs flex items-center gap-1 ${checkpointLibraryBusy ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:bg-violet-950/30'}`}><Upload className="w-3.5 h-3.5" />Import run JSON & load<input type="file" accept="application/json,.json" aria-label="Import checkpoint JSON and load it" className="hidden" onChange={upload} disabled={checkpointLibraryBusy} /></label>
               </div>
 
               <div className="mt-4 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto]">
-                <input aria-label="Checkpoint name" value={saveName} onChange={e => setSaveName(e.target.value)} disabled={checkpointLibraryBusy || architectureExperimentStatus.running} placeholder={`Checkpoint gen ${generation}`} className="min-w-0 rounded border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 disabled:opacity-50" />
-                <button disabled={checkpointLibraryBusy || architectureExperimentStatus.running} onClick={() => { onSaveCheckpoint(saveName.trim() || `Checkpoint gen ${generation}`); setSaveName(''); }} className="px-3 py-2 rounded bg-violet-400 text-black text-xs font-bold flex items-center justify-center gap-1 disabled:opacity-40"><Save className="w-3.5 h-3.5" />Save current run</button>
-                <button disabled={checkpointLibraryBusy || architectureExperimentStatus.running} onClick={onExportModels} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center justify-center gap-1 disabled:opacity-40"><Download className="w-3.5 h-3.5" />Export full run</button>
+                <input aria-label="Checkpoint name" value={saveName} onChange={e => setSaveName(e.target.value)} disabled={checkpointLibraryBusy} placeholder={`Checkpoint gen ${generation}`} className="min-w-0 rounded border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 disabled:opacity-50" />
+                <button disabled={checkpointLibraryBusy} onClick={() => { onSaveCheckpoint(saveName.trim() || `Checkpoint gen ${generation}`); setSaveName(''); }} className="px-3 py-2 rounded bg-violet-400 text-black text-xs font-bold flex items-center justify-center gap-1 disabled:opacity-40"><Save className="w-3.5 h-3.5" />Save current run</button>
+                <button disabled={checkpointLibraryBusy} onClick={onExportModels} className="px-3 py-2 rounded border border-gray-700 text-xs flex items-center justify-center gap-1 disabled:opacity-40"><Download className="w-3.5 h-3.5" />Export full run</button>
               </div>
               {(checkpointLibraryMessage || status) && <div className="mt-3 rounded border border-violet-500/20 bg-black/20 px-3 py-2 text-xs text-violet-200">{checkpointLibraryMessage || status}</div>}
             </div>
@@ -779,12 +733,12 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                           </div>
                         </div>
                         <div className="flex flex-wrap gap-1.5">
-                          <button disabled={checkpointLibraryBusy || architectureExperimentStatus.running} onClick={() => setPendingLoadId(item.id)} className="rounded border border-emerald-500/35 px-2.5 py-1.5 text-[10px] text-emerald-200 flex items-center gap-1 disabled:opacity-40"><FolderOpen className="w-3 h-3" />Load</button>
+                          <button disabled={checkpointLibraryBusy} onClick={() => setPendingLoadId(item.id)} className="rounded border border-emerald-500/35 px-2.5 py-1.5 text-[10px] text-emerald-200 flex items-center gap-1 disabled:opacity-40"><FolderOpen className="w-3 h-3" />Load</button>
                           <button disabled={checkpointLibraryBusy} onClick={() => onExportStoredCheckpoint(item.id)} className="rounded border border-gray-700 px-2.5 py-1.5 text-[10px] text-gray-300 flex items-center gap-1 disabled:opacity-40"><Download className="w-3 h-3" />Export</button>
                           <button disabled={checkpointLibraryBusy} onClick={() => setPendingDeleteId(item.id)} className="rounded border border-red-500/25 px-2.5 py-1.5 text-[10px] text-red-300 flex items-center gap-1 disabled:opacity-40"><Trash2 className="w-3 h-3" />Delete</button>
                         </div>
                       </div>
-                      {pendingLoadId === item.id && <div className="mt-3 flex flex-wrap items-center gap-2 rounded border border-emerald-500/20 bg-emerald-950/10 px-3 py-2 text-[10px] text-emerald-200"><span className="mr-auto">Replace the active run with this generation {item.generation} checkpoint?</span><button disabled={checkpointLibraryBusy || architectureExperimentStatus.running} onClick={async () => { await onLoadStoredCheckpoint(item.id); setPendingLoadId(null); }} className="rounded bg-emerald-400 px-2.5 py-1 font-bold text-black">Load checkpoint</button><button onClick={() => setPendingLoadId(null)} className="rounded border border-gray-700 px-2.5 py-1 text-gray-300">Cancel</button></div>}
+                      {pendingLoadId === item.id && <div className="mt-3 flex flex-wrap items-center gap-2 rounded border border-emerald-500/20 bg-emerald-950/10 px-3 py-2 text-[10px] text-emerald-200"><span className="mr-auto">Replace the active run with this generation {item.generation} checkpoint?</span><button disabled={checkpointLibraryBusy} onClick={async () => { await onLoadStoredCheckpoint(item.id); setPendingLoadId(null); }} className="rounded bg-emerald-400 px-2.5 py-1 font-bold text-black">Load checkpoint</button><button onClick={() => setPendingLoadId(null)} className="rounded border border-gray-700 px-2.5 py-1 text-gray-300">Cancel</button></div>}
                       {pendingDeleteId === item.id && <div className="mt-3 flex flex-wrap items-center gap-2 rounded border border-red-500/20 bg-red-950/10 px-3 py-2 text-[10px] text-red-200"><span className="mr-auto">Delete this saved checkpoint from this browser?</span><button disabled={checkpointLibraryBusy} onClick={async () => { await onDeleteStoredCheckpoint(item.id); setPendingDeleteId(null); }} className="rounded bg-red-400 px-2.5 py-1 font-bold text-black">Delete</button><button onClick={() => setPendingDeleteId(null)} className="rounded border border-gray-700 px-2.5 py-1 text-gray-300">Cancel</button></div>}
                     </div>
                   ))}
@@ -800,7 +754,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="rounded-xl border border-red-500/20 bg-red-950/10 p-4">
-              {!confirmReset ? <button disabled={architectureExperimentStatus.running} onClick={() => setConfirmReset(true)} className="px-3 py-2 rounded border border-red-500/40 text-red-300 text-xs flex items-center gap-1"><RotateCcw className="w-3.5 h-3.5" />Reset both populations</button> : <div className="flex items-center gap-2"><span className="text-xs text-red-300">Delete all evolved genomes, Hall of Fame entries, and restart at generation 1?</span><button disabled={architectureExperimentStatus.running} onClick={() => { onResetWeights(); setConfirmReset(false); }} className="px-3 py-1.5 bg-red-500 text-black rounded text-xs font-bold disabled:cursor-not-allowed disabled:opacity-40">Reset</button><button onClick={() => setConfirmReset(false)} className="px-3 py-1.5 border border-gray-700 rounded text-xs">Cancel</button></div>}
+              {!confirmReset ? <button onClick={() => setConfirmReset(true)} className="px-3 py-2 rounded border border-red-500/40 text-red-300 text-xs flex items-center gap-1"><RotateCcw className="w-3.5 h-3.5" />Reset both populations</button> : <div className="flex items-center gap-2"><span className="text-xs text-red-300">Delete all evolved genomes, Hall of Fame entries, and restart at generation 1?</span><button onClick={() => { onResetWeights(); setConfirmReset(false); }} className="px-3 py-1.5 bg-red-500 text-black rounded text-xs font-bold disabled:cursor-not-allowed disabled:opacity-40">Reset</button><button onClick={() => setConfirmReset(false)} className="px-3 py-1.5 border border-gray-700 rounded text-xs">Cancel</button></div>}
             </div>
           </div>
         )}

@@ -91,7 +91,7 @@ export interface TerrainRuntimeConfig {
 }
 
 export interface PursuitDesignConfig {
-  /** Optional fixed role asymmetry used by temporary pursuit-design experiments. */
+  /** Role-specific pursuit-balance physics used by the integrated training design. */
   chaserBaseMaxSpeed?: number;
   runnerBaseMaxSpeed?: number;
   chaserSprintMaxSpeed?: number;
@@ -109,7 +109,7 @@ export interface PursuitDesignConfig {
   runnerPressureEscapeEpisodeCap?: number;
   /** Tag immunity granted immediately after a Runner is fairly respawned from a fall. */
   postFallRunnerTagProtectionMs?: number;
-  /** Allows the full pursuit experiment to expose route choices earlier without changing visual defaults. */
+  /** Optional route-exposure threshold used by pursuit training. */
   branchStructureMinX?: number;
 }
 
@@ -124,10 +124,10 @@ export interface ActiveUpgradeState {
   sprintRunnerMaxSpeed: number;
   sprintChaserStaminaCostPerSec: number;
   sprintRunnerStaminaCostPerSec: number;
-  /** Optional role-specific base speeds. Omitted in the normal game, supplied by pursuit experiments. */
+  /** Optional role-specific base speeds supplied by the integrated pursuit design. */
   chaserBaseMaxSpeed?: number;
   runnerBaseMaxSpeed?: number;
-  /** Optional Runner-only post-fall tag protection used by pursuit-balance experiments. */
+  /** Optional Runner-only post-fall tag protection used by pursuit balance. */
   postFallRunnerTagProtectionMs?: number;
 }
 
@@ -447,7 +447,7 @@ export interface DiagnosticsState {
   terrainVarietyConfig?: TerrainVarietyConfig;
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   pursuitDesign?: PursuitDesignConfig | null;
-  pursuitExperimentFlags?: { pressureStarts: boolean; crossPlayGate: boolean; strictContemporaryGate?: boolean; softMultiDistancePursuit?: boolean; cleanTagShowcase?: boolean };
+  pursuitDesignFlags?: { pressureStarts: boolean; crossPlayGate: boolean; strictContemporaryGate?: boolean; softMultiDistancePursuit?: boolean; cleanTagShowcase?: boolean };
   selectionAggregation?: string;
   historicalOpponentPanel?: string;
   eliteSeeding?: EliteSeedingTelemetry;
@@ -475,7 +475,7 @@ export interface TrainingGenerationAnalysisRecord {
   terrainVarietyConfig?: TerrainVarietyConfig;
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   pursuitDesign?: PursuitDesignConfig | null;
-  pursuitExperimentFlags?: { pressureStarts: boolean; crossPlayGate: boolean; strictContemporaryGate?: boolean; softMultiDistancePursuit?: boolean; cleanTagShowcase?: boolean };
+  pursuitDesignFlags?: { pressureStarts: boolean; crossPlayGate: boolean; strictContemporaryGate?: boolean; softMultiDistancePursuit?: boolean; cleanTagShowcase?: boolean };
   selectionAggregation?: string;
   historicalOpponentPanel?: string;
   eliteSeeding?: EliteSeedingTelemetry;

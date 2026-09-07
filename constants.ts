@@ -41,6 +41,15 @@ export const MIN_PLATFORM_GAP_X = 60;
 export const MAX_PLATFORM_GAP_X = 200;
 export const MIN_PLATFORM_GAP_Y = -120;
 export const MAX_PLATFORM_GAP_Y = 120;
+// Geometry clearance is stricter than simple non-overlap. Parallel platforms whose horizontal
+// spans (or moving sweep envelopes) overlap must leave enough vertical room for an agent body,
+// while nearby platforms on the same level keep a readable horizontal gap.
+export const MIN_PLATFORM_CLEARANCE_X = 42;
+export const MIN_PLATFORM_CLEARANCE_Y = 76;
+// Branch trees may use more vertical space than the ordinary trunk. This gives recursive choices
+// enough room to remain visually distinct without forcing deep routes into one another.
+export const BRANCH_MIN_PLATFORM_Y = 80;
+export const BRANCH_BOTTOM_MARGIN = 40;
 
 // Runtime action telemetry remains directional so diagnostics can distinguish left from right, while
 // the neural policy itself uses a single signed horizontal output.

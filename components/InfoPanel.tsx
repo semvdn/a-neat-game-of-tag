@@ -21,7 +21,6 @@ interface InfoPanelProps {
   onUpdateTrainingFitnessConfig: (patch: Partial<TrainingFitnessConfig>) => void;
   terrainVarietyConfig: TerrainVarietyConfig;
   onUpdateTerrainVarietyConfig: (patch: Partial<TerrainVarietyConfig>) => void;
-  settingsLocked?: boolean;
 }
 
 const statusColors: Record<AgentStatus, string> = {
@@ -265,7 +264,6 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
   onUpdateTrainingFitnessConfig,
   terrainVarietyConfig,
   onUpdateTerrainVarietyConfig,
-  settingsLocked = false,
 }) => {
   const anyBranchingEnabled = terrainVarietyConfig.trainingBranchingEnabled || terrainVarietyConfig.continuousBranchingEnabled;
   const anyMovingEnabled = terrainVarietyConfig.trainingMovingPlatformsEnabled || terrainVarietyConfig.continuousMovingPlatformsEnabled;
@@ -292,11 +290,6 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
       </div>
 
       <div className="space-y-3 p-3">
-        {settingsLocked && (
-          <div className="rounded-lg border border-amber-500/25 bg-amber-950/15 px-3 py-2 text-[9px] leading-relaxed text-amber-200">
-            Experiment validation is running. Training-affecting settings are locked until the original run is restored; view overlays remain available.
-          </div>
-        )}
         <section className="rounded-lg border border-gray-700 bg-gray-900/55 p-2.5">
           <div className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">
             <Eye className="h-3.5 w-3.5 text-cyan-300" /> View overlays
@@ -333,7 +326,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
             </div>
             <ChevronDown className="h-3.5 w-3.5 text-gray-600 transition-transform group-open:rotate-180" />
           </summary>
-          <fieldset disabled={settingsLocked} className={`space-y-3 border-0 border-t border-violet-500/15 p-3 ${settingsLocked ? 'opacity-45' : ''}`}>
+          <fieldset className="space-y-3 border-0 border-t border-violet-500/15 p-3">
             <p className="text-[9px] leading-relaxed text-gray-600">
               Branches are route-locked: the first landing commits an agent to that sibling route until its matching merge. Nested forks remain inside the parent corridor.
             </p>
@@ -405,7 +398,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
             </div>
             <ChevronDown className="h-3.5 w-3.5 text-gray-600 transition-transform group-open:rotate-180" />
           </summary>
-          <fieldset disabled={settingsLocked} className={`space-y-2 border-0 border-t border-emerald-500/15 p-3 ${settingsLocked ? 'opacity-45' : ''}`}>
+          <fieldset className="space-y-2 border-0 border-t border-emerald-500/15 p-3">
             <UpgradeControl
               title="Sprint"
               description="Adds an independent sprint-intensity output. Effective sprint costs stamina and must be released for regeneration."
@@ -435,7 +428,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
             </div>
             <ChevronDown className="h-3.5 w-3.5 text-gray-600 transition-transform group-open:rotate-180" />
           </summary>
-          <fieldset disabled={settingsLocked} className={`space-y-3 border-0 border-t border-cyan-500/15 p-3 ${settingsLocked ? 'opacity-45' : ''}`}>
+          <fieldset className="space-y-3 border-0 border-t border-cyan-500/15 p-3">
             <p className="text-[9px] leading-relaxed text-gray-600">Advanced fitness shaping only. Tag, fall, and Chaser-escape outcomes remain dominant. Values apply when the slider is released.</p>
             <CommittedRange label="Runner pace target / 2s" min={MIN_RUNNER_PACE_TARGET_PX} max={MAX_RUNNER_PACE_TARGET_PX} step={10} value={trainingFitnessConfig.runnerPaceTargetPxPerWindow} valueText={v => `${v.toFixed(0)} px`} onCommit={v => onUpdateTrainingFitnessConfig({ runnerPaceTargetPxPerWindow: v })} />
             <CommittedRange label="Runner maximum reward / window" min={0} max={MAX_RUNNER_PACE_REWARD_PER_WINDOW} step={1} value={trainingFitnessConfig.runnerPaceRewardPerWindow} valueText={v => `+${v.toFixed(1)}`} onCommit={v => onUpdateTrainingFitnessConfig({ runnerPaceRewardPerWindow: v })} />
