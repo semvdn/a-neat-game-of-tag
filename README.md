@@ -110,11 +110,20 @@ Every candidate in a role sees the same opponent identities and scenario seeds f
 
 
 
-## Branch-and-reconnect terrain
+## Recursive route terrain and moving platforms
 
-The rolling procedural generator now begins introducing route-choice structures after roughly `x = 1800` and increases their probability farther from the origin. Each structure contains an upper branch, a lower branch, and a shared merge platform shortly afterward.
+The procedural terrain generator now builds **true route trees** rather than a one-platform upper/lower detour. Landing on one side of a split commits that agent to the chosen route: sibling-route platforms stop being collidable until the matching merge checkpoint is reached. A committed route can split again when sub-branching is enabled, producing nested exclusive choices up to the configured depth. Nested merges unlock only their child choice; the outer route remains locked until its own merge, so route commitment is preserved correctly through the full tree. Agents on divergent sibling routes also cannot tag through one another if route geometry happens to cross; parent/child route states become physically interactive again at their shared merge approach. Pursuit-distance telemetry uses the same route rule, preventing impossible cross-route proximity from being rewarded.
 
-Both routes are deliberately reachable and reconnect quickly. This gives the Runner a route choice while allowing the Chaser to follow directly or attempt an interception, instead of permanently separating the players. Branch generation uses the same deterministic RNG in visual and headless simulation, preserves the platform array's x-order, and branch landings are tracked separately in diagnostics. Upper/lower branches are subtly differentiated visually so route choices are readable during champion play.
+Moving platforms use deterministic horizontal or vertical oscillation and share the same implementation in headless training and the continuous champion view. Grounded agents are carried by their platform before the next policy decision, while merge checkpoints remain stationary so route rejoin points are reliable. Moving platforms may optionally appear inside branch routes. Policy sensing filters out inaccessible sibling-route platforms, and fair respawn respects the active route lock instead of teleporting an agent onto the route it did not choose.
+
+The sidebar **Terrain variety** menu controls the distribution independently for training and display:
+
+- Training: enable branching and/or moving terrain and set the percentage of episodes that contain each feature. Selected training episodes guarantee actual exposure to the chosen feature, while deterministic seed rolls keep comparisons fair across genomes.
+- Continuous champion view: independently toggle each feature and set its per-segment spawn chance.
+- Branch complexity: set 1–6 platforms per route, enable recursive sub-branching, and choose maximum depth 1–4.
+- Moving-platform difficulty: set maximum oscillation speed from 0–180 px/s and choose whether moving platforms may occur inside branches.
+
+The platform collection is no longer assumed to be spatially sorted; generation follows the forward trunk/outer merge while complete active branch trees are retained until the agents have cleared them. This prevents recursive sibling routes or moving platforms from corrupting rolling terrain generation.
 
 
 ## Configurable and evolvable network architecture experiments
@@ -314,9 +323,9 @@ The strict pass/fail contemporary gate from the earlier C experiment is no longe
 
 The component targets saturate progressively, so partial pursuit improvements remain selectable while clean tags still matter. Runner retention remains benchmark-heavy rather than inheriting the Chaser-specific pursuit rule.
 
-### Earlier recurring branches and light elite seeding
+### Configurable terrain curriculum and light elite seeding
 
-Branching terrain begins around `x = 650`, with guaranteed exposure windows around the first `x ≈ 850–1150` opportunity and a second around `x ≈ 1450–1850`. Farther right, a spacing guard prevents very long stretches without another branch. This changes terrain exposure rather than granting a direct branch-choice reward.
+For training episodes selected to contain branching terrain, route exposure begins around `x = 650` and is front-loaded so policies reliably encounter a split instead of receiving a nominal "branch episode" with no branch. A second early opportunity and a later spacing guard keep route decisions recurring. Episodes selected for moving terrain likewise receive at least one actual moving platform. The user-facing episode percentages determine how often each curriculum feature is active; neither feature adds a direct fitness reward.
 
 At evolution boundaries, up to two **distinct-generation retained/recent elites per role** may replace tail offspring. Their fitness is reset to zero, they re-enter normal speciation and evaluation, and they receive no artificial score. This provides a small genetic memory without freezing the population.
 

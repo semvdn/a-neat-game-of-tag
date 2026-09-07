@@ -23,6 +23,7 @@ import {
   resolveTagSwap,
   stepAgentPhysics,
   updateChaseCameraX,
+  stepMovingPlatformsInPlace,
 } from './learning/simulationCore';
 import type {
   GameState,
@@ -37,6 +38,7 @@ import type {
   ActiveUpgradeState,
   TrainingFitnessConfig,
   PursuitDesignConfig,
+  TerrainVarietyConfig,
 } from './types';
 import { AgentStatus } from './types';
 import {
@@ -62,6 +64,7 @@ import {
   POLICY_CONTROL_ACTIVE_THRESHOLD,
 } from './constants';
 import { Activity, Play, Pause, RotateCcw, MonitorPlay, Cpu, Minus, Plus } from 'lucide-react';
+import { DEFAULT_TERRAIN_VARIETY_CONFIG, continuousTerrainRuntime, sanitizeTerrainVarietyConfig } from './learning/terrainConfig';
 
 // Champion trails are visual telemetry only. They are sampled by distance but aged by
 // simulation time, so a stationary agent's old path still fades away.
@@ -171,6 +174,16 @@ const loadTrainingFitnessConfig = (): TrainingFitnessConfig => {
   }
 };
 
+const TERRAIN_VARIETY_STORAGE_KEY = 'ai_tag_terrain_variety_config_v1';
+const loadTerrainVarietyConfig = (): TerrainVarietyConfig => {
+  try {
+    const raw = localStorage.getItem(TERRAIN_VARIETY_STORAGE_KEY);
+    return raw ? sanitizeTerrainVarietyConfig(JSON.parse(raw)) : { ...DEFAULT_TERRAIN_VARIETY_CONFIG };
+  } catch {
+    return { ...DEFAULT_TERRAIN_VARIETY_CONFIG };
+  }
+};
+
 const NETWORK_ARCHITECTURE_STORAGE_KEY = 'ai_tag_network_architecture_suite_v1';
 const loadNetworkArchitecture = (): NetworkArchitectureSuiteConfig => {
   try {
@@ -224,6 +237,7 @@ export const App: React.FC = () => {
   const [isTrainingPaused, setIsTrainingPaused] = useState(false);
   const [upgradeConfig, setUpgradeConfig] = useState<UpgradeConfig>(loadUpgradeConfig);
   const [trainingFitnessConfig, setTrainingFitnessConfig] = useState<TrainingFitnessConfig>(loadTrainingFitnessConfig);
+  const [terrainVarietyConfig, setTerrainVarietyConfig] = useState<TerrainVarietyConfig>(loadTerrainVarietyConfig);
   const [networkArchitecture, setNetworkArchitecture] = useState<NetworkArchitectureSuiteConfig>(loadNetworkArchitecture);
   const [storedCheckpoints, setStoredCheckpoints] = useState<StoredCheckpointSummary[]>([]);
   const [checkpointLibraryBusy, setCheckpointLibraryBusy] = useState(false);
@@ -274,6 +288,7 @@ export const App: React.FC = () => {
     controlledJumpUpgradeActive: false,
     trainingFitnessConfig: loadTrainingFitnessConfig(),
     networkArchitecture: loadNetworkArchitecture(),
+    terrainVarietyConfig: loadTerrainVarietyConfig(),
   }));
 
 
@@ -597,6 +612,7 @@ export const App: React.FC = () => {
               sprintUpgradeActive: typeof payload.sprintUpgradeActive === 'boolean' ? payload.sprintUpgradeActive : prev.sprintUpgradeActive,
               controlledJumpUpgradeActive: typeof payload.controlledJumpUpgradeActive === 'boolean' ? payload.controlledJumpUpgradeActive : prev.controlledJumpUpgradeActive,
               trainingFitnessConfig: payload.trainingFitnessConfig || prev.trainingFitnessConfig,
+              terrainVarietyConfig: payload.terrainVarietyConfig || prev.terrainVarietyConfig,
               networkArchitecture: payload.networkArchitecture || prev.networkArchitecture,
               pursuitDesign: payload.pursuitDesign !== undefined ? payload.pursuitDesign : (prev.pursuitDesign ?? null),
               pursuitExperimentFlags: payload.pursuitExperimentFlags || prev.pursuitExperimentFlags,
@@ -766,6 +782,15 @@ export const App: React.FC = () => {
     });
   }, [trainingFitnessConfig]);
 
+  useEffect(() => {
+    const sanitized = sanitizeTerrainVarietyConfig(terrainVarietyConfig);
+    localStorage.setItem(TERRAIN_VARIETY_STORAGE_KEY, JSON.stringify(sanitized));
+    workerRef.current?.postMessage({
+      type: 'SET_TERRAIN_VARIETY_CONFIG',
+      payload: { terrainVarietyConfig: sanitized },
+    });
+  }, [terrainVarietyConfig]);
+
   // Background evolution is independent from the visible champion arena and always runs
   // at maximum worker throughput unless explicitly paused.
   useEffect(() => {
@@ -786,6 +811,7 @@ export const App: React.FC = () => {
         viewportSize,
         upgradeConfig,
         trainingFitnessConfig,
+        terrainVarietyConfig,
         networkArchitecture,
       },
     });
@@ -894,6 +920,10 @@ export const App: React.FC = () => {
     }));
   }, []);
 
+  const updateTerrainVarietyConfig = useCallback((patch: Partial<TerrainVarietyConfig>) => {
+    setTerrainVarietyConfig(prev => sanitizeTerrainVarietyConfig({ ...prev, ...patch }));
+  }, []);
+
   const calculateReward = (
     agent: AgentState,
     prevState: AgentState,
@@ -999,10 +1029,14 @@ export const App: React.FC = () => {
       setGameState(prevGameState => {
         if (!prevGameState || !isSimulating) return prevGameState;
 
-        let newState = {
+        let newState: GameState = {
           ...prevGameState,
           agents: [...prevGameState.agents.map(a => ({ ...a, trajectory: a.trajectory || [] }))],
-          platforms: [...prevGameState.platforms],
+          platforms: prevGameState.platforms.map(platform => ({
+            ...platform,
+            position: { ...platform.position },
+            motion: platform.motion ? { ...platform.motion } : undefined,
+          })),
           gameTime: prevGameState.gameTime + deltaTime,
           tagEffects: [...prevGameState.tagEffects],
           avgSurvivalTime: prevGameState.avgSurvivalTime,
@@ -1011,6 +1045,9 @@ export const App: React.FC = () => {
 
         // 1. Update Timers using the same shared rule as headless training.
         advanceRoleTimers(newState.agents, deltaTime);
+        if (terrainVarietyConfig.continuousMovingPlatformsEnabled) {
+          stepMovingPlatformsInPlace(newState.platforms, newState.agents, deltaTime, terrainVarietyConfig.movingPlatformsInBranches);
+        }
 
         // 2. Champion action selection using 23-input / 3-output signed-axis NEAT controls.
         // Left/right drive, jump and sprint are independent, so agents can run and jump together.
@@ -1229,7 +1266,8 @@ export const App: React.FC = () => {
           viewportSize,
           platformIdCounter.current,
           Math.random,
-          activePursuitDesign?.branchStructureMinX
+          activePursuitDesign?.branchStructureMinX,
+          continuousTerrainRuntime(terrainVarietyConfig)
         );
         newState.platforms = platformUpdate.platforms;
         platformIdCounter.current = platformUpdate.nextPlatformId;
@@ -1254,7 +1292,7 @@ export const App: React.FC = () => {
         return newState;
       });
     },
-    [isSimulating, viewportSize, sprintUpgradeActive, controlledJumpUpgradeActive, upgradeConfig, architectureExperimentStatus]
+    [isSimulating, viewportSize, sprintUpgradeActive, controlledJumpUpgradeActive, upgradeConfig, architectureExperimentStatus, terrainVarietyConfig]
   );
 
   const updateSimulation = useCallback(
@@ -1497,6 +1535,9 @@ export const App: React.FC = () => {
               ? Math.max(0, Math.min(MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM, Number(cfg.chaserPursuitRewardPerPlatform)))
               : DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM,
           });
+        }
+        if (checkpoint.terrainVarietyConfig) {
+          setTerrainVarietyConfig(sanitizeTerrainVarietyConfig(checkpoint.terrainVarietyConfig));
         }
 
         pendingRestoreDiagnosticsRef.current = payload.uiDiagnostics || null;
@@ -1874,6 +1915,8 @@ export const App: React.FC = () => {
           onUpdateUpgrade={updateUpgradeRule}
           trainingFitnessConfig={trainingFitnessConfig}
           onUpdateTrainingFitnessConfig={updateTrainingFitnessConfig}
+          terrainVarietyConfig={terrainVarietyConfig}
+          onUpdateTerrainVarietyConfig={updateTerrainVarietyConfig}
         />
       </div>
 

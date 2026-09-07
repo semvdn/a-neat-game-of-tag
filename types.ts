@@ -55,6 +55,41 @@ export interface TrainingFitnessConfig {
   runnerExplorationRewardPerViewport?: number;
 }
 
+export interface TerrainVarietyConfig {
+  /** Fraction of training episodes that contain at least one true branching route. */
+  trainingBranchingEnabled: boolean;
+  trainingBranchingEpisodePercent: number;
+  /** Fraction of training episodes in which moving platforms may appear. */
+  trainingMovingPlatformsEnabled: boolean;
+  trainingMovingEpisodePercent: number;
+  /** Continuous/champion-view route generation controls. */
+  continuousBranchingEnabled: boolean;
+  continuousBranchSpawnPercent: number;
+  continuousMovingPlatformsEnabled: boolean;
+  continuousMovingSpawnPercent: number;
+  /** Shared geometry limits used by both training and the continuous view. */
+  movingPlatformMaxSpeed: number;
+  maxPlatformsPerBranch: number;
+  subBranchingEnabled: boolean;
+  maxBranchDepth: number;
+  movingPlatformsInBranches: boolean;
+}
+
+export interface TerrainRuntimeConfig {
+  branchingEnabled: boolean;
+  branchSpawnChance: number;
+  /** Training-only guarantee: selected feature episodes materialize the feature early. */
+  guaranteeBranchExposure: boolean;
+  movingPlatformsEnabled: boolean;
+  movingSpawnChance: number;
+  guaranteeMovingExposure: boolean;
+  movingPlatformMaxSpeed: number;
+  maxPlatformsPerBranch: number;
+  subBranchingEnabled: boolean;
+  maxBranchDepth: number;
+  movingPlatformsInBranches: boolean;
+}
+
 export interface PursuitDesignConfig {
   /** Optional fixed role asymmetry used by temporary pursuit-design experiments. */
   chaserBaseMaxSpeed?: number;
@@ -120,12 +155,22 @@ export interface AgentState {
   timeSinceBecameIt: number; // in milliseconds
   modelId: string;
   modelPerformance?: number;
+  /** Active mutually-exclusive route. Cleared or reduced only by the matching merge platform. */
+  activeRoutePath?: string | null;
   elo?: number;
   role?: 'chaser' | 'evader';
   sprintIntensity?: number;
   jumpPower?: number;
   /** Mechanical jump latch: false after a jump until the jump output is released. */
   jumpArmed?: boolean;
+}
+
+export interface PlatformMotionState {
+  axis: 'x' | 'y';
+  min: number;
+  max: number;
+  speed: number;
+  direction: -1 | 1;
 }
 
 export interface PlatformState {
@@ -135,6 +180,15 @@ export interface PlatformState {
   height: number;
   structureType?: 'normal' | 'branch-upper' | 'branch-lower' | 'merge';
   branchGroupId?: number;
+  branchDepth?: number;
+  /** Full hierarchical route path, e.g. g12U/g18L. */
+  routePath?: string;
+  /** Route restored after this merge; empty/null means the shared trunk. */
+  mergeToRoutePath?: string | null;
+  /** Root structure id shared by every nested platform in one top-level branch tree. */
+  rootBranchGroupId?: number;
+  /** Optional deterministic oscillating platform motion. */
+  motion?: PlatformMotionState;
 }
 
 export interface TagEffect {
@@ -382,6 +436,7 @@ export interface DiagnosticsState {
   sprintUpgradeActive?: boolean;
   controlledJumpUpgradeActive?: boolean;
   trainingFitnessConfig?: TrainingFitnessConfig;
+  terrainVarietyConfig?: TerrainVarietyConfig;
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   pursuitDesign?: PursuitDesignConfig | null;
   pursuitExperimentFlags?: { pressureStarts: boolean; crossPlayGate: boolean; strictContemporaryGate?: boolean; softMultiDistancePursuit?: boolean; cleanTagShowcase?: boolean };
@@ -409,6 +464,7 @@ export interface TrainingGenerationAnalysisRecord {
     runner: Record<string, number>;
   };
   fitnessConfig: TrainingFitnessConfig;
+  terrainVarietyConfig?: TerrainVarietyConfig;
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   pursuitDesign?: PursuitDesignConfig | null;
   pursuitExperimentFlags?: { pressureStarts: boolean; crossPlayGate: boolean; strictContemporaryGate?: boolean; softMultiDistancePursuit?: boolean; cleanTagShowcase?: boolean };

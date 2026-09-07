@@ -1,6 +1,7 @@
-import type { ActiveUpgradeState, AgentState, PlatformState } from '../types';
+import type { ActiveUpgradeState, AgentState, PlatformState, TerrainRuntimeConfig } from '../types';
 import { AgentStatus } from '../types';
 import { getFairRespawn } from './respawn';
+import { applyPlatformRoute, canAgentUsePlatform, canAgentsPhysicallyInteract } from './terrainRoutes';
 import {
   AGENT_ACCELERATION,
   AGENT_HEIGHT,
@@ -201,6 +202,7 @@ export function stepAgentPhysicsInPlace(
   let landedPlatformId = agent.lastPlatformId;
   for (let i = 0; i < platforms.length; i++) {
     const platform = platforms[i];
+    if (!canAgentUsePlatform(agent, platform)) continue;
     const prevBottom = agent.position.y + AGENT_HEIGHT;
     const newBottom = positionY + AGENT_HEIGHT;
     const aligned =
@@ -211,6 +213,7 @@ export function stepAgentPhysicsInPlace(
       velocityY = 0;
       grounded = true;
       landedPlatformId = platform.id;
+      applyPlatformRoute(agent, platform);
       break;
     }
   }
@@ -234,6 +237,7 @@ export function stepAgentPhysicsInPlace(
     velocityY = 0;
     grounded = true;
     landedPlatformId = respawn.platformId;
+    applyPlatformRoute(agent, platforms.find(platform => platform.id === respawn.platformId));
     checkpointX = positionX;
     checkpointY = positionY;
     checkpointEnergy = energy;
@@ -325,7 +329,8 @@ export function resolveTagSwap(agents: AgentState[]): TagTransition | null {
     if (
       otherAgent.id === itAgent.id ||
       otherAgent.status === AgentStatus.It ||
-      (otherAgent.cooldownTimer || 0) > 0
+      (otherAgent.cooldownTimer || 0) > 0 ||
+      !canAgentsPhysicallyInteract(itAgent, otherAgent)
     ) return false;
 
     const dx = itAgent.position.x + AGENT_WIDTH / 2 - (otherAgent.position.x + AGENT_WIDTH / 2);
@@ -405,13 +410,75 @@ export function updateChaseCameraX(agents: AgentState[], currentCameraX: number,
   return currentCameraX + (desiredCameraX - currentCameraX) * 0.12;
 }
 
+const DEFAULT_TERRAIN_RUNTIME: TerrainRuntimeConfig = {
+  branchingEnabled: true,
+  branchSpawnChance: BRANCH_STRUCTURE_BASE_CHANCE,
+  guaranteeBranchExposure: true,
+  movingPlatformsEnabled: false,
+  movingSpawnChance: 0,
+  guaranteeMovingExposure: false,
+  movingPlatformMaxSpeed: 0,
+  maxPlatformsPerBranch: 3,
+  subBranchingEnabled: false,
+  maxBranchDepth: 1,
+  movingPlatformsInBranches: false,
+};
+
+function resolvedTerrainRuntime(value?: TerrainRuntimeConfig): TerrainRuntimeConfig {
+  return value || DEFAULT_TERRAIN_RUNTIME;
+}
+
+function maybeMakeMoving(
+  platform: PlatformState,
+  viewportHeight: number,
+  rng: () => number,
+  terrain: TerrainRuntimeConfig,
+  inBranch: boolean,
+  force = false
+): PlatformState {
+  if (!terrain.movingPlatformsEnabled || terrain.movingPlatformMaxSpeed <= 0) return platform;
+  if (inBranch && !terrain.movingPlatformsInBranches) return platform;
+  if (!force && rng() >= terrain.movingSpawnChance) return platform;
+
+  const maxSpeed = Math.max(0, terrain.movingPlatformMaxSpeed);
+  const minSpeed = Math.min(24, maxSpeed);
+  const speed = minSpeed + rng() * Math.max(0, maxSpeed - minSpeed);
+  let axis: 'x' | 'y' = rng() < 0.6 ? 'x' : 'y';
+  let range = axis === 'x' ? 35 + rng() * 85 : 28 + rng() * 62;
+
+  if (axis === 'y') {
+    const minAllowed = 230;
+    const maxAllowed = viewportHeight - 105;
+    const min = Math.max(minAllowed, platform.position.y - range);
+    const max = Math.min(maxAllowed, platform.position.y + range);
+    if (max - min < 35) {
+      axis = 'x';
+      range = 35 + rng() * 85;
+    } else {
+      platform.motion = { axis, min, max, speed, direction: rng() < 0.5 ? -1 : 1 };
+      return platform;
+    }
+  }
+
+  platform.motion = {
+    axis: 'x',
+    min: platform.position.x - range,
+    max: platform.position.x + range,
+    speed,
+    direction: rng() < 0.5 ? -1 : 1,
+  };
+  return platform;
+}
+
 function generatePlatform(
   baseX: number,
   baseY: number,
   viewportHeight: number,
   id: number,
   rng: () => number,
-  toLeft = false
+  toLeft = false,
+  terrain: TerrainRuntimeConfig = DEFAULT_TERRAIN_RUNTIME,
+  forceMoving = false
 ): PlatformState {
   let gapX = MIN_PLATFORM_GAP_X + rng() * (MAX_PLATFORM_GAP_X - MIN_PLATFORM_GAP_X);
   const gapY = (rng() - 0.5) * MAX_PLATFORM_GAP_Y * 1.5;
@@ -423,7 +490,7 @@ function generatePlatform(
   else if (verticalDifference > 80) gapX = Math.max(gapX, 140);
 
   const newWidth = rng() * (PLATFORM_MAX_WIDTH - PLATFORM_MIN_WIDTH) + PLATFORM_MIN_WIDTH;
-  return {
+  return maybeMakeMoving({
     id,
     width: newWidth,
     height: PLATFORM_HEIGHT,
@@ -432,23 +499,190 @@ function generatePlatform(
       x: toLeft ? baseX - newWidth - gapX : baseX + gapX,
       y: clampedY,
     },
-  };
+  }, viewportHeight, rng, terrain, false, forceMoving);
 }
 
 function clampPlatformY(y: number, viewportHeight: number): number {
   return Math.min(viewportHeight - 120, Math.max(250, y));
 }
 
-function branchChanceAtX(x: number, branchMinX = BRANCH_STRUCTURE_MIN_X): number {
-  if (x < branchMinX) return 0;
-  // Front-load meaningful route choice so agents encounter it during early training, then keep a
-  // gradually increasing background probability farther into the infinite level. The two early
-  // windows intentionally overlap the ~600–800px and ~1200–1500px regions identified by the
-  // pursuit experiments as the right exposure points.
-  if (x <= branchMinX + 250) return Math.max(0.55, BRANCH_STRUCTURE_BASE_CHANCE);
-  if (x >= 1150 && x <= 1550) return Math.max(0.45, BRANCH_STRUCTURE_BASE_CHANCE);
+function branchChanceAtX(x: number, branchMinX: number, terrain: TerrainRuntimeConfig): number {
+  if (!terrain.branchingEnabled || x < branchMinX) return 0;
+  const configured = Math.max(0, Math.min(1, terrain.branchSpawnChance));
+  if (!terrain.guaranteeBranchExposure) return configured;
+  if (x <= branchMinX + 800) return Math.max(configured, 0.45);
+  if (x >= 1150 && x <= 1750) return Math.max(configured, 0.38);
   const t = Math.max(0, Math.min(1, (x - branchMinX) / 7000));
-  return BRANCH_STRUCTURE_BASE_CHANCE + (BRANCH_STRUCTURE_MAX_CHANCE - BRANCH_STRUCTURE_BASE_CHANCE) * t;
+  return Math.min(BRANCH_STRUCTURE_MAX_CHANCE, configured + 0.08 * t);
+}
+
+function routeLanePair(baseY: number, depth: number, viewportHeight: number, rng: () => number): [number, number] {
+  const minY = 250;
+  const maxY = viewportHeight - 120;
+  const available = Math.max(140, maxY - minY);
+  const separation = Math.min(available - 20, Math.max(135, 190 - (depth - 1) * 12));
+  const half = separation / 2;
+  const centerMin = minY + half;
+  const centerMax = maxY - half;
+  const center = centerMax > centerMin
+    ? Math.min(centerMax, Math.max(centerMin, baseY + (rng() - 0.5) * 50))
+    : (minY + maxY) / 2;
+  return [clampPlatformY(center - half, viewportHeight), clampPlatformY(center + half, viewportHeight)];
+}
+
+function branchSpan(terrain: TerrainRuntimeConfig, depth: number): number {
+  const localSpan = 280 + Math.max(1, terrain.maxPlatformsPerBranch) * 135;
+  if (terrain.subBranchingEnabled && depth < terrain.maxBranchDepth) {
+    return localSpan + branchSpan(terrain, depth + 1);
+  }
+  return localSpan;
+}
+
+interface BranchBuildResult {
+  merge: PlatformState;
+  nextPlatformId: number;
+}
+
+function addRoutePlatforms(
+  platforms: PlatformState[],
+  count: number,
+  startX: number,
+  endX: number,
+  laneY: number,
+  side: 'upper' | 'lower',
+  routePath: string,
+  groupId: number,
+  rootGroupId: number,
+  depth: number,
+  viewportHeight: number,
+  nextPlatformId: number,
+  rng: () => number,
+  terrain: TerrainRuntimeConfig,
+  forceFirstMoving = false
+): { last: PlatformState; nextPlatformId: number } {
+  const safeCount = Math.max(1, count);
+  const span = Math.max(180, endX - startX);
+  const preferredWidth = Math.max(125, Math.min(220, span / safeCount - 55));
+  let last: PlatformState | null = null;
+
+  for (let i = 0; i < safeCount; i++) {
+    const slotStart = startX + (span * i) / safeCount;
+    const slotEnd = startX + (span * (i + 1)) / safeCount;
+    const slotWidth = slotEnd - slotStart;
+    const width = Math.max(115, Math.min(preferredWidth + (rng() - 0.5) * 35, slotWidth - 28));
+    const x = slotStart + Math.max(14, (slotWidth - width) * 0.5);
+    const y = clampPlatformY(laneY + (rng() - 0.5) * 34, viewportHeight);
+    const platform = maybeMakeMoving({
+      id: nextPlatformId++,
+      width,
+      height: PLATFORM_HEIGHT,
+      position: { x, y },
+      structureType: side === 'upper' ? 'branch-upper' : 'branch-lower',
+      branchGroupId: groupId,
+      branchDepth: depth,
+      routePath,
+      rootBranchGroupId: rootGroupId,
+    }, viewportHeight, rng, terrain, true, forceFirstMoving && i === 0);
+    platforms.push(platform);
+    last = platform;
+  }
+
+  return { last: last!, nextPlatformId };
+}
+
+/** Build a full binary branch tree. Every route at a level gets the same horizontal allocation,
+ * so recursively branching siblings still arrive at the same outer merge. Collision route locks,
+ * not merely vertical spacing, make sibling paths truly mutually exclusive. */
+function buildBranchTree(
+  platforms: PlatformState[],
+  entryPlatform: PlatformState,
+  viewportHeight: number,
+  nextPlatformId: number,
+  rng: () => number,
+  terrain: TerrainRuntimeConfig,
+  depth: number,
+  parentRoutePath: string | null,
+  rootGroupId: number,
+  forcedMergeRightX?: number,
+  forceMovingExposure = false
+): BranchBuildResult {
+  const groupId = nextPlatformId;
+  const [upperY, lowerY] = routeLanePair(entryPlatform.position.y, depth, viewportHeight, rng);
+  const entryRight = entryPlatform.position.x + entryPlatform.width;
+  const totalSpan = Math.max(420, forcedMergeRightX !== undefined ? forcedMergeRightX - entryRight : branchSpan(terrain, depth));
+  const mergeWidth = 240;
+  const mergeRightX = forcedMergeRightX ?? entryRight + totalSpan;
+  const mergeLeftX = mergeRightX - mergeWidth;
+  const entryGap = 65;
+  const mergeGap = 75;
+  const routeCount = Math.max(1, 1 + Math.floor(rng() * Math.max(1, terrain.maxPlatformsPerBranch)));
+  const hasNested = terrain.subBranchingEnabled && depth < terrain.maxBranchDepth;
+  const preCount = hasNested ? Math.max(1, Math.ceil(routeCount / 2)) : routeCount;
+  const postCount = hasNested ? Math.max(0, routeCount - preCount) : 0;
+  const childSpan = hasNested ? branchSpan(terrain, depth + 1) : 0;
+  const availableLocal = Math.max(260, totalSpan - childSpan - mergeWidth);
+  const beforeLocal = hasNested ? availableLocal * 0.54 : availableLocal;
+  const afterLocal = hasNested ? availableLocal - beforeLocal : 0;
+
+  const branchBaseToken = `g${groupId}`;
+  const upperPath = parentRoutePath ? `${parentRoutePath}/${branchBaseToken}U` : `${branchBaseToken}U`;
+  const lowerPath = parentRoutePath ? `${parentRoutePath}/${branchBaseToken}L` : `${branchBaseToken}L`;
+
+  const preStart = entryRight + entryGap;
+  const preEnd = Math.min(mergeLeftX - mergeGap - 120, entryRight + beforeLocal);
+  const upperPre = addRoutePlatforms(platforms, preCount, preStart, preEnd, upperY, 'upper', upperPath, groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain, forceMovingExposure);
+  nextPlatformId = upperPre.nextPlatformId;
+  const lowerPre = addRoutePlatforms(platforms, preCount, preStart, preEnd, lowerY, 'lower', lowerPath, groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain, forceMovingExposure);
+  nextPlatformId = lowerPre.nextPlatformId;
+
+  let upperLast = upperPre.last;
+  let lowerLast = lowerPre.last;
+
+  if (hasNested) {
+    // Both sibling routes recursively split. Giving both child trees the same merge-right target
+    // preserves reachability while still allowing their internal geometry to differ vertically.
+    const childEntryRight = Math.max(
+      upperLast.position.x + upperLast.width,
+      lowerLast.position.x + lowerLast.width
+    );
+    const childMergeRight = Math.min(mergeLeftX - mergeGap - 90, childEntryRight + childSpan);
+
+    const upperChild = buildBranchTree(platforms, upperLast, viewportHeight, nextPlatformId, rng, terrain, depth + 1, upperPath, rootGroupId, childMergeRight);
+    nextPlatformId = upperChild.nextPlatformId;
+    upperLast = upperChild.merge;
+
+    const lowerChild = buildBranchTree(platforms, lowerLast, viewportHeight, nextPlatformId, rng, terrain, depth + 1, lowerPath, rootGroupId, childMergeRight);
+    nextPlatformId = lowerChild.nextPlatformId;
+    lowerLast = lowerChild.merge;
+
+    if (postCount > 0) {
+      const postStart = childMergeRight + 55;
+      const postEnd = Math.max(postStart + 160, mergeLeftX - mergeGap);
+      const upperPost = addRoutePlatforms(platforms, postCount, postStart, postEnd, upperY, 'upper', upperPath, groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain);
+      nextPlatformId = upperPost.nextPlatformId;
+      upperLast = upperPost.last;
+      const lowerPost = addRoutePlatforms(platforms, postCount, postStart, postEnd, lowerY, 'lower', lowerPath, groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain);
+      nextPlatformId = lowerPost.nextPlatformId;
+      lowerLast = lowerPost.last;
+    }
+  }
+
+  // Merge platforms stay stationary even when branch moving-platform integration is enabled. This
+  // keeps the rejoin point a reliable route-unlock checkpoint while the route itself can move.
+  const mergeY = clampPlatformY((upperLast.position.y + lowerLast.position.y) / 2 + (rng() - 0.5) * 24, viewportHeight);
+  const merge: PlatformState = {
+    id: nextPlatformId++,
+    width: mergeWidth,
+    height: PLATFORM_HEIGHT,
+    position: { x: mergeLeftX, y: mergeY },
+    structureType: 'merge',
+    branchGroupId: groupId,
+    branchDepth: depth,
+    mergeToRoutePath: parentRoutePath,
+    rootBranchGroupId: rootGroupId,
+  };
+  platforms.push(merge);
+  return { merge, nextPlatformId };
 }
 
 function appendForwardSegment(
@@ -457,66 +691,124 @@ function appendForwardSegment(
   viewportHeight: number,
   nextPlatformId: number,
   rng: () => number,
-  branchMinX = BRANCH_STRUCTURE_MIN_X
+  branchMinX = BRANCH_STRUCTURE_MIN_X,
+  terrainValue?: TerrainRuntimeConfig
 ): { rightmost: PlatformState; nextPlatformId: number } {
+  const terrain = resolvedTerrainRuntime(terrainValue);
   const baseRight = rightmostPlatform.position.x + rightmostPlatform.width;
   let latestBranchX = -Infinity;
   let visibleEarlyBranchCount = 0;
   for (let i = platforms.length - 1; i >= 0; i--) {
     const candidate = platforms[i];
-    if (candidate.structureType === 'merge') {
+    if (candidate.structureType === 'merge' && (candidate.branchDepth || 1) === 1) {
       latestBranchX = Math.max(latestBranchX, candidate.position.x);
-      if (candidate.position.x < 1700 && candidate.position.x >= branchMinX) visibleEarlyBranchCount++;
+      if (candidate.position.x < 1800 && candidate.position.x >= branchMinX) visibleEarlyBranchCount++;
     }
   }
-  // Every branch group has exactly one merge platform. Guarantee exposure if the RNG misses the
-  // early curriculum windows, and later prevent very long stretches of featureless terrain.
-  const branchGroupsSeenEarly = visibleEarlyBranchCount;
-  const forceFirstEarlyBranch = branchGroupsSeenEarly === 0 && baseRight >= branchMinX + 200 && baseRight <= 1150;
-  const forceSecondEarlyBranch = branchGroupsSeenEarly === 1 && baseRight >= 1450 && baseRight <= 1850;
-  const forceRecurringBranch = baseRight > 1850 && (!Number.isFinite(latestBranchX) || baseRight - latestBranchX >= 1400);
-  const shouldBranch = forceFirstEarlyBranch || forceSecondEarlyBranch || forceRecurringBranch || rng() < branchChanceAtX(baseRight, branchMinX);
-  if (!shouldBranch) {
-    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng);
+
+  const forceFirstEarlyBranch = terrain.branchingEnabled && terrain.guaranteeBranchExposure && visibleEarlyBranchCount === 0 && baseRight >= branchMinX && baseRight <= 1750;
+  const forceSecondEarlyBranch = terrain.branchingEnabled && terrain.guaranteeBranchExposure && visibleEarlyBranchCount === 1 && baseRight >= 1750 && baseRight <= 2600;
+  const forceRecurringBranch = terrain.branchingEnabled && terrain.guaranteeBranchExposure && baseRight > 2600 && (!Number.isFinite(latestBranchX) || baseRight - latestBranchX >= 1500);
+  const shouldBranch = terrain.branchingEnabled && (
+    forceFirstEarlyBranch || forceSecondEarlyBranch || forceRecurringBranch || rng() < branchChanceAtX(baseRight, branchMinX, terrain)
+  );
+  const hasMovingPlatform = terrain.guaranteeMovingExposure && platforms.some(platform => !!platform.motion);
+  const needsGuaranteedMoving = terrain.movingPlatformsEnabled && terrain.guaranteeMovingExposure && !hasMovingPlatform;
+
+  // A training episode selected for moving terrain must actually expose both policies to it. If
+  // moving platforms are disallowed inside branches, emit one guaranteed moving trunk platform
+  // before a forced branch rather than letting the feature percentage become merely probabilistic.
+  if (needsGuaranteedMoving && shouldBranch && !terrain.movingPlatformsInBranches) {
+    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng, false, terrain, true);
     platforms.push(p);
     return { rightmost: p, nextPlatformId };
   }
 
-  const groupId = nextPlatformId;
-  const entryGap = 70 + rng() * 55;
-  const upperWidth = 200 + rng() * 90;
-  const lowerWidth = 230 + rng() * 100;
-  const upperX = baseRight + entryGap;
-  const lowerX = baseRight + entryGap + 20 + rng() * 35;
-  const upperY = clampPlatformY(rightmostPlatform.position.y - (75 + rng() * 55), viewportHeight);
-  const lowerY = clampPlatformY(rightmostPlatform.position.y + (55 + rng() * 65), viewportHeight);
-  const upper: PlatformState = {
-    id: nextPlatformId++, width: upperWidth, height: PLATFORM_HEIGHT,
-    position: { x: upperX, y: upperY }, structureType: 'branch-upper', branchGroupId: groupId,
-  };
-  const lower: PlatformState = {
-    id: nextPlatformId++, width: lowerWidth, height: PLATFORM_HEIGHT,
-    position: { x: lowerX, y: lowerY }, structureType: 'branch-lower', branchGroupId: groupId,
-  };
-  const branchEnd = Math.max(upperX + upperWidth, lowerX + lowerWidth);
-  const mergeGap = 75 + rng() * 55;
-  const mergeWidth = 250 + rng() * 100;
-  const mergeY = clampPlatformY(rightmostPlatform.position.y + (rng() - 0.5) * 60, viewportHeight);
-  const merge: PlatformState = {
-    id: nextPlatformId++, width: mergeWidth, height: PLATFORM_HEIGHT,
-    position: { x: branchEnd + mergeGap, y: mergeY }, structureType: 'merge', branchGroupId: groupId,
-  };
+  if (!shouldBranch) {
+    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng, false, terrain, needsGuaranteedMoving);
+    platforms.push(p);
+    return { rightmost: p, nextPlatformId };
+  }
 
-  // Keep x-order because rolling generation relies on the last entry being the forward-most segment.
-  if (upper.position.x <= lower.position.x) platforms.push(upper, lower, merge);
-  else platforms.push(lower, upper, merge);
-  return { rightmost: merge, nextPlatformId };
+  const rootGroupId = nextPlatformId;
+  const built = buildBranchTree(
+    platforms,
+    rightmostPlatform,
+    viewportHeight,
+    nextPlatformId,
+    rng,
+    terrain,
+    1,
+    null,
+    rootGroupId,
+    undefined,
+    needsGuaranteedMoving && terrain.movingPlatformsInBranches
+  );
+  return { rightmost: built.merge, nextPlatformId: built.nextPlatformId };
 }
 
-/**
- * Allocation-light rolling platform maintenance for headless training. The same x-ordered retention
- * and generation rules are applied directly to the supplied array. Returns the next platform id.
- */
+/** Move oscillating platforms and carry bodies that were grounded on them. This runs before policy
+ * decisions so recurrent policies observe the platform's current geometry, not its previous frame. */
+export function stepMovingPlatformsInPlace(
+  platforms: PlatformState[],
+  agents: AgentState[],
+  deltaTimeMs: number,
+  allowBranchMotion = true
+): void {
+  const dt = Math.max(0, deltaTimeMs) / 1000;
+  if (dt <= 0) return;
+  for (let i = 0; i < platforms.length; i++) {
+    const platform = platforms[i];
+    const motion = platform.motion;
+    if (!allowBranchMotion && platform.rootBranchGroupId != null) continue;
+    if (!motion || motion.speed <= 0 || motion.max <= motion.min) continue;
+    const oldX = platform.position.x;
+    const oldY = platform.position.y;
+    const coordinate = motion.axis === 'x' ? oldX : oldY;
+    let next = coordinate + motion.speed * motion.direction * dt;
+    let direction = motion.direction;
+
+    // Reflect overshoot so movement is deterministic even if a frame is unusually long.
+    for (let guard = 0; guard < 4 && (next < motion.min || next > motion.max); guard++) {
+      if (next > motion.max) {
+        next = motion.max - (next - motion.max);
+        direction = -1;
+      } else if (next < motion.min) {
+        next = motion.min + (motion.min - next);
+        direction = 1;
+      }
+    }
+    next = Math.max(motion.min, Math.min(motion.max, next));
+    motion.direction = direction as -1 | 1;
+    if (motion.axis === 'x') platform.position.x = next;
+    else platform.position.y = next;
+
+    const dx = platform.position.x - oldX;
+    const dy = platform.position.y - oldY;
+    if (dx === 0 && dy === 0) continue;
+    for (let j = 0; j < agents.length; j++) {
+      const agent = agents[j];
+      if (!agent.isOnGround || agent.lastPlatformId !== platform.id) continue;
+      agent.position.x += dx;
+      agent.position.y += dy;
+      agent.positionAtLastTakeoff.x += dx;
+      agent.positionAtLastTakeoff.y += dy;
+    }
+  }
+}
+
+function activeRootBranchIds(platforms: PlatformState[], protectedIds: number[], minKeepX: number, maxKeepX: number): Set<number> {
+  const active = new Set<number>();
+  for (const platform of platforms) {
+    if (platform.rootBranchGroupId == null) continue;
+    const protectedPlatform = protectedIds.includes(platform.id);
+    const inWindow = platform.position.x + platform.width > minKeepX && platform.position.x < maxKeepX;
+    if (protectedPlatform || inWindow) active.add(platform.rootBranchGroupId);
+  }
+  return active;
+}
+
+/** Allocation-light rolling platform maintenance for headless training. */
 export function maintainPlatformsForCameraInPlace(
   platforms: PlatformState[],
   agents: AgentState[],
@@ -524,8 +816,10 @@ export function maintainPlatformsForCameraInPlace(
   viewportSize: { width: number; height: number },
   nextPlatformId: number,
   rng: () => number,
-  branchMinX = BRANCH_STRUCTURE_MIN_X
+  branchMinX = BRANCH_STRUCTURE_MIN_X,
+  terrainValue?: TerrainRuntimeConfig
 ): number {
+  const terrain = resolvedTerrainRuntime(terrainValue);
   let leftmostAgentX = cameraX;
   let rightmostAgentX = cameraX + viewportSize.width;
   if (agents.length > 0) {
@@ -536,26 +830,20 @@ export function maintainPlatformsForCameraInPlace(
       rightmostAgentX = Math.max(rightmostAgentX, agents[i].position.x + AGENT_WIDTH);
     }
   }
-  const rightGenerationEdge = Math.max(
-    cameraX + viewportSize.width + PLATFORM_SPAWN_BUFFER,
-    rightmostAgentX + PLATFORM_SPAWN_BUFFER
-  );
+  const rightGenerationEdge = Math.max(cameraX + viewportSize.width + PLATFORM_SPAWN_BUFFER, rightmostAgentX + PLATFORM_SPAWN_BUFFER);
   const leftGenerationEdge = Math.min(cameraX - PLATFORM_SPAWN_BUFFER, leftmostAgentX - PLATFORM_SPAWN_BUFFER);
   const despawnMargin = PLATFORM_SPAWN_BUFFER * 2;
   const minKeepX = Math.min(cameraX - despawnMargin, leftmostAgentX - despawnMargin);
   const maxKeepX = Math.max(cameraX + viewportSize.width + despawnMargin, rightmostAgentX + despawnMargin);
+  const protectedIds = agents.map(a => a.lastPlatformId).filter((id): id is number => id != null);
+  const activeRoots = activeRootBranchIds(platforms, protectedIds, minKeepX, maxKeepX);
 
   let write = 0;
   for (let i = 0; i < platforms.length; i++) {
     const platform = platforms[i];
-    let protectedPlatform = false;
-    for (let j = 0; j < agents.length; j++) {
-      if (agents[j].lastPlatformId === platform.id) {
-        protectedPlatform = true;
-        break;
-      }
-    }
-    if (protectedPlatform || (platform.position.x + platform.width > minKeepX && platform.position.x < maxKeepX)) {
+    const protectedPlatform = protectedIds.includes(platform.id);
+    const preserveBranchTree = platform.rootBranchGroupId != null && activeRoots.has(platform.rootBranchGroupId);
+    if (protectedPlatform || preserveBranchTree || (platform.position.x + platform.width > minKeepX && platform.position.x < maxKeepX)) {
       if (write !== i) platforms[write] = platform;
       write++;
     }
@@ -563,37 +851,33 @@ export function maintainPlatformsForCameraInPlace(
   platforms.length = write;
 
   if (platforms.length > 0) {
-    let rightmostPlatform = platforms[platforms.length - 1];
+    // Route arrays are deliberately not ordered by x (all of one sibling is emitted before the
+    // other), and moving platforms can change their physical ordering. Extend only from the
+    // forward trunk: normal platforms and top-level merge checkpoints.
+    let rightmostPlatform = platforms
+      .filter(platform => !platform.routePath && (platform.structureType !== 'merge' || (platform.branchDepth || 1) === 1))
+      .reduce((best, platform) =>
+        platform.position.x + platform.width > best.position.x + best.width ? platform : best, platforms[0]);
     while (rightmostPlatform.position.x + rightmostPlatform.width < rightGenerationEdge) {
-      const generated = appendForwardSegment(platforms, rightmostPlatform, viewportSize.height, nextPlatformId, rng, branchMinX);
+      const generated = appendForwardSegment(platforms, rightmostPlatform, viewportSize.height, nextPlatformId, rng, branchMinX, terrain);
       rightmostPlatform = generated.rightmost;
       nextPlatformId = generated.nextPlatformId;
     }
   }
 
   if (platforms.length > 0) {
-    let leftmostPlatform = platforms[0];
+    let leftmostPlatform = platforms.reduce((best, platform) =>
+      platform.position.x < best.position.x ? platform : best, platforms[0]);
     while (leftmostPlatform.position.x > leftGenerationEdge) {
-      const newPlatform = generatePlatform(
-        leftmostPlatform.position.x,
-        leftmostPlatform.position.y,
-        viewportSize.height,
-        nextPlatformId++,
-        rng,
-        true
-      );
+      const newPlatform = generatePlatform(leftmostPlatform.position.x, leftmostPlatform.position.y, viewportSize.height, nextPlatformId++, rng, true, terrain);
       platforms.unshift(newPlatform);
       leftmostPlatform = newPlatform;
     }
   }
-
   return nextPlatformId;
 }
 
-/**
- * Exact rolling platform retention/generation rule from the visual simulation. The caller supplies
- * Math.random for the visible game and a seeded RNG for deterministic/common-random-number training.
- */
+/** Exact rolling rule used by the visible simulation. */
 export function maintainPlatformsForCamera(
   platforms: PlatformState[],
   agents: AgentState[],
@@ -601,73 +885,10 @@ export function maintainPlatformsForCamera(
   viewportSize: { width: number; height: number },
   nextPlatformId: number,
   rng: () => number,
-  branchMinX = BRANCH_STRUCTURE_MIN_X
+  branchMinX = BRANCH_STRUCTURE_MIN_X,
+  terrainValue?: TerrainRuntimeConfig
 ): { platforms: PlatformState[]; nextPlatformId: number } {
-  let leftmostAgentX = cameraX;
-  let rightmostAgentX = cameraX + viewportSize.width;
-  if (agents.length > 0) {
-    leftmostAgentX = Infinity;
-    rightmostAgentX = -Infinity;
-    for (let i = 0; i < agents.length; i++) {
-      leftmostAgentX = Math.min(leftmostAgentX, agents[i].position.x);
-      rightmostAgentX = Math.max(rightmostAgentX, agents[i].position.x + AGENT_WIDTH);
-    }
-  }
-  const rightGenerationEdge = Math.max(
-    cameraX + viewportSize.width + PLATFORM_SPAWN_BUFFER,
-    rightmostAgentX + PLATFORM_SPAWN_BUFFER
-  );
-  const leftGenerationEdge = Math.min(cameraX - PLATFORM_SPAWN_BUFFER, leftmostAgentX - PLATFORM_SPAWN_BUFFER);
-  const despawnMargin = PLATFORM_SPAWN_BUFFER * 2;
-  const minKeepX = Math.min(cameraX - despawnMargin, leftmostAgentX - despawnMargin);
-  const maxKeepX = Math.max(cameraX + viewportSize.width + despawnMargin, rightmostAgentX + despawnMargin);
-  // At most three platform ids are protected. Avoid Set/map/filter/sort allocations in this
-  // per-physics-step path. `platforms` is already maintained in x-order by push/unshift, and
-  // filtering preserves that order exactly.
-  const protectedIds: number[] = [];
-  for (let i = 0; i < agents.length; i++) {
-    const id = agents[i].lastPlatformId;
-    if (id !== null && id !== undefined && !protectedIds.includes(id)) protectedIds.push(id);
-  }
-  const retained: PlatformState[] = [];
-  for (let i = 0; i < platforms.length; i++) {
-    const p = platforms[i];
-    let protectedPlatform = false;
-    for (let j = 0; j < protectedIds.length; j++) {
-      if (protectedIds[j] === p.id) {
-        protectedPlatform = true;
-        break;
-      }
-    }
-    if (protectedPlatform || (p.position.x + p.width > minKeepX && p.position.x < maxKeepX)) {
-      retained.push(p);
-    }
-  }
-
-  if (retained.length > 0) {
-    let rightmostPlatform = retained[retained.length - 1];
-    while (rightmostPlatform.position.x + rightmostPlatform.width < rightGenerationEdge) {
-      const generated = appendForwardSegment(retained, rightmostPlatform, viewportSize.height, nextPlatformId, rng, branchMinX);
-      rightmostPlatform = generated.rightmost;
-      nextPlatformId = generated.nextPlatformId;
-    }
-  }
-
-  if (retained.length > 0) {
-    let leftmostPlatform = retained[0];
-    while (leftmostPlatform.position.x > leftGenerationEdge) {
-      const newPlatform = generatePlatform(
-        leftmostPlatform.position.x,
-        leftmostPlatform.position.y,
-        viewportSize.height,
-        nextPlatformId++,
-        rng,
-        true
-      );
-      retained.unshift(newPlatform);
-      leftmostPlatform = newPlatform;
-    }
-  }
-
+  const retained = platforms.map(platform => ({ ...platform, position: { ...platform.position }, motion: platform.motion ? { ...platform.motion } : undefined }));
+  nextPlatformId = maintainPlatformsForCameraInPlace(retained, agents, cameraX, viewportSize, nextPlatformId, rng, branchMinX, terrainValue);
   return { platforms: retained, nextPlatformId };
 }

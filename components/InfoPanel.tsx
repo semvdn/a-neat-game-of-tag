@@ -1,7 +1,7 @@
 
 
 import React from 'react';
-import type { AgentState, RewardBreakdown, TrainingFitnessConfig, UpgradeConfig, UpgradeMode, UpgradeRule, SprintUpgradeRule, SprintRoleAdvanced } from '../types';
+import type { AgentState, RewardBreakdown, TrainingFitnessConfig, UpgradeConfig, UpgradeMode, UpgradeRule, SprintUpgradeRule, SprintRoleAdvanced, TerrainVarietyConfig } from '../types';
 import { AgentStatus } from '../types';
 import { Radar, Shield, Swords, Zap, ArrowUp, SlidersHorizontal } from 'lucide-react';
 import { MAX_SPEED, SPRINT_MAX_SPEED, SPRINT_ENERGY_COST_PER_SEC, MIN_RUNNER_PACE_TARGET_PX, MAX_RUNNER_PACE_TARGET_PX, MAX_RUNNER_PACE_REWARD_PER_WINDOW, MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM } from '../constants';
@@ -22,6 +22,8 @@ interface InfoPanelProps {
   onUpdateUpgrade: (upgrade: keyof UpgradeConfig, patch: Partial<UpgradeRule> | Partial<SprintUpgradeRule>) => void;
   trainingFitnessConfig: TrainingFitnessConfig;
   onUpdateTrainingFitnessConfig: (patch: Partial<TrainingFitnessConfig>) => void;
+  terrainVarietyConfig: TerrainVarietyConfig;
+  onUpdateTerrainVarietyConfig: (patch: Partial<TerrainVarietyConfig>) => void;
 }
 
 const statusColors: Record<AgentStatus, string> = {
@@ -371,6 +373,8 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
   onUpdateUpgrade,
   trainingFitnessConfig,
   onUpdateTrainingFitnessConfig,
+  terrainVarietyConfig,
+  onUpdateTerrainVarietyConfig,
 }) => {
   return (
     <aside className="w-80 bg-gray-800 rounded-lg shadow-lg p-4 flex flex-col gap-4 overflow-y-auto">
@@ -392,6 +396,83 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
         </div>
         <ToggleSwitch id="senses-toggle" checked={showSenses} onChange={onToggleSenses} />
       </div>
+
+      <details className="rounded-lg border border-violet-500/25 bg-violet-950/10 p-3" open>
+        <summary className="cursor-pointer list-none text-xs font-bold text-violet-200 flex items-center justify-between">
+          <span className="flex items-center gap-1.5"><SlidersHorizontal className="w-3.5 h-3.5" /> Terrain variety</span>
+          <span className="text-[9px] font-normal text-gray-500">training + continuous</span>
+        </summary>
+        <p className="mt-1 text-[9px] leading-relaxed text-gray-500">
+          Branches are true exclusive routes: landing commits an agent to that route until its merge. Nested branches can split a committed route again.
+        </p>
+
+        <div className="mt-3 space-y-3">
+          <div className="rounded border border-gray-700 bg-gray-950/40 p-2.5 space-y-2">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-cyan-300">Training episodes</div>
+            <div className="flex items-center justify-between gap-2">
+              <div><div className="text-[10px] text-gray-300">Branching paths</div><div className="text-[9px] text-gray-600">Enable route-tree episodes</div></div>
+              <ToggleSwitch id="training-branches" checked={terrainVarietyConfig.trainingBranchingEnabled} onChange={() => onUpdateTerrainVarietyConfig({ trainingBranchingEnabled: !terrainVarietyConfig.trainingBranchingEnabled })} />
+            </div>
+            {terrainVarietyConfig.trainingBranchingEnabled && <div>
+              <div className="mb-1 flex justify-between text-[9px]"><span className="text-gray-500">Episodes containing branches</span><span className="font-mono text-cyan-300">{terrainVarietyConfig.trainingBranchingEpisodePercent.toFixed(0)}%</span></div>
+              <input className="w-full" type="range" min={0} max={100} step={5} value={terrainVarietyConfig.trainingBranchingEpisodePercent} onChange={e => onUpdateTerrainVarietyConfig({ trainingBranchingEpisodePercent: Number(e.target.value) })} />
+            </div>}
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-gray-800">
+              <div><div className="text-[10px] text-gray-300">Moving platforms</div><div className="text-[9px] text-gray-600">Enable motion-enabled episodes</div></div>
+              <ToggleSwitch id="training-moving" checked={terrainVarietyConfig.trainingMovingPlatformsEnabled} onChange={() => onUpdateTerrainVarietyConfig({ trainingMovingPlatformsEnabled: !terrainVarietyConfig.trainingMovingPlatformsEnabled })} />
+            </div>
+            {terrainVarietyConfig.trainingMovingPlatformsEnabled && <div>
+              <div className="mb-1 flex justify-between text-[9px]"><span className="text-gray-500">Episodes containing moving platforms</span><span className="font-mono text-cyan-300">{terrainVarietyConfig.trainingMovingEpisodePercent.toFixed(0)}%</span></div>
+              <input className="w-full" type="range" min={0} max={100} step={5} value={terrainVarietyConfig.trainingMovingEpisodePercent} onChange={e => onUpdateTerrainVarietyConfig({ trainingMovingEpisodePercent: Number(e.target.value) })} />
+            </div>}
+          </div>
+
+          <div className="rounded border border-gray-700 bg-gray-950/40 p-2.5 space-y-2">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-amber-300">Continuous champion view</div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-gray-300">Branching paths</span>
+              <ToggleSwitch id="continuous-branches" checked={terrainVarietyConfig.continuousBranchingEnabled} onChange={() => onUpdateTerrainVarietyConfig({ continuousBranchingEnabled: !terrainVarietyConfig.continuousBranchingEnabled })} />
+            </div>
+            {terrainVarietyConfig.continuousBranchingEnabled && <div>
+              <div className="mb-1 flex justify-between text-[9px]"><span className="text-gray-500">Branch spawn chance</span><span className="font-mono text-amber-300">{terrainVarietyConfig.continuousBranchSpawnPercent.toFixed(0)}%</span></div>
+              <input className="w-full" type="range" min={0} max={75} step={1} value={terrainVarietyConfig.continuousBranchSpawnPercent} onChange={e => onUpdateTerrainVarietyConfig({ continuousBranchSpawnPercent: Number(e.target.value) })} />
+            </div>}
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-gray-800">
+              <span className="text-[10px] text-gray-300">Moving platforms</span>
+              <ToggleSwitch id="continuous-moving" checked={terrainVarietyConfig.continuousMovingPlatformsEnabled} onChange={() => onUpdateTerrainVarietyConfig({ continuousMovingPlatformsEnabled: !terrainVarietyConfig.continuousMovingPlatformsEnabled })} />
+            </div>
+            {terrainVarietyConfig.continuousMovingPlatformsEnabled && <div>
+              <div className="mb-1 flex justify-between text-[9px]"><span className="text-gray-500">Moving-platform spawn chance</span><span className="font-mono text-amber-300">{terrainVarietyConfig.continuousMovingSpawnPercent.toFixed(0)}%</span></div>
+              <input className="w-full" type="range" min={0} max={80} step={1} value={terrainVarietyConfig.continuousMovingSpawnPercent} onChange={e => onUpdateTerrainVarietyConfig({ continuousMovingSpawnPercent: Number(e.target.value) })} />
+            </div>}
+          </div>
+
+          <div className="rounded border border-gray-700 bg-gray-950/40 p-2.5 space-y-2">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-violet-300">Branch complexity</div>
+            <div>
+              <div className="mb-1 flex justify-between text-[9px]"><span className="text-gray-500">Max platforms per route</span><span className="font-mono text-violet-300">{terrainVarietyConfig.maxPlatformsPerBranch}</span></div>
+              <input className="w-full" type="range" min={1} max={6} step={1} value={terrainVarietyConfig.maxPlatformsPerBranch} onChange={e => onUpdateTerrainVarietyConfig({ maxPlatformsPerBranch: Number(e.target.value) })} />
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <div><div className="text-[10px] text-gray-300">Sub-branching</div><div className="text-[9px] text-gray-600">Allow routes to split again</div></div>
+              <ToggleSwitch id="sub-branching" checked={terrainVarietyConfig.subBranchingEnabled} onChange={() => onUpdateTerrainVarietyConfig({ subBranchingEnabled: !terrainVarietyConfig.subBranchingEnabled })} />
+            </div>
+            {terrainVarietyConfig.subBranchingEnabled && <div>
+              <div className="mb-1 flex justify-between text-[9px]"><span className="text-gray-500">Maximum branch depth</span><span className="font-mono text-violet-300">{terrainVarietyConfig.maxBranchDepth}</span></div>
+              <input className="w-full" type="range" min={1} max={4} step={1} value={terrainVarietyConfig.maxBranchDepth} onChange={e => onUpdateTerrainVarietyConfig({ maxBranchDepth: Number(e.target.value) })} />
+            </div>}
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-gray-800">
+              <div><div className="text-[10px] text-gray-300">Moving platforms in branches</div><div className="text-[9px] text-gray-600">Route platforms may oscillate; merges stay fixed</div></div>
+              <ToggleSwitch id="moving-in-branches" checked={terrainVarietyConfig.movingPlatformsInBranches} onChange={() => onUpdateTerrainVarietyConfig({ movingPlatformsInBranches: !terrainVarietyConfig.movingPlatformsInBranches })} />
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-1 flex justify-between text-[9px]"><span className="text-gray-500">Maximum moving-platform speed</span><span className="font-mono text-cyan-300">{terrainVarietyConfig.movingPlatformMaxSpeed.toFixed(0)} px/s</span></div>
+            <input className="w-full" type="range" min={0} max={180} step={5} value={terrainVarietyConfig.movingPlatformMaxSpeed} onChange={e => onUpdateTerrainVarietyConfig({ movingPlatformMaxSpeed: Number(e.target.value) })} />
+          </div>
+        </div>
+      </details>
 
       <div className="space-y-2">
         <div>

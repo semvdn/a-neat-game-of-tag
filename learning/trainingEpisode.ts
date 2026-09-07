@@ -8,9 +8,12 @@ import {
   stepAgentPhysics,
   stepAgentPhysicsInPlace,
   updateChaseCameraX,
+  stepMovingPlatformsInPlace,
 } from './simulationCore';
-import type { ActiveUpgradeState, AgentState, GameState, PlatformState, PursuitDesignConfig } from '../types';
+import type { ActiveUpgradeState, AgentState, GameState, PlatformState, PursuitDesignConfig, TerrainRuntimeConfig, TerrainVarietyConfig } from '../types';
 import { AgentStatus } from '../types';
+import { trainingTerrainRuntime, DEFAULT_TERRAIN_VARIETY_CONFIG } from './terrainConfig';
+import { applyPlatformRoute, canAgentsPhysicallyInteract } from './terrainRoutes';
 import {
   AGENT_COLORS,
   AGENT_WIDTH,
@@ -167,6 +170,8 @@ export interface TrainingEpisodeOptions {
   runnerPaceRewardPerWindow?: number;
   chaserPursuitRewardPerPlatform?: number;
   pursuitDesign?: PursuitDesignConfig;
+  /** Per-episode terrain feature frequency and geometry controls. */
+  terrainConfig?: TerrainVarietyConfig;
   /** Diagnostic-only trace recording; disabled during normal evolutionary evaluation. */
   recordTrace?: boolean;
   traceIntervalMs?: number;
@@ -340,6 +345,7 @@ function cloneEpisodeStart(start: EpisodeStartState): EpisodeStartState {
       platforms: start.gameState.platforms.map(platform => ({
         ...platform,
         position: { ...platform.position },
+        motion: platform.motion ? { ...platform.motion } : undefined,
       })),
       cameraPosition: { ...start.gameState.cameraPosition },
       tagEffects: start.gameState.tagEffects.map(effect => ({
@@ -430,12 +436,14 @@ function stepScriptedMidgameWorld(
   rng: () => number,
   step: number,
   phaseSalt: number,
+  terrainRuntime: TerrainRuntimeConfig,
   forcedJumpId: number | null = null,
   settleOnly = false
 ): void {
   const gameState = start.gameState;
   gameState.gameTime += DT;
   advanceRoleTimers(gameState.agents, DT);
+  stepMovingPlatformsInPlace(gameState.platforms, gameState.agents, DT);
 
   const agentsBeforePhysics = gameState.agents;
   gameState.agents = agentsBeforePhysics.map(agent => {
@@ -471,7 +479,9 @@ function stepScriptedMidgameWorld(
     gameState.cameraPosition.x,
     viewportSize,
     start.nextPlatformId,
-    rng
+    rng,
+    undefined,
+    terrainRuntime
   );
   gameState.platforms = platformUpdate.platforms;
   start.nextPlatformId = platformUpdate.nextPlatformId;
@@ -481,7 +491,8 @@ function stepScriptedMidgameWorld(
 function placeRunnerFocusedMidgameState(
   start: EpisodeStartState,
   viewportSize: { width: number; height: number },
-  rng: () => number
+  rng: () => number,
+  terrainRuntime: TerrainRuntimeConfig
 ): boolean {
   const allEligible = start.gameState.platforms
     .filter(platform => platform.id !== 0 && platform.width >= AGENT_WIDTH + 80)
@@ -513,6 +524,7 @@ function placeRunnerFocusedMidgameState(
     agent.acceleration.x = 0;
     agent.isOnGround = true;
     agent.lastPlatformId = platform.id;
+    applyPlatformRoute(agent, platform);
     agent.positionAtLastTakeoff.x = x;
     agent.positionAtLastTakeoff.y = agent.position.y;
     agent.energyAtLastTakeoff = agent.energy;
@@ -534,16 +546,20 @@ function placeRunnerFocusedMidgameState(
     start.gameState.cameraPosition.x,
     viewportSize,
     start.nextPlatformId,
-    rng
+    rng,
+    undefined,
+    terrainRuntime
   );
   return true;
 }
 
 function createMidgameEpisodeState(
   seed: number,
-  viewportSize: { width: number; height: number }
+  viewportSize: { width: number; height: number },
+  terrainRuntime: TerrainRuntimeConfig
 ): EpisodeStartState {
-  const cacheKey = `${seed >>> 0}:${viewportSize.width}x${viewportSize.height}`;
+  const terrainKey = [terrainRuntime.branchingEnabled ? 1 : 0, terrainRuntime.movingPlatformsEnabled ? 1 : 0, terrainRuntime.branchSpawnChance.toFixed(2), terrainRuntime.movingSpawnChance.toFixed(2), terrainRuntime.movingPlatformMaxSpeed.toFixed(0), terrainRuntime.maxPlatformsPerBranch, terrainRuntime.subBranchingEnabled ? 1 : 0, terrainRuntime.maxBranchDepth, terrainRuntime.movingPlatformsInBranches ? 1 : 0].join(',');
+  const cacheKey = `${seed >>> 0}:${viewportSize.width}x${viewportSize.height}:${terrainKey}`;
   const cached = midgameStartCache.get(cacheKey);
   if (cached) return cloneEpisodeStart(cached);
 
@@ -557,7 +573,7 @@ function createMidgameEpisodeState(
   const warmupSteps = Math.max(1, Math.floor(warmupMs / DT));
 
   for (let step = 0; step < warmupSteps; step++) {
-    stepScriptedMidgameWorld(start, viewportSize, rng, step, phaseSalt);
+    stepScriptedMidgameWorld(start, viewportSize, rng, step, phaseSalt, terrainRuntime);
   }
 
   // Do not sample a random frame while a scripted body is simply plummeting through empty space.
@@ -571,13 +587,14 @@ function createMidgameEpisodeState(
       rng,
       warmupSteps + settleStep,
       phaseSalt,
+      terrainRuntime,
       null,
       true
     );
     settleStep++;
   }
 
-  const runnerFocused = rng() < 0.72 && placeRunnerFocusedMidgameState(start, viewportSize, rng);
+  const runnerFocused = rng() < 0.72 && placeRunnerFocusedMidgameState(start, viewportSize, rng, terrainRuntime);
   const flavor = rng();
   if (flavor < (runnerFocused ? 0.48 : 0.34)) {
     // A genuine jump-arc start. Runner-focused snapshots preferentially launch a runner from a
@@ -588,9 +605,9 @@ function createMidgameEpisodeState(
     if (grounded.length > 0) {
       const jumper = grounded[Math.floor(rng() * grounded.length)];
       const airborneSteps = 2 + Math.floor(rng() * 5);
-      stepScriptedMidgameWorld(start, viewportSize, rng, warmupSteps + settleStep, phaseSalt, jumper.id, true);
+      stepScriptedMidgameWorld(start, viewportSize, rng, warmupSteps + settleStep, phaseSalt, terrainRuntime, jumper.id, true);
       for (let i = 1; i < airborneSteps; i++) {
-        stepScriptedMidgameWorld(start, viewportSize, rng, warmupSteps + settleStep + i, phaseSalt, null, true);
+        stepScriptedMidgameWorld(start, viewportSize, rng, warmupSteps + settleStep + i, phaseSalt, terrainRuntime, null, true);
       }
     }
   } else if (!runnerFocused && flavor < 0.58) {
@@ -611,6 +628,7 @@ function createMidgameEpisodeState(
           itAgent.velocity = { x: 0, y: 0 };
           itAgent.isOnGround = true;
           itAgent.lastPlatformId = platform.id;
+          applyPlatformRoute(itAgent, platform);
           itAgent.positionAtLastTakeoff = { ...itAgent.position };
           itAgent.cooldownTimer = 0;
 
@@ -618,6 +636,7 @@ function createMidgameEpisodeState(
           taggableRunner.velocity = { x: 0, y: 0 };
           taggableRunner.isOnGround = true;
           taggableRunner.lastPlatformId = platform.id;
+          applyPlatformRoute(taggableRunner, platform);
           taggableRunner.positionAtLastTakeoff = { ...taggableRunner.position };
           taggableRunner.cooldownTimer = 0;
           resolveTagSwap(start.gameState.agents);
@@ -665,10 +684,11 @@ function createEpisodeState(
   seed: number,
   rng: () => number,
   viewportSize: { width: number; height: number },
-  requestedMode: TrainingStartMode
+  requestedMode: TrainingStartMode,
+  terrainRuntime: TerrainRuntimeConfig
 ): EpisodeStartState {
   const mode = resolveTrainingStartMode(seed, requestedMode);
-  if (mode === 'midgame') return createMidgameEpisodeState(seed, viewportSize);
+  if (mode === 'midgame') return createMidgameEpisodeState(seed, viewportSize, terrainRuntime);
   return createFreshEpisodeState(rng, viewportSize, mode);
 }
 
@@ -694,7 +714,8 @@ export function runTrainingEpisode(
   chaser.resetState();
   evader.resetState();
   const rng = mulberry32(seed >>> 0);
-  const episodeStart = createEpisodeState(seed, rng, viewportSize, options.startMode || 'mixed');
+  const terrainRuntime = trainingTerrainRuntime(options.terrainConfig || DEFAULT_TERRAIN_VARIETY_CONFIG, seed >>> 0);
+  const episodeStart = createEpisodeState(seed, rng, viewportSize, options.startMode || 'mixed', terrainRuntime);
   const gameState = episodeStart.gameState;
   let nextPlatformId = episodeStart.nextPlatformId;
 
@@ -852,6 +873,7 @@ export function runTrainingEpisode(
     const chaserFallsBeforeStep = chaserFalls;
     gameState.gameTime += DT;
     advanceRoleTimers(gameState.agents, DT);
+    stepMovingPlatformsInPlace(gameState.platforms, gameState.agents, DT);
 
     // Decisions are made before cooldown expiry/physics, exactly as in the visible update loop.
     for (let i = 0; i < gameState.agents.length; i++) {
@@ -1027,7 +1049,7 @@ export function runTrainingEpisode(
       const cx = chaserBody.position.x + AGENT_WIDTH / 2;
       const cy = chaserBody.position.y + AGENT_HEIGHT / 2;
       for (const agent of gameState.agents) {
-        if (agent.status === AgentStatus.It) continue;
+        if (agent.status === AgentStatus.It || !canAgentsPhysicallyInteract(chaserBody, agent)) continue;
         const dx = agent.position.x + AGENT_WIDTH / 2 - cx;
         const dy = agent.position.y + AGENT_HEIGHT / 2 - cy;
         nearestRunnerDistance = Math.min(nearestRunnerDistance, Math.hypot(dx, dy));
@@ -1088,6 +1110,26 @@ export function runTrainingEpisode(
           runnerPressureEscapeFitnessBonus += reward;
         }
       }
+    } else if (closeEncounterActive) {
+      // Diverging onto mutually exclusive sibling routes is a genuine escape from physical tag
+      // pressure. Do not let impossible cross-route proximity farm the Chaser pursuit score, and
+      // close the Runner encounter cleanly when route commitment removes physical interaction.
+      closeEncounterActive = false;
+      successfulEvades++;
+      const episodePressureCap = pursuitDesign?.runnerPressureEscapeEpisodeCap ?? Infinity;
+      if (
+        evaderFalls === runnerFallsAtEncounterStart &&
+        pressureEscapeBonusThisWindow < RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW &&
+        runnerPressureEscapeFitnessBonus < episodePressureCap
+      ) {
+        const reward = Math.min(
+          RUNNER_PRESSURE_ESCAPE_REWARD,
+          RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW - pressureEscapeBonusThisWindow,
+          episodePressureCap - runnerPressureEscapeFitnessBonus
+        );
+        pressureEscapeBonusThisWindow += reward;
+        runnerPressureEscapeFitnessBonus += reward;
+      }
     }
 
     const tagTransition = resolveTagSwap(gameState.agents);
@@ -1143,7 +1185,8 @@ export function runTrainingEpisode(
       viewportSize,
       nextPlatformId,
       rng,
-      pursuitDesign?.branchStructureMinX
+      pursuitDesign?.branchStructureMinX,
+      terrainRuntime
     );
 
     if (trace && gameState.gameTime + 1e-6 >= nextTraceAtMs) {

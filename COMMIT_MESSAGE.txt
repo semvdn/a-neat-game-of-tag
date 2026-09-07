@@ -1,1 +1,8 @@
-Integrate hybrid pursuit league and soft retention
+Add recursive exclusive terrain routes and moving platforms
+
+- replace shallow branch detours with mutually exclusive recursive route trees
+- add deterministic horizontal/vertical moving platforms with grounded-agent carry
+- add training episode percentages and continuous-view spawn controls
+- expose branch depth, route length, motion speed, and branch-motion settings
+- keep sensing, respawn, diagnostics, checkpoints, and worker evaluation terrain-aware
+- isolate tag contact and pursuit scoring across divergent sibling routes

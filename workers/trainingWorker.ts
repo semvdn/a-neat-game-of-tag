@@ -6,7 +6,7 @@ import {
   type TrainingEpisodeResult,
   type TrainingStartMode,
 } from '../learning/trainingEpisode';
-import type { ActiveUpgradeState, BalanceTelemetry, BenchmarkRoleTelemetry, CrossGenerationBenchmarkTelemetry, GeneralistChampionTelemetry, HallOfFameTelemetry, TrainingFitnessConfig, TrainingGenerationAnalysisRecord, UpgradeConfig, PursuitDesignConfig, ShowcasePairTelemetry } from '../types';
+import type { ActiveUpgradeState, BalanceTelemetry, BenchmarkRoleTelemetry, CrossGenerationBenchmarkTelemetry, GeneralistChampionTelemetry, HallOfFameTelemetry, TrainingFitnessConfig, TrainingGenerationAnalysisRecord, UpgradeConfig, PursuitDesignConfig, ShowcasePairTelemetry, TerrainVarietyConfig } from '../types';
 import {
   INITIAL_ELO,
   SURVIVAL_TIME_HISTORY_LENGTH,
@@ -47,6 +47,7 @@ import {
   DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM,
   MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM,
 } from '../constants';
+import { DEFAULT_TERRAIN_VARIETY_CONFIG, sanitizeTerrainVarietyConfig } from '../learning/terrainConfig';
 
 const baseNeatConfig = {
   ...DEFAULT_NEAT_CONFIG,
@@ -119,6 +120,7 @@ const DEFAULT_TRAINING_FITNESS_CONFIG: TrainingFitnessConfig = {
   chaserPursuitRewardPerPlatform: DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM,
 };
 let trainingFitnessConfig: TrainingFitnessConfig = { ...DEFAULT_TRAINING_FITNESS_CONFIG };
+let terrainVarietyConfig: TerrainVarietyConfig = { ...DEFAULT_TERRAIN_VARIETY_CONFIG };
 
 interface PursuitExperimentRuntimeFlags {
   pressureStarts: boolean;
@@ -268,10 +270,11 @@ interface EvolutionCheckpoint {
   lastEvaderMetrics: NeatGenerationMetrics | null;
   upgradeConfig: UpgradeConfig;
   trainingFitnessConfig?: TrainingFitnessConfig;
+  terrainVarietyConfig?: TerrainVarietyConfig;
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   /** Fitness semantics marker for compatibility with checkpoints created before right-only exploration. */
   explorationRewardMode?: 'safe-per-runner-right-frontier';
-  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5' | 'hybrid-soft-pursuit-v6';
+  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5' | 'hybrid-soft-pursuit-v6' | 'hybrid-soft-pursuit-terrain-v7';
   actionSchema?: 'signed-horizontal-controls-v2';
   stateSchema?: 'world-relative-senses-v3';
   horizontalControlResolution?: 'signed-axis-v2';
@@ -604,6 +607,7 @@ function runEpisode(
     runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
     chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
     pursuitDesign: activePursuitDesign || undefined,
+    terrainConfig: terrainVarietyConfig,
   });
 
   totalTags += result.tags;
@@ -704,6 +708,7 @@ function evaluateFixedBenchmark(genome: NeatGenomeData, role: 'chaser' | 'evader
     runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
     chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
     pursuitDesign: activePursuitDesign || undefined,
+    terrainConfig: terrainVarietyConfig,
           })
         : runTrainingEpisode(reference.controller, candidate, seed, {
             trackChaserActions: false,
@@ -715,6 +720,7 @@ function evaluateFixedBenchmark(genome: NeatGenomeData, role: 'chaser' | 'evader
     runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
     chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
     pursuitDesign: activePursuitDesign || undefined,
+    terrainConfig: terrainVarietyConfig,
           });
 
       fitnessTotal += role === 'chaser' ? result.chaserFitness : result.evaderFitness;
@@ -897,6 +903,7 @@ function evaluateGeneralistCrossPlay(genome: NeatGenomeData, role: 'chaser' | 'e
         runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
         chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
         pursuitDesign: activePursuitDesign || undefined,
+    terrainConfig: terrainVarietyConfig,
       };
       const result = role === 'chaser'
         ? runTrainingEpisode(candidate, opponent, seed, episodeOptions)
@@ -952,6 +959,7 @@ function evaluateContemporaryMatchup(genome: NeatGenomeData, role: 'chaser' | 'e
       runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
       chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
       pursuitDesign: activePursuitDesign || undefined,
+    terrainConfig: terrainVarietyConfig,
     } as const;
     const result = role === 'chaser'
       ? runTrainingEpisode(candidate, opponent, seed, options)
@@ -1280,6 +1288,7 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
       runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
       chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
       pursuitDesign: activePursuitDesign || undefined,
+    terrainConfig: terrainVarietyConfig,
     });
     tags += result.tags;
     postFallTags += result.tagsSoonAfterRunnerFall;
@@ -1579,6 +1588,7 @@ function recordGenerationAnalysis(generation: number): void {
       runner: actionSharesFromArray(generationActionCountsEvader, generationDecisionCountEvader, generationIdleCountEvader),
     },
     fitnessConfig: { ...trainingFitnessConfig },
+    terrainVarietyConfig: sanitizeTerrainVarietyConfig(terrainVarietyConfig),
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     pursuitDesign: activePursuitDesign ? { ...activePursuitDesign } : null,
     pursuitExperimentFlags: { ...activePursuitExperimentFlags },
@@ -1609,9 +1619,10 @@ function buildEvolutionCheckpoint(analysisHistoryLimit = 0): EvolutionCheckpoint
     lastEvaderMetrics: lastEvaderMetrics ? { ...lastEvaderMetrics } : null,
     upgradeConfig: sanitizeUpgradeConfig(upgradeConfig),
     trainingFitnessConfig: sanitizeTrainingFitnessConfig(trainingFitnessConfig),
+    terrainVarietyConfig: sanitizeTerrainVarietyConfig(terrainVarietyConfig),
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     explorationRewardMode: 'safe-per-runner-right-frontier',
-    gameplayObjectiveVersion: 'hybrid-soft-pursuit-v6',
+    gameplayObjectiveVersion: 'hybrid-soft-pursuit-terrain-v7',
     actionSchema: 'signed-horizontal-controls-v2',
     stateSchema: 'world-relative-senses-v3',
     horizontalControlResolution: 'signed-axis-v2',
@@ -1697,9 +1708,10 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
   upgradeConfig = sanitizeUpgradeConfig(checkpoint.upgradeConfig);
   const migratedExplorationFitness = !checkpoint.trainingFitnessConfig;
   const migratedExplorationRewardMode = checkpoint.explorationRewardMode !== 'safe-per-runner-right-frontier';
-  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'hybrid-soft-pursuit-v6';
+  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'hybrid-soft-pursuit-terrain-v7';
   const migratedHorizontalControl = checkpoint.horizontalControlResolution !== 'signed-axis-v2';
   trainingFitnessConfig = sanitizeTrainingFitnessConfig(checkpoint.trainingFitnessConfig);
+  terrainVarietyConfig = sanitizeTerrainVarietyConfig(checkpoint.terrainVarietyConfig);
   chaserElo = Number.isFinite(checkpoint.chaserElo) ? checkpoint.chaserElo : INITIAL_ELO;
   evaderElo = Number.isFinite(checkpoint.evaderElo) ? checkpoint.evaderElo : INITIAL_ELO;
 
@@ -1951,6 +1963,7 @@ function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number)
             runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
             chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
     pursuitDesign: activePursuitDesign || undefined,
+    terrainConfig: terrainVarietyConfig,
           })
         : runTrainingEpisode(opponentControllers[opponentIndex], controller, seed, {
             trackChaserActions: false,
@@ -1962,6 +1975,7 @@ function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number)
             runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
             chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
     pursuitDesign: activePursuitDesign || undefined,
+    terrainConfig: terrainVarietyConfig,
           });
       total += role === 'chaser' ? result.chaserFitness : result.evaderFitness;
       matches++;
@@ -1984,6 +1998,7 @@ function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number)
             runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
             chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
     pursuitDesign: activePursuitDesign || undefined,
+    terrainConfig: terrainVarietyConfig,
           })
         : runTrainingEpisode(entry.controller, controller, seed, {
             trackChaserActions: false,
@@ -1995,6 +2010,7 @@ function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number)
             runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
             chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
     pursuitDesign: activePursuitDesign || undefined,
+    terrainConfig: terrainVarietyConfig,
           });
       total += role === 'chaser' ? result.chaserFitness : result.evaderFitness;
       matches++;
@@ -2149,6 +2165,7 @@ function prepareParallelGeneration() {
         upgrades,
         fitnessConfig: trainingFitnessConfig,
         pursuitDesign: activePursuitDesign || undefined,
+    terrainConfig: terrainVarietyConfig,
       },
     });
   }
@@ -2255,6 +2272,7 @@ function loadEvaluatorEpoch(slot: EvaluatorSlot) {
       upgrades: { ...activeUpgradeState() },
       fitnessConfig: trainingFitnessConfig,
       pursuitDesign: activePursuitDesign || undefined,
+    terrainConfig: terrainVarietyConfig,
     },
   });
 }
@@ -2859,7 +2877,7 @@ function completeArchitectureExperimentSuite(): void {
   const completedAt = Date.now();
   const report = {
     format: 'neat-tag-pursuit-design-experiment-suite',
-    version: 4,
+    version: 5,
     generatedAt: completedAt,
     targetGeneration: suite.targetGeneration,
     experiments: suite.results,
@@ -3177,6 +3195,7 @@ function buildAnalysisProbeSet(
       runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
       chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
       pursuitDesign: activePursuitDesign || undefined,
+    terrainConfig: terrainVarietyConfig,
       recordTrace: true,
       traceIntervalMs: 250,
     });
@@ -3295,7 +3314,7 @@ function buildAnalysisExport(historyStride = 1) {
     policyOutputSpace: [...POLICY_OUTPUT_SPACE],
     actionSchema: 'signed-horizontal-controls-v2',
     horizontalControlResolution: 'signed-axis-v2',
-    gameplayObjectiveVersion: 'hybrid-soft-pursuit-v6',
+    gameplayObjectiveVersion: 'hybrid-soft-pursuit-terrain-v7',
     stateSchema: 'world-relative-senses-v3',
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     pursuitDesign: activePursuitDesign ? { ...activePursuitDesign } : null,
@@ -3314,6 +3333,7 @@ function buildAnalysisExport(historyStride = 1) {
       pursuitDefinition: 'The Chaser earns small capped signals for following Runner-used terrain and, only in the full pursuit condition, for reaching genuinely new best proximity within a chase segment. Repeating the same distance does not pay again; tags remain +20 and dominant.',
     },
     upgrades: sanitizeUpgradeConfig(upgradeConfig),
+    terrainVarietyConfig: sanitizeTerrainVarietyConfig(terrainVarietyConfig),
     benchmarkSuiteRevision,
     trainingHealth: {
       backend: parallelBackendActive ? 'CPU parallel' : 'CPU optimized',
@@ -3414,6 +3434,7 @@ function emitTelemetry(force = false) {
       lastGenerationBalance,
       hallOfFame: currentHallOfFameTelemetry(),
       trainingFitnessConfig: { ...trainingFitnessConfig },
+      terrainVarietyConfig: sanitizeTerrainVarietyConfig(terrainVarietyConfig),
       networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     pursuitDesign: activePursuitDesign ? { ...activePursuitDesign } : null,
     pursuitExperimentFlags: { ...activePursuitExperimentFlags },
@@ -3561,6 +3582,9 @@ self.onmessage = (event: MessageEvent) => {
       if (payload?.trainingFitnessConfig) {
         trainingFitnessConfig = sanitizeTrainingFitnessConfig(payload.trainingFitnessConfig);
       }
+      if (payload?.terrainVarietyConfig) {
+        terrainVarietyConfig = sanitizeTerrainVarietyConfig(payload.terrainVarietyConfig);
+      }
       ensureBenchmarkSuite();
       // START may supply restored Elo/config after population seeding. Refresh the boundary snapshot
       // so persistence reflects those values as well; current population genetics remain a safe boundary.
@@ -3621,6 +3645,27 @@ self.onmessage = (event: MessageEvent) => {
       trainingFitnessConfig = next;
       if (changed) {
         // Do not mix two reward scales inside one generation or benchmark revision.
+        resetEvaluationAccumulators();
+        invalidateParallelGeneration();
+        benchmarkSuiteRevision++;
+        lastCrossGenerationBenchmark = null;
+        refreshHallOfFameBenchmarkMetadata();
+        revalidateRetainedGeneralists();
+        captureSafeCheckpoint();
+      }
+      emitTelemetry(true);
+      if (isRunning && changed) startTrainingEngine();
+      break;
+    }
+
+    case 'SET_TERRAIN_VARIETY_CONFIG': {
+      if (architectureExperimentSuite) break;
+      const next = sanitizeTerrainVarietyConfig(payload?.terrainVarietyConfig);
+      const changed = JSON.stringify(next) !== JSON.stringify(terrainVarietyConfig);
+      terrainVarietyConfig = next;
+      if (changed) {
+        // Terrain distribution changes alter the evaluation environment. Restart the partial
+        // generation and benchmark revision so fitness values are never mixed across settings.
         resetEvaluationAccumulators();
         invalidateParallelGeneration();
         benchmarkSuiteRevision++;

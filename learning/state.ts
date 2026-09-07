@@ -1,5 +1,6 @@
 import type { AgentState, GameState, PlatformState } from '../types';
 import { AgentStatus } from '../types';
+import { canAgentUsePlatform } from './terrainRoutes';
 import {
   AGENT_WIDTH,
   AGENT_HEIGHT,
@@ -175,6 +176,7 @@ export function writeAgentStateVector(
   for (let i = 0; i < gameState.platforms.length; i++) {
     const platform = gameState.platforms[i];
     if (referencePlatform && platform.id === referencePlatform.id) continue;
+    if (!canAgentUsePlatform(agent, platform)) continue;
     const dx = platformCenterX(platform) - agentCenterX;
     if (dx >= 0) {
       if (dx < ahead1Dx) {

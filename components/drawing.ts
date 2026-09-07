@@ -3,6 +3,7 @@
 import type { PlatformState, AgentState, TagEffect, GameState } from '../types';
 import { AgentStatus } from '../types';
 import { AGENT_WIDTH, AGENT_HEIGHT } from '../constants';
+import { canAgentUsePlatform } from '../learning/terrainRoutes';
 
 export const drawTagEffect = (ctx: CanvasRenderingContext2D, effect: TagEffect) => {
     const progress = 1 - (effect.life / effect.initialLife); // 0 to 1
@@ -179,6 +180,7 @@ export const drawAgentSenses = (
     let behindDx = Infinity;
     for (const p of gameState.platforms) {
         if (referencePlatform && p.id === referencePlatform.id) continue;
+        if (!canAgentUsePlatform(agent, p)) continue;
         const dx = p.position.x + p.width / 2 - cx;
         if (dx >= 0) {
             if (dx < ahead1Dx) {
@@ -291,6 +293,22 @@ export const drawPlatform = (ctx: CanvasRenderingContext2D, platform: PlatformSt
   ctx.fillRect(platform.position.x, platform.position.y, platform.width, platform.height);
   ctx.fillStyle = '#2d3748'; // gray-800
   ctx.fillRect(platform.position.x, platform.position.y + platform.height - 4, platform.width, 4);
+  if (platform.motion) {
+    // Thin center glyph makes moving terrain readable without adding a large UI overlay.
+    ctx.strokeStyle = '#67e8f9';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    if (platform.motion.axis === 'x') {
+      const cy = platform.position.y + platform.height / 2;
+      ctx.moveTo(platform.position.x + platform.width * 0.35, cy);
+      ctx.lineTo(platform.position.x + platform.width * 0.65, cy);
+    } else {
+      const cx = platform.position.x + platform.width / 2;
+      ctx.moveTo(cx, platform.position.y + platform.height * 0.25);
+      ctx.lineTo(cx, platform.position.y + platform.height * 0.75);
+    }
+    ctx.stroke();
+  }
 };
 
 const drawItIndicator = (ctx: CanvasRenderingContext2D) => {

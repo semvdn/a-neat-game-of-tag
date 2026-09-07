@@ -1,5 +1,6 @@
 import type { AgentState, PlatformState, Vector2D } from '../types';
 import { AGENT_HEIGHT, AGENT_WIDTH } from '../constants';
+import { canAgentUsePlatform } from './terrainRoutes';
 
 // Respawning is a recovery from a mistake, not a source of positional advantage.
 // The policy therefore restores the agent to its most recent grounded checkpoint,
@@ -102,7 +103,8 @@ export function getFairRespawn(
     ? undefined
     : platforms.find(p => p.id === agent.lastPlatformId);
 
-  const ranked = [...platforms].sort((a, b) => {
+  const compatiblePlatforms = platforms.filter(platform => platform.id === checkpointPlatform?.id || canAgentUsePlatform(agent, platform));
+  const ranked = [...(compatiblePlatforms.length > 0 ? compatiblePlatforms : platforms)].sort((a, b) => {
     if (checkpointPlatform) {
       if (a.id === checkpointPlatform.id) return -1;
       if (b.id === checkpointPlatform.id) return 1;
