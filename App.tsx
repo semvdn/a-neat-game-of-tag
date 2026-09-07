@@ -1291,6 +1291,7 @@ export const App: React.FC = () => {
         // 8. Camera Tracking (shared with headless training)
         newState.cameraPosition.x = updateChaseCameraX(
           newState.agents,
+          newState.platforms,
           newState.cameraPosition.x,
           viewportSize.width
         );

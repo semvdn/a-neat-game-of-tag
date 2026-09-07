@@ -403,7 +403,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
           <span className="text-[9px] font-normal text-gray-500">training + continuous</span>
         </summary>
         <p className="mt-1 text-[9px] leading-relaxed text-gray-500">
-          Branches are true exclusive routes: landing commits an agent to that route until its merge. Nested branches can split a committed route again.
+          Branches use widely separated route corridors. Landing commits an agent until the matching merge, and nested forks stay inside their parent route so paths remain visually distinct.
         </p>
 
         <div className="mt-3 space-y-3">
@@ -462,7 +462,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
               <input className="w-full" type="range" min={1} max={4} step={1} value={terrainVarietyConfig.maxBranchDepth} onChange={e => onUpdateTerrainVarietyConfig({ maxBranchDepth: Number(e.target.value) })} />
             </div>}
             <div className="flex items-center justify-between gap-2 pt-1 border-t border-gray-800">
-              <div><div className="text-[10px] text-gray-300">Moving platforms in branches</div><div className="text-[9px] text-gray-600">Route platforms may oscillate; merges stay fixed</div></div>
+              <div><div className="text-[10px] text-gray-300">Moving platforms in branches</div><div className="text-[9px] text-gray-600">Route platforms move horizontally; merges stay fixed</div></div>
               <ToggleSwitch id="moving-in-branches" checked={terrainVarietyConfig.movingPlatformsInBranches} onChange={() => onUpdateTerrainVarietyConfig({ movingPlatformsInBranches: !terrainVarietyConfig.movingPlatformsInBranches })} />
             </div>
           </div>

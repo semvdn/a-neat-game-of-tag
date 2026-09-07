@@ -130,8 +130,8 @@ export const CLOSE_ENCOUNTER_EXIT_PX = 380;
 export const TAG_AFTER_RUNNER_FALL_WINDOW_MS = 2000;
 
 // Branch-and-reconnect structures become more frequent farther from the origin. Both routes are
-// intentionally reachable and reconnect quickly so choosing a branch creates pursuit/interception
-// opportunities instead of permanently separating the players.
+// intentionally reachable but now remain spatially separated for a meaningful runway before
+// reconnecting, so a fork creates a real commitment/interception decision rather than a cosmetic detour.
 // Route choices now appear during the part of an episode the population actually reaches while
 // still becoming more common farther into the level. The generator also has early-window and
 // maximum-spacing safeguards in simulationCore.ts, so these are the background probabilities rather

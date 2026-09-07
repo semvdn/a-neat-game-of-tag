@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { GameState, PlatformState } from '../types';
 import { drawPlatform, drawAgent, drawAgentTrail, drawTagEffect, drawAgentSenses } from './drawing';
 import { AGENT_HEIGHT, AGENT_WIDTH, WORLD_REF_WIDTH, WORLD_REF_HEIGHT, CAMERA_FRAME_PADDING_REFERENCE_PX, CAMERA_MIN_USEFUL_AUTO_ZOOM } from '../constants';
+import { cameraRelevantAgents } from '../learning/cameraFraming';
 
 interface GameCanvasProps {
   gameState: GameState;
@@ -41,8 +42,9 @@ const median = (values: number[]) => {
  * during jumps. If those platforms have been despawned, fall back to the platform nearest
  * the group in both X and Y.
  */
-const getActivePlatformY = (gameState: GameState): number => {
-  const { agents, platforms } = gameState;
+const getActivePlatformY = (gameState: GameState, framingAgents: typeof gameState.agents): number => {
+  const { platforms } = gameState;
+  const agents = framingAgents;
   if (platforms.length === 0) return WORLD_REF_HEIGHT * 0.75;
 
   const platformById = new Map<number, PlatformState>();
@@ -147,6 +149,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const zoom = Math.max(0.5, Math.min(2, cameraZoom));
     const preferredScale = fitScale * zoom;
 
+    const framingAgents = cameraRelevantAgents(agents, platforms);
+    const hasCameraSubjects = framingAgents.length > 0;
+
     // Pair framing is presentation-only. The user's zoom remains the preferred/MAXIMUM visual
     // zoom, but recursive exclusive routes are allowed to pull the agents much farther apart than
     // one reference viewport. In that case we automatically zoom out just enough to keep every
@@ -155,11 +160,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     let maxAgentX = minAgentX + AGENT_WIDTH;
     let minAgentY = WORLD_REF_HEIGHT * 0.5 - AGENT_HEIGHT * 0.5;
     let maxAgentY = minAgentY + AGENT_HEIGHT;
-    if (agents.length > 0) {
-      minAgentX = Math.min(...agents.map(agent => agent.position.x));
-      maxAgentX = Math.max(...agents.map(agent => agent.position.x + AGENT_WIDTH));
-      minAgentY = Math.min(...agents.map(agent => agent.position.y));
-      maxAgentY = Math.max(...agents.map(agent => agent.position.y + AGENT_HEIGHT));
+    if (framingAgents.length > 0) {
+      minAgentX = Math.min(...framingAgents.map(agent => agent.position.x));
+      maxAgentX = Math.max(...framingAgents.map(agent => agent.position.x + AGENT_WIDTH));
+      minAgentY = Math.min(...framingAgents.map(agent => agent.position.y));
+      maxAgentY = Math.max(...framingAgents.map(agent => agent.position.y + AGENT_HEIGHT));
     }
 
     const cameraFramePaddingPx = CAMERA_FRAME_PADDING_REFERENCE_PX * fitScale;
@@ -172,7 +177,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       Math.min(frameWidthPx / agentSpanX, frameHeightPx / agentSpanY)
     );
     const minimumUsefulScale = fitScale * CAMERA_MIN_USEFUL_AUTO_ZOOM;
-    const desiredScale = Math.max(minimumUsefulScale, Math.min(preferredScale, pairFitScale));
+    const fittedDesiredScale = Math.max(minimumUsefulScale, Math.min(preferredScale, pairFitScale));
+    const desiredScale = hasCameraSubjects
+      ? fittedDesiredScale
+      : (presentationCameraScaleRef.current ?? preferredScale);
 
     // Smooth only the zoom-IN direction. Zooming out is a safety response and happens immediately,
     // otherwise a fast branch split can spend several frames outside the viewport.
@@ -194,7 +202,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     cameraScale = Math.min(cameraScale, desiredScale);
     presentationCameraScaleRef.current = cameraScale;
 
-    const pairCenterX = (minAgentX + maxAgentX) * 0.5;
+    const pairCenterX = hasCameraSubjects
+      ? (minAgentX + maxAgentX) * 0.5
+      : (presentationCameraXRef.current ?? cameraPosition.x + WORLD_REF_WIDTH * 0.5);
     let cameraCenterX = presentationCameraXRef.current;
     if (cameraCenterX === null || !Number.isFinite(cameraCenterX)) {
       cameraCenterX = pairCenterX;
@@ -203,28 +213,34 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       cameraCenterX += (pairCenterX - cameraCenterX) * followAlpha;
     }
 
-    // Keep the active platform at a useful vertical percentage when the pair is close. When they
-    // separate vertically, the safety clamps below override this preference only as much as needed.
-    const activePlatformY = getActivePlatformY(gameState);
+    // Keep the active platform at a useful vertical percentage when the pair is close. Falling
+    // agents are absent from framingAgents. If every body is falling, hold the previous vertical
+    // camera exactly until somebody is back in the playable band.
     const visibleWorldHeight = cssHeight / cameraScale;
-    const desiredCenterY =
-      activePlatformY + (0.5 - PLATFORM_SCREEN_Y_RATIO) * visibleWorldHeight;
+    const activePlatformY = hasCameraSubjects
+      ? getActivePlatformY(gameState, framingAgents)
+      : WORLD_REF_HEIGHT * PLATFORM_SCREEN_Y_RATIO;
+    const desiredCenterY = hasCameraSubjects
+      ? activePlatformY + (0.5 - PLATFORM_SCREEN_Y_RATIO) * visibleWorldHeight
+      : (presentationCameraYRef.current ?? WORLD_REF_HEIGHT * 0.5);
 
     let cameraCenterY = presentationCameraYRef.current;
     if (cameraCenterY === null || !Number.isFinite(cameraCenterY)) {
       cameraCenterY = desiredCenterY;
-    } else {
+    } else if (hasCameraSubjects) {
       const followAlpha = 1 - Math.exp(-CAMERA_VERTICAL_FOLLOW_RATE * dtSeconds);
       cameraCenterY += (desiredCenterY - cameraCenterY) * followAlpha;
     }
 
-    // First preserve the old active-platform safety band so normal close pursuit keeps the same
-    // visual composition as before.
-    const minimumPlatformCenterY =
-      activePlatformY + (0.5 - PLATFORM_SCREEN_Y_MAX_RATIO) * visibleWorldHeight;
-    const maximumPlatformCenterY =
-      activePlatformY + (0.5 - PLATFORM_SCREEN_Y_MIN_RATIO) * visibleWorldHeight;
-    cameraCenterY = Math.min(maximumPlatformCenterY, Math.max(minimumPlatformCenterY, cameraCenterY));
+    if (hasCameraSubjects) {
+      // Preserve the old active-platform safety band so normal close pursuit keeps the same
+      // visual composition as before.
+      const minimumPlatformCenterY =
+        activePlatformY + (0.5 - PLATFORM_SCREEN_Y_MAX_RATIO) * visibleWorldHeight;
+      const maximumPlatformCenterY =
+        activePlatformY + (0.5 - PLATFORM_SCREEN_Y_MIN_RATIO) * visibleWorldHeight;
+      cameraCenterY = Math.min(maximumPlatformCenterY, Math.max(minimumPlatformCenterY, cameraCenterY));
+    }
 
     // Then hard-clamp BOTH axes to the legal camera-center interval that keeps every agent within
     // the screen-space safety margin. This means camera smoothing can never be the reason a Runner
@@ -236,15 +252,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const minimumSafeCenterY = maxAgentY - safeHalfWorldHeight;
     const maximumSafeCenterY = minAgentY + safeHalfWorldHeight;
 
-    if (minimumSafeCenterX <= maximumSafeCenterX) {
-      cameraCenterX = Math.min(maximumSafeCenterX, Math.max(minimumSafeCenterX, cameraCenterX));
-    } else {
-      cameraCenterX = pairCenterX;
-    }
-    if (minimumSafeCenterY <= maximumSafeCenterY) {
-      cameraCenterY = Math.min(maximumSafeCenterY, Math.max(minimumSafeCenterY, cameraCenterY));
-    } else {
-      cameraCenterY = (minAgentY + maxAgentY) * 0.5;
+    if (hasCameraSubjects) {
+      if (minimumSafeCenterX <= maximumSafeCenterX) {
+        cameraCenterX = Math.min(maximumSafeCenterX, Math.max(minimumSafeCenterX, cameraCenterX));
+      } else {
+        cameraCenterX = pairCenterX;
+      }
+      if (minimumSafeCenterY <= maximumSafeCenterY) {
+        cameraCenterY = Math.min(maximumSafeCenterY, Math.max(minimumSafeCenterY, cameraCenterY));
+      } else {
+        cameraCenterY = (minAgentY + maxAgentY) * 0.5;
+      }
     }
 
     presentationCameraXRef.current = cameraCenterX;

@@ -1,8 +1,8 @@
-Prevent platform overlaps and recover escaped visual chasers
+Space branch routes and ignore falling agents in camera framing
 
-- enforce a hard non-overlap invariant across normal, recursive branch, merge, and moving platforms
-- validate moving platforms against their complete oscillation sweep envelope, shrinking/switching motion when needed
-- make Chaser escape require losing every Runner rather than being triggered by Runner-Runner separation
-- teleport an escaped visual Chaser onto a safe platform behind the trailing Runner without resetting the world
-- inherit the target Runner route and apply a brief tag re-arm delay after visual recovery
-- restore and preserve the full Git history in packaged handoffs
+- divide recursive branches into stable vertical route corridors so sibling paths stay visually distinct
+- add reachable divergence ramps: the first landing commits the route before later platforms spread to the full corridor
+- prevent trunk agents from skipping directly into nested descendants and preserve hard sibling route locks after commitment
+- lengthen branch runways, increase route-platform spacing, and keep branch moving platforms horizontal so paths remain readable
+- exclude clearly falling bodies from both rolling camera tracking and presentation framing, holding the camera if everyone is falling
+- preserve the existing swept no-overlap invariant and moving-platform safety rules

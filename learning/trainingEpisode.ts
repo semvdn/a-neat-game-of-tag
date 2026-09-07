@@ -479,6 +479,7 @@ function stepScriptedMidgameWorld(
   resolveTagSwap(gameState.agents);
   gameState.cameraPosition.x = updateChaseCameraX(
     gameState.agents,
+    gameState.platforms,
     gameState.cameraPosition.x,
     viewportSize.width
   );
@@ -1204,6 +1205,7 @@ export function runTrainingEpisode(
 
     gameState.cameraPosition.x = updateChaseCameraX(
       gameState.agents,
+      gameState.platforms,
       gameState.cameraPosition.x,
       viewportSize.width
     );

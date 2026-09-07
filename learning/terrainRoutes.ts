@@ -23,7 +23,12 @@ export function canAgentUsePlatform(agent: AgentState, platform: PlatformState):
 
   const route = platform.routePath || '';
   if (!route) return !active;
-  if (!active) return true;
+  if (!active) {
+    // At the shared trunk, the next landing must be one of the two first-level fork routes.
+    // This prevents an agent from skipping the branch point and committing directly to a nested
+    // descendant that happens to pass nearby.
+    return !route.includes('/');
+  }
   return route === active || route.startsWith(`${active}/`);
 }
 

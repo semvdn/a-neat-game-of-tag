@@ -2,6 +2,7 @@ import type { ActiveUpgradeState, AgentState, PlatformState, TerrainRuntimeConfi
 import { AgentStatus } from '../types';
 import { getFairRespawn } from './respawn';
 import { applyPlatformRoute, canAgentUsePlatform, canAgentsPhysicallyInteract } from './terrainRoutes';
+import { cameraRelevantAgents } from './cameraFraming';
 import {
   AGENT_ACCELERATION,
   AGENT_HEIGHT,
@@ -516,13 +517,15 @@ export function resolveTagSwap(agents: AgentState[]): TagTransition | null {
  * Presentation/rolling-world camera rule centered on the active chase pair. The camera is
  * observational only: physics and policy inputs never depend on this value.
  */
-export function updateChaseCameraX(agents: AgentState[], currentCameraX: number, viewportWidth: number): number {
+export function updateChaseCameraX(agents: AgentState[], platforms: PlatformState[], currentCameraX: number, viewportWidth: number): number {
   if (agents.length === 0) return currentCameraX;
+  const cameraAgents = cameraRelevantAgents(agents, platforms);
+  if (cameraAgents.length === 0) return currentCameraX;
 
   let chaser: AgentState | null = null;
-  for (let i = 0; i < agents.length; i++) {
-    if (agents[i].status === AgentStatus.It) {
-      chaser = agents[i];
+  for (let i = 0; i < cameraAgents.length; i++) {
+    if (cameraAgents[i].status === AgentStatus.It) {
+      chaser = cameraAgents[i];
       break;
     }
   }
@@ -532,8 +535,8 @@ export function updateChaseCameraX(agents: AgentState[], currentCameraX: number,
     const chaserCenter = chaser.position.x + AGENT_WIDTH / 2;
     let nearestRunner: AgentState | null = null;
     let nearestDistanceSq = Infinity;
-    for (let i = 0; i < agents.length; i++) {
-      const candidate = agents[i];
+    for (let i = 0; i < cameraAgents.length; i++) {
+      const candidate = cameraAgents[i];
       if (candidate.id === chaser.id || candidate.status === AgentStatus.It) continue;
       const dx = candidate.position.x - chaser.position.x;
       const dy = candidate.position.y - chaser.position.y;
@@ -550,8 +553,8 @@ export function updateChaseCameraX(agents: AgentState[], currentCameraX: number,
       centerX = chaserCenter;
     }
   } else {
-    for (let i = 0; i < agents.length; i++) centerX += agents[i].position.x + AGENT_WIDTH / 2;
-    centerX /= agents.length;
+    for (let i = 0; i < cameraAgents.length; i++) centerX += cameraAgents[i].position.x + AGENT_WIDTH / 2;
+    centerX /= cameraAgents.length;
   }
 
   const desiredCameraX = centerX - viewportWidth / 2;
@@ -723,8 +726,12 @@ function maybeMakeMoving(
   const maxSpeed = Math.max(0, terrain.movingPlatformMaxSpeed);
   const minSpeed = Math.min(24, maxSpeed);
   const speed = minSpeed + rng() * Math.max(0, maxSpeed - minSpeed);
-  const preferredAxis: 'x' | 'y' = rng() < 0.6 ? 'x' : 'y';
-  const axisOrder: Array<'x' | 'y'> = preferredAxis === 'x' ? ['x', 'y'] : ['y', 'x'];
+  // Branch routes keep a stable vertical identity so the upper/lower paths remain visually clear.
+  // They may still move horizontally, while trunk platforms retain both motion axes.
+  const preferredAxis: 'x' | 'y' = inBranch ? 'x' : (rng() < 0.6 ? 'x' : 'y');
+  const axisOrder: Array<'x' | 'y'> = inBranch
+    ? ['x']
+    : (preferredAxis === 'x' ? ['x', 'y'] : ['y', 'x']);
   const baseRangeX = 35 + rng() * 85;
   const baseRangeY = 28 + rng() * 62;
   const directions: Array<-1 | 1> = rng() < 0.5 ? [-1, 1] : [1, -1];
@@ -825,22 +832,57 @@ function branchChanceAtX(x: number, branchMinX: number, terrain: TerrainRuntimeC
   return Math.min(BRANCH_STRUCTURE_MAX_CHANCE, configured + 0.08 * t);
 }
 
-function routeLanePair(baseY: number, depth: number, viewportHeight: number, rng: () => number): [number, number] {
-  const minY = 250;
-  const maxY = viewportHeight - 120;
-  const available = Math.max(140, maxY - minY);
-  const separation = Math.min(available - 20, Math.max(135, 190 - (depth - 1) * 12));
-  const half = separation / 2;
-  const centerMin = minY + half;
-  const centerMax = maxY - half;
-  const center = centerMax > centerMin
-    ? Math.min(centerMax, Math.max(centerMin, baseY + (rng() - 0.5) * 50))
-    : (minY + maxY) / 2;
-  return [clampPlatformY(center - half, viewportHeight), clampPlatformY(center + half, viewportHeight)];
+function routeLanePair(
+  baseY: number,
+  depth: number,
+  viewportHeight: number,
+  rng: () => number,
+  parentRoutePath: string | null,
+  stepsToLane: number
+): [number, number] {
+  const minWorldY = 250;
+  const maxWorldY = viewportHeight - 120;
+  let corridorMin = minWorldY;
+  let corridorMax = maxWorldY;
+
+  // Every committed route owns one half of its parent's vertical corridor. Nested branches split
+  // that corridor again, so route geometry stays ordered and visually legible instead of weaving
+  // back through sibling paths. Root branches therefore get the largest separation; deeper forks
+  // remain distinct without requiring an unbounded vertical world.
+  const ancestors = (parentRoutePath || '').split('/').filter(Boolean);
+  for (const token of ancestors) {
+    const midpoint = (corridorMin + corridorMax) * 0.5;
+    if (token.endsWith('U')) corridorMax = midpoint;
+    else if (token.endsWith('L')) corridorMin = midpoint;
+  }
+
+  const span = Math.max(36, corridorMax - corridorMin);
+  const edgeInset = Math.min(26, span * 0.12);
+  const usableMin = corridorMin + edgeInset;
+  const usableMax = corridorMax - edgeInset;
+  const usableSpan = Math.max(24, usableMax - usableMin);
+  const jitter = Math.min(10, usableSpan * 0.06);
+  const upper = usableMin + usableSpan * 0.10 + (rng() - 0.5) * jitter;
+  const lower = usableMin + usableSpan * 0.90 + (rng() - 0.5) * jitter;
+
+  // Keep every divergence physically reachable. The route ramp below advances toward these lanes
+  // over stepsToLane platforms, so limiting total vertical displacement to ~145 px per step keeps
+  // upward choices inside the normal jump envelope even when the incoming trunk sits near the top
+  // or bottom of the world. Within that reachability constraint we preserve as much corridor
+  // separation as possible.
+  const maxVerticalOffset = Math.max(145, Math.max(1, stepsToLane) * 145);
+  const reachableUpper = Math.max(baseY - maxVerticalOffset, Math.min(baseY + maxVerticalOffset, upper));
+  const reachableLower = Math.max(baseY - maxVerticalOffset, Math.min(baseY + maxVerticalOffset, lower));
+  return [
+    clampPlatformY(reachableUpper, viewportHeight),
+    clampPlatformY(reachableLower, viewportHeight),
+  ];
 }
 
 function branchSpan(terrain: TerrainRuntimeConfig, depth: number): number {
-  const localSpan = 280 + Math.max(1, terrain.maxPlatformsPerBranch) * 135;
+  // Give each route enough horizontal runway to read as a path rather than a dense knot.
+  // Longer branches also make the commitment strategically meaningful before the merge.
+  const localSpan = 520 + Math.max(1, terrain.maxPlatformsPerBranch) * 190;
   if (terrain.subBranchingEnabled && depth < terrain.maxBranchDepth) {
     return localSpan + branchSpan(terrain, depth + 1);
   }
@@ -867,20 +909,26 @@ function addRoutePlatforms(
   nextPlatformId: number,
   rng: () => number,
   terrain: TerrainRuntimeConfig,
-  forceFirstMoving = false
+  forceFirstMoving = false,
+  startLaneY?: number
 ): { last: PlatformState; nextPlatformId: number } {
   const safeCount = Math.max(1, count);
   const span = Math.max(180, endX - startX);
-  const preferredWidth = Math.max(125, Math.min(220, span / safeCount - 55));
+  const preferredWidth = Math.max(115, Math.min(185, span / safeCount - 90));
   let last: PlatformState | null = null;
 
   for (let i = 0; i < safeCount; i++) {
     const slotStart = startX + (span * i) / safeCount;
     const slotEnd = startX + (span * (i + 1)) / safeCount;
     const slotWidth = slotEnd - slotStart;
-    const width = Math.max(115, Math.min(preferredWidth + (rng() - 0.5) * 35, slotWidth - 28));
-    const x = slotStart + Math.max(14, (slotWidth - width) * 0.5);
-    const y = clampPlatformY(laneY + (rng() - 0.5) * 34, viewportHeight);
+    const width = Math.max(105, Math.min(preferredWidth + (rng() - 0.5) * 24, slotWidth - 54));
+    const x = slotStart + Math.max(27, (slotWidth - width) * 0.5);
+    const laneJitter = Math.max(4, 12 - (depth - 1) * 2);
+    const routeProgress = (i + 1) / safeCount;
+    const designedY = startLaneY == null
+      ? laneY
+      : startLaneY + (laneY - startLaneY) * routeProgress;
+    const y = clampPlatformY(designedY + (rng() - 0.5) * laneJitter, viewportHeight);
     const stationary = placeBranchPlatformWithoutOverlap({
       id: nextPlatformId++,
       width,
@@ -925,18 +973,32 @@ function buildBranchTree(
   forceMovingExposure = false
 ): BranchBuildResult {
   const groupId = nextPlatformId;
-  const [upperY, lowerY] = routeLanePair(entryPlatform.position.y, depth, viewportHeight, rng);
   const entryRight = entryPlatform.position.x + entryPlatform.width;
   const totalSpan = Math.max(420, forcedMergeRightX !== undefined ? forcedMergeRightX - entryRight : branchSpan(terrain, depth));
   const mergeWidth = 240;
   const mergeRightX = forcedMergeRightX ?? entryRight + totalSpan;
   const mergeLeftX = mergeRightX - mergeWidth;
-  const entryGap = 65;
-  const mergeGap = 75;
-  const routeCount = Math.max(1, 1 + Math.floor(rng() * Math.max(1, terrain.maxPlatformsPerBranch)));
+  const entryGap = depth === 1 ? 105 : 85;
+  const mergeGap = depth === 1 ? 115 : 90;
+  const maxRouteCount = Math.max(1, terrain.maxPlatformsPerBranch);
+  const minRouteCount = maxRouteCount >= 2 ? 2 : 1;
+  const routeCount = minRouteCount + Math.floor(rng() * (maxRouteCount - minRouteCount + 1));
   const hasNested = terrain.subBranchingEnabled && depth < terrain.maxBranchDepth;
-  const preCount = hasNested ? Math.max(1, Math.ceil(routeCount / 2)) : routeCount;
+  // Give a route at least two commitment platforms before a nested fork whenever the user's
+  // per-route limit permits it. The first is a reachable fork landing; the next completes the
+  // divergence into the route's corridor before that route can split again.
+  const preCount = hasNested
+    ? Math.min(routeCount, Math.max(routeCount >= 2 ? 2 : 1, Math.ceil(routeCount * 0.6)))
+    : routeCount;
   const postCount = hasNested ? Math.max(0, routeCount - preCount) : 0;
+  const [upperY, lowerY] = routeLanePair(
+    entryPlatform.position.y,
+    depth,
+    viewportHeight,
+    rng,
+    parentRoutePath,
+    preCount
+  );
   const childSpan = hasNested ? branchSpan(terrain, depth + 1) : 0;
   const availableLocal = Math.max(260, totalSpan - childSpan - mergeWidth);
   const beforeLocal = hasNested ? availableLocal * 0.54 : availableLocal;
@@ -948,9 +1010,9 @@ function buildBranchTree(
 
   const preStart = entryRight + entryGap;
   const preEnd = Math.min(mergeLeftX - mergeGap - 120, entryRight + beforeLocal);
-  const upperPre = addRoutePlatforms(platforms, preCount, preStart, preEnd, upperY, 'upper', upperPath, groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain, forceMovingExposure);
+  const upperPre = addRoutePlatforms(platforms, preCount, preStart, preEnd, upperY, 'upper', upperPath, groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain, forceMovingExposure, entryPlatform.position.y);
   nextPlatformId = upperPre.nextPlatformId;
-  const lowerPre = addRoutePlatforms(platforms, preCount, preStart, preEnd, lowerY, 'lower', lowerPath, groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain, forceMovingExposure);
+  const lowerPre = addRoutePlatforms(platforms, preCount, preStart, preEnd, lowerY, 'lower', lowerPath, groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain, forceMovingExposure, entryPlatform.position.y);
   nextPlatformId = lowerPre.nextPlatformId;
 
   let upperLast = upperPre.last;
