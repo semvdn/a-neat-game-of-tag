@@ -197,7 +197,7 @@ type ArchitectureExperimentUiState = {
 const IDLE_ARCHITECTURE_EXPERIMENT_STATE: ArchitectureExperimentUiState = {
   running: false,
   currentIndex: 0,
-  totalExperiments: 2,
+  totalExperiments: 1,
   experimentId: null,
   label: 'Ready',
   generation: 0,
@@ -602,6 +602,7 @@ export const App: React.FC = () => {
               pursuitExperimentFlags: payload.pursuitExperimentFlags || prev.pursuitExperimentFlags,
               selectionAggregation: payload.selectionAggregation || prev.selectionAggregation,
               historicalOpponentPanel: payload.historicalOpponentPanel || prev.historicalOpponentPanel,
+              eliteSeeding: payload.eliteSeeding || prev.eliteSeeding,
             };
           });
 
@@ -610,7 +611,7 @@ export const App: React.FC = () => {
           setArchitectureExperimentStatus({
             running: true,
             currentIndex: Number(payload?.currentIndex) || 0,
-            totalExperiments: Number(payload?.totalExperiments) || 2,
+            totalExperiments: Number(payload?.totalExperiments) || 1,
             experimentId: payload?.experimentId || null,
             label: payload?.label || 'Running pursuit-design experiment',
             generation: Number(payload?.generation) || 0,
@@ -1071,6 +1072,9 @@ export const App: React.FC = () => {
         // 3. Update Physics & Boundaries through the shared simulation core. The core was
         // extracted from this visual loop, so presentation behavior remains authoritative while
         // headless training now executes the exact same movement/fall rules.
+        const activePursuitDesign = architectureExperimentStatus.running
+          ? architectureExperimentStatus.pursuitDesign
+          : diagnosticsStateRef.current.pursuitDesign;
         const activeUpgrades: ActiveUpgradeState = {
           sprint: sprintUpgradeActive,
           controlledJump: controlledJumpUpgradeActive,
@@ -1090,18 +1094,12 @@ export const App: React.FC = () => {
           sprintRunnerStaminaCostPerSec: upgradeConfig.sprint.runnerAdvanced.staminaCostOverride
             ? upgradeConfig.sprint.runnerAdvanced.staminaCostPerSec
             : SPRINT_ENERGY_COST_PER_SEC,
-          chaserBaseMaxSpeed: architectureExperimentStatus.running
-            ? architectureExperimentStatus.pursuitDesign?.chaserBaseMaxSpeed
-            : undefined,
-          runnerBaseMaxSpeed: architectureExperimentStatus.running
-            ? architectureExperimentStatus.pursuitDesign?.runnerBaseMaxSpeed
-            : undefined,
-          postFallRunnerTagProtectionMs: architectureExperimentStatus.running
-            ? architectureExperimentStatus.pursuitDesign?.postFallRunnerTagProtectionMs
-            : undefined,
+          chaserBaseMaxSpeed: activePursuitDesign?.chaserBaseMaxSpeed,
+          runnerBaseMaxSpeed: activePursuitDesign?.runnerBaseMaxSpeed,
+          postFallRunnerTagProtectionMs: activePursuitDesign?.postFallRunnerTagProtectionMs,
         };
-        if (architectureExperimentStatus.running && architectureExperimentStatus.pursuitDesign) {
-          const pursuit = architectureExperimentStatus.pursuitDesign;
+        if (activePursuitDesign) {
+          const pursuit = activePursuitDesign;
           if (pursuit.chaserSprintMaxSpeed !== undefined) activeUpgrades.sprintChaserMaxSpeed = pursuit.chaserSprintMaxSpeed;
           if (pursuit.runnerSprintMaxSpeed !== undefined) activeUpgrades.sprintRunnerMaxSpeed = pursuit.runnerSprintMaxSpeed;
           if (pursuit.chaserSprintStaminaCostPerSec !== undefined) activeUpgrades.sprintChaserStaminaCostPerSec = pursuit.chaserSprintStaminaCostPerSec;
@@ -1231,7 +1229,7 @@ export const App: React.FC = () => {
           viewportSize,
           platformIdCounter.current,
           Math.random,
-          architectureExperimentStatus.running ? architectureExperimentStatus.pursuitDesign?.branchStructureMinX : undefined
+          activePursuitDesign?.branchStructureMinX
         );
         newState.platforms = platformUpdate.platforms;
         platformIdCounter.current = platformUpdate.nextPlatformId;
@@ -1663,9 +1661,9 @@ export const App: React.FC = () => {
     setArchitectureExperimentStatus({
       running: true,
       currentIndex: 0,
-      totalExperiments: 2,
-      experimentId: 'camera_fixed_pursuit',
-      label: 'Preparing B · Camera-fixed pursuit',
+      totalExperiments: 1,
+      experimentId: 'hybrid_soft_pursuit',
+      label: 'Preparing D · Hybrid soft-pursuit league',
       generation: 0,
       targetGeneration: target,
       completedExperiments: 0,

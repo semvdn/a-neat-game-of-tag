@@ -441,7 +441,13 @@ function clampPlatformY(y: number, viewportHeight: number): number {
 
 function branchChanceAtX(x: number, branchMinX = BRANCH_STRUCTURE_MIN_X): number {
   if (x < branchMinX) return 0;
-  const t = Math.max(0, Math.min(1, (x - branchMinX) / 10000));
+  // Front-load meaningful route choice so agents encounter it during early training, then keep a
+  // gradually increasing background probability farther into the infinite level. The two early
+  // windows intentionally overlap the ~600–800px and ~1200–1500px regions identified by the
+  // pursuit experiments as the right exposure points.
+  if (x <= branchMinX + 250) return Math.max(0.55, BRANCH_STRUCTURE_BASE_CHANCE);
+  if (x >= 1150 && x <= 1550) return Math.max(0.45, BRANCH_STRUCTURE_BASE_CHANCE);
+  const t = Math.max(0, Math.min(1, (x - branchMinX) / 7000));
   return BRANCH_STRUCTURE_BASE_CHANCE + (BRANCH_STRUCTURE_MAX_CHANCE - BRANCH_STRUCTURE_BASE_CHANCE) * t;
 }
 
@@ -454,7 +460,23 @@ function appendForwardSegment(
   branchMinX = BRANCH_STRUCTURE_MIN_X
 ): { rightmost: PlatformState; nextPlatformId: number } {
   const baseRight = rightmostPlatform.position.x + rightmostPlatform.width;
-  if (rng() >= branchChanceAtX(baseRight, branchMinX)) {
+  let latestBranchX = -Infinity;
+  let visibleEarlyBranchCount = 0;
+  for (let i = platforms.length - 1; i >= 0; i--) {
+    const candidate = platforms[i];
+    if (candidate.structureType === 'merge') {
+      latestBranchX = Math.max(latestBranchX, candidate.position.x);
+      if (candidate.position.x < 1700 && candidate.position.x >= branchMinX) visibleEarlyBranchCount++;
+    }
+  }
+  // Every branch group has exactly one merge platform. Guarantee exposure if the RNG misses the
+  // early curriculum windows, and later prevent very long stretches of featureless terrain.
+  const branchGroupsSeenEarly = visibleEarlyBranchCount;
+  const forceFirstEarlyBranch = branchGroupsSeenEarly === 0 && baseRight >= branchMinX + 200 && baseRight <= 1150;
+  const forceSecondEarlyBranch = branchGroupsSeenEarly === 1 && baseRight >= 1450 && baseRight <= 1850;
+  const forceRecurringBranch = baseRight > 1850 && (!Number.isFinite(latestBranchX) || baseRight - latestBranchX >= 1400);
+  const shouldBranch = forceFirstEarlyBranch || forceSecondEarlyBranch || forceRecurringBranch || rng() < branchChanceAtX(baseRight, branchMinX);
+  if (!shouldBranch) {
     const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng);
     platforms.push(p);
     return { rightmost: p, nextPlatformId };

@@ -558,11 +558,12 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <FitnessSummary title="Chaser population" metrics={chaserMetrics} />
               <FitnessSummary title="Evader population" metrics={evaderMetrics} />
             </div>
-            <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
+            <div className="grid md:grid-cols-2 xl:grid-cols-5 gap-3">
               <MetricCard label="Hall of Fame C / E" value={`${diagnostics.hallOfFame?.chaserSize ?? 0} / ${diagnostics.hallOfFame?.evaderSize ?? 0}`} hint={`max ${diagnostics.hallOfFame?.maxSize ?? 0} champions per role`} />
               <MetricCard label="Recent C / E" value={`${diagnostics.hallOfFame?.chaserRecentSize ?? 0} / ${diagnostics.hallOfFame?.evaderRecentSize ?? 0}`} hint="always retained to track current coevolution" />
               <MetricCard label="Diverse history C / E" value={`${diagnostics.hallOfFame?.chaserDiverseSize ?? 0} / ${diagnostics.hallOfFame?.evaderDiverseSize ?? 0}`} hint="behaviorally distinct older champions" />
               <MetricCard label="Archive diversity C / E" value={`${fmt(diagnostics.hallOfFame?.chaserDiversity, 3)} / ${fmt(diagnostics.hallOfFame?.evaderDiversity, 3)}`} hint="mean behavioral descriptor distance" />
+              <MetricCard label="Elite seeds C / R" value={`${diagnostics.eliteSeeding?.chaserInjected ?? 0} / ${diagnostics.eliteSeeding?.runnerInjected ?? 0}`} hint={diagnostics.eliteSeeding ? `generation ${diagnostics.eliteSeeding.generation} · sources C [${diagnostics.eliteSeeding.chaserSourceGenerations.join(', ') || '—'}] / R [${diagnostics.eliteSeeding.runnerSourceGenerations.join(', ') || '—'}]` : 'validated retained/recent lineages injected with zero fitness'} />
             </div>
 
             <div className="grid md:grid-cols-3 gap-3">
@@ -575,7 +576,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <MetricCard label="Retained Chaser" value={retainedChaser ? `g${retainedChaser.generation}` : '—'} hint={retainedChaser ? `generalist ${retainedChaser.score.toFixed(1)} · benchmark ${retainedChaser.benchmark.meanFitness.toFixed(1)} · contemporary clean tags ${(retainedChaser.contemporaryCleanTagsPerEpisode ?? 0).toFixed(2)}/ep` : 'best validated generalist so far'} />
               <MetricCard label="Retained Runner" value={retainedRunner ? `g${retainedRunner.generation}` : '—'} hint={retainedRunner ? `generalist ${retainedRunner.score.toFixed(1)} · ${((retainedRunner.benchmark.paceCompletion ?? 0) * 100).toFixed(0)}% benchmark pace · contemporary ${((retainedRunner.contemporaryPaceCompletion ?? 0) * 100).toFixed(0)}% pace` : 'best validated generalist so far'} />
               <MetricCard label="Showcase pair" value={showcase ? `g${showcase.chaserGeneration} / g${showcase.runnerGeneration}` : '—'} hint={showcase ? `${(showcase.cleanTagsPerEpisode ?? showcase.tagsPerEpisode).toFixed(1)} clean / ${showcase.tagsPerEpisode.toFixed(1)} total tags · ${showcase.closeEncountersPerEpisode.toFixed(1)} close · ${(showcase.runnerPaceCompletion * 100).toFixed(0)}% pace` : 'non-breeding archived pair chosen for readable mutual gameplay'} />
-              <MetricCard label="Runner retained fitness" value={retainedRunner ? retainedRunner.benchmark.meanFitness.toFixed(1) : '—'} hint="frozen benchmark; low-pace camping is penalized in retention score" />
+              <MetricCard label="Chaser soft pursuit" value={retainedChaser?.contemporaryPursuitScore != null ? retainedChaser.contemporaryPursuitScore.toFixed(1) : '—'} hint={retainedChaser ? `tag ${fmt(retainedChaser.contemporaryPursuitCleanTagScore)} · closing ${fmt(retainedChaser.contemporaryPursuitClosingScore)} · threat ${fmt(retainedChaser.contemporaryPursuitThreatScore)} · encounters ${fmt(retainedChaser.contemporaryPursuitEncounterScore)}` : '0–100 multi-distance retention evidence'} />
               <MetricCard label="Retention margin" value="+1.5" hint="challenger must clearly beat incumbent; population breeding uses the separate robust matchup score" />
             </div>
 
@@ -622,7 +623,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                 ]}
                 emptyLabel="Complete at least two generations to compare champions on the permanent benchmark suite."
               />
-              <p className="mt-2 text-xs text-gray-500">Each generation champion is tested against the same frozen run-start reference bank, permanent seeds, and visual/varied/mid-game scenario mix. These matches never alter breeding fitness or Elo. Retained generalists combine frozen-suite quality with cross-play against retained and Hall-of-Fame opponents; pursuit experiments keep the 90% incumbent benchmark floor, while condition C additionally requires direct engagement/survival quality against the current retained opponent. The showcase pair is separate and affects only the visual arena. The suite revision changes when a new run/import is seeded, enabled physics abilities change, or pace/pursuit shaping is retuned.</p>
+              <p className="mt-2 text-xs text-gray-500">Each generation champion is tested against the same frozen run-start reference bank, permanent seeds, and visual/varied/mid-game scenario mix. These matches never alter breeding fitness or Elo. Retained Chasers use 70% frozen benchmark quality plus 30% smooth multi-distance pursuit evidence; there is no hard contemporary pass/fail gate. Runner retention keeps the benchmark-heavy B-style score so pace and platforming remain valuable. Training opponents are sampled independently through the current/recent/strong/diverse league. The showcase pair is separate and affects only the visual arena.</p>
             </div>
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
@@ -759,13 +760,13 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="max-w-3xl">
                   <div className="flex items-center gap-2"><Play className="h-4 w-4 text-cyan-300" /><h3 className="font-semibold text-white">Temporary pursuit-design experiment runner</h3></div>
-                  <p className="mt-1 text-xs leading-relaxed text-gray-500">Tests the corrected world-space chase after removing camera walls and camera-relative policy senses. Both runs use identical Memory Discovery architecture, 5.7/7.9 Chaser pursuit physics, 900ms Runner post-fall protection, pressure starts, early branches and clean-tag showcase scoring. Only C adds the stricter multi-distance contemporary retention gate.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-gray-500">Runs a fresh validation of the integrated hybrid design: camera-decoupled B physics, Memory Discovery, pressure starts, soft multi-distance Chaser retention, the 50/20/15/15 opponent league, earlier recurring branches and light elite seeding. The current run is restored automatically after export.</p>
                 </div>
                 <span className="rounded-full border border-cyan-500/25 bg-black/25 px-2.5 py-1 text-[10px] font-mono text-cyan-200">temporary tool</span>
               </div>
               <div className="mt-3 grid gap-2 md:grid-cols-2 text-[10px]">
-                <div className="rounded border border-amber-500/20 bg-black/20 px-3 py-2"><span className="font-semibold text-amber-200">B · Camera-fixed pursuit</span><div className="mt-1 text-gray-600">Camera is observational only; 23 world-relative inputs; Chaser 5.7 / 7.9 with 28/s drain; Runner 5.0 / 7.5 with 24/s; 900ms post-fall protection.</div></div>
-                <div className="rounded border border-cyan-500/25 bg-black/20 px-3 py-2"><span className="font-semibold text-cyan-200">C · Camera-fixed strict cross-play</span><div className="mt-1 text-gray-600">B + contemporary gate across close, normal, long and midgame starts. Retained Chasers need clean-tag capability plus measurable closing from normal/long pursuit.</div></div>
+                <div className="rounded border border-amber-500/20 bg-black/20 px-3 py-2"><span className="font-semibold text-amber-200">Permanent B physics</span><div className="mt-1 text-gray-600">23 world-relative inputs; Chaser 5.7 / 7.9 at 28/s; Runner 5.0 / 7.5 at 24/s; 900ms post-fall protection; pressure starts and proximity bootstrap.</div></div>
+                <div className="rounded border border-cyan-500/25 bg-black/20 px-3 py-2"><span className="font-semibold text-cyan-200">D · Hybrid soft-pursuit league</span><div className="mt-1 text-gray-600">70/30 benchmark+pursuit retention, 50/20/15/15 current/recent/strong/diverse league, early recurring branches, and up to two zero-fitness elite seed clones per role.</div></div>
               </div>
               <div className="mt-4 grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-end">
                 <label className="block">
@@ -773,14 +774,14 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                   <input type="number" min={50} max={1500} step={50} disabled={architectureExperimentStatus.running} value={experimentTargetGeneration} onChange={e => setExperimentTargetGeneration(Math.max(50, Math.min(1500, Math.round(Number(e.target.value) || 275))))} className="mt-1 w-full rounded border border-gray-700 bg-gray-950 px-3 py-2 text-sm font-mono text-gray-200 disabled:opacity-50" />
                 </label>
                 <div>
-                  <div className="flex justify-between gap-3 text-[10px] text-gray-500"><span className="truncate">{architectureExperimentStatus.running ? architectureExperimentStatus.label : 'Ready to compare B vs C with camera-decoupled physics'}</span><span className="shrink-0">{architectureExperimentStatus.running ? `Gen ${architectureExperimentStatus.generation}/${architectureExperimentStatus.targetGeneration}` : `2 × ${experimentTargetGeneration} generations`}</span></div>
+                  <div className="flex justify-between gap-3 text-[10px] text-gray-500"><span className="truncate">{architectureExperimentStatus.running ? architectureExperimentStatus.label : 'Ready to validate the integrated hybrid pursuit design'}</span><span className="shrink-0">{architectureExperimentStatus.running ? `Gen ${architectureExperimentStatus.generation}/${architectureExperimentStatus.targetGeneration}` : `${experimentTargetGeneration} generations`}</span></div>
                   <div className="mt-2 h-2 overflow-hidden rounded bg-gray-800"><div className="h-full bg-cyan-400 transition-all" style={{ width: `${architectureExperimentStatus.running ? Math.max(0, Math.min(100, ((architectureExperimentStatus.completedExperiments + architectureExperimentStatus.generation / Math.max(1, architectureExperimentStatus.targetGeneration)) / Math.max(1, architectureExperimentStatus.totalExperiments)) * 100)) : 0}%` }} /></div>
                   <div className="mt-1 text-[10px] text-gray-600">{architectureExperimentStatus.running ? `Experiment ${architectureExperimentStatus.currentIndex + 1} of ${architectureExperimentStatus.totalExperiments}` : 'The combined pursuit-design JSON downloads automatically when all runs finish.'}</div>
                 </div>
                 {!architectureExperimentStatus.running ? <button onClick={() => onRunArchitectureExperiments(experimentTargetGeneration)} className="rounded bg-cyan-400 px-4 py-2.5 text-xs font-bold text-black flex items-center justify-center gap-1.5"><Play className="h-3.5 w-3.5" />Run experiments</button> : <button onClick={onCancelArchitectureExperiments} className="rounded border border-red-500/40 px-4 py-2.5 text-xs font-semibold text-red-300">Cancel & restore</button>}
               </div>
               {architectureExperimentStatus.message && <div className="mt-3 rounded border border-cyan-500/20 bg-black/20 px-3 py-2 text-[10px] text-cyan-100">{architectureExperimentStatus.message}</div>}
-              <p className="mt-3 text-[10px] leading-relaxed text-gray-600">The default is 275 generations per condition (550 total). Both conditions use identical camera-decoupled physics and pursuit settings; only C adds the multi-distance strict contemporary gate. Cancelling discards temporary populations and restores the snapshotted run.</p>
+              <p className="mt-3 text-[10px] leading-relaxed text-gray-600">The default is 275 generations for one fresh validation run. Cancelling discards the temporary population and restores the snapshotted run.</p>
             </div>
 
             <ArchitectureRoleEditor role="chaser" config={architectureDraft.chaser} onChange={next => setArchitectureDraft(prev => ({ ...prev, chaser: next, runner: prev.linkedRoles ? { ...next, hiddenLayers: [...next.hiddenLayers] } : prev.runner }))} />

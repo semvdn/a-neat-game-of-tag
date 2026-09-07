@@ -74,7 +74,7 @@ export const TIME_TO_TAG_HISTORY_LENGTH = 10; // Average over the last N tag tim
 // NEAT (NeuroEvolution of Augmenting Topologies)
 export const NEAT_POPULATION_SIZE = 48;
 export const NEAT_OPPONENTS_PER_GENOME = 3;
-export const NEAT_HOF_OPPONENTS_PER_GENOME = 3; // retained elite + strongest archive + diverse archive panel once available
+export const NEAT_HOF_OPPONENTS_PER_GENOME = 3; // historical-league matches; with 3 current matches this yields a 50/20/15/15 current/recent/strong/diverse mix
 export const NEAT_HOF_MAX_SIZE = 12; // per role: recent champions + behaviorally diverse historical champions
 export const NEAT_HOF_RECENT_SLOTS = 4;
 export const NEAT_HOF_SIMILARITY_THRESHOLD = 0.16; // descriptors closer than this are treated as the same behavioral niche
@@ -120,9 +120,13 @@ export const TAG_AFTER_RUNNER_FALL_WINDOW_MS = 2000;
 // Branch-and-reconnect structures become more frequent farther from the origin. Both routes are
 // intentionally reachable and reconnect quickly so choosing a branch creates pursuit/interception
 // opportunities instead of permanently separating the players.
-export const BRANCH_STRUCTURE_MIN_X = 1800;
-export const BRANCH_STRUCTURE_BASE_CHANCE = 0.08;
-export const BRANCH_STRUCTURE_MAX_CHANCE = 0.28;
+// Route choices now appear during the part of an episode the population actually reaches while
+// still becoming more common farther into the level. The generator also has early-window and
+// maximum-spacing safeguards in simulationCore.ts, so these are the background probabilities rather
+// than the only mechanism that can produce a branch.
+export const BRANCH_STRUCTURE_MIN_X = 650;
+export const BRANCH_STRUCTURE_BASE_CHANCE = 0.18;
+export const BRANCH_STRUCTURE_MAX_CHANCE = 0.36;
 export const NEAT_COMPATIBILITY_THRESHOLD = 0.8;
 export const NEAT_TARGET_SPECIES = 8;
 export const NEAT_CROSSOVER_RATE = 0.75;

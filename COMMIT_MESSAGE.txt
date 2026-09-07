@@ -1,1 +1,1 @@
-Decouple camera physics and refine pursuit experiment
+Integrate hybrid pursuit league and soft retention

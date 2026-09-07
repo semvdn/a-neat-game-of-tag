@@ -250,8 +250,11 @@ export const NETWORK_ARCHITECTURE_SUITE_PRESETS: Record<NetworkArchitectureSuite
 
 export const DEFAULT_NETWORK_ARCHITECTURE_SUITE: NetworkArchitectureSuiteConfig = {
   linkedRoles: true,
-  chaser: { ...NETWORK_ARCHITECTURE_PRESETS.deep, hiddenLayers: [16, 12] },
-  runner: { ...NETWORK_ARCHITECTURE_PRESETS.deep, hiddenLayers: [16, 12] },
+  // The pursuit experiments consistently favored keeping the 16→12 capacity while allowing
+  // recurrence to emerge only when evolution finds it useful. Start new runs from that discovery
+  // preset rather than forcing memory or permanently excluding it.
+  chaser: { ...NETWORK_ARCHITECTURE_PRESETS.memory_evolve, hiddenLayers: [16, 12] },
+  runner: { ...NETWORK_ARCHITECTURE_PRESETS.memory_evolve, hiddenLayers: [16, 12] },
 };
 
 export function sanitizeNetworkArchitectureConfig(value?: Partial<NetworkArchitectureConfig>): NetworkArchitectureConfig {
@@ -1425,7 +1428,7 @@ export class NeatPopulation {
     return activeSpecies;
   }
 
-  public evolve(): { metrics: NeatGenerationMetrics; champion: NeatGenomeData } {
+  public evolve(eliteSeeds: NeatGenomeData[] = []): { metrics: NeatGenerationMetrics; champion: NeatGenomeData; injectedEliteSeeds: number } {
     if (this.genomes.some(g => !Number.isFinite(g.fitness))) throw new Error(`Cannot evolve ${this.role}: every genome needs a finite fitness`);
 
     this.extinctSpeciesSinceLastEvolution = 0;
@@ -1564,8 +1567,30 @@ export class NeatPopulation {
     }
     if (next.length > this.config.populationSize) next.length = this.config.populationSize;
 
+    // Light historical seeding: callers may carry a very small number of already validated
+    // policies across the generation boundary. These clones receive no fitness and are evaluated
+    // normally with every other genome next generation. Replacing the tail of the newly allocated
+    // offspring keeps population size and species fitness allocation unchanged while preventing a
+    // useful pursuit/evasion lineage from disappearing solely through stochastic reproduction.
+    let injectedEliteSeeds = 0;
+    const seenSeedIds = new Set<string>();
+    for (const seed of eliteSeeds) {
+      if (injectedEliteSeeds >= 2 || next.length === 0) break;
+      if (!seed || seed.role !== this.role || seenSeedIds.has(seed.id)) continue;
+      seenSeedIds.add(seed.id);
+      const targetIndex = next.length - 1 - injectedEliteSeeds;
+      if (targetIndex < 0) break;
+      const clone = cloneGenome(seed, `${this.role}_g${nextGeneration}_elite_${injectedEliteSeeds}`);
+      clone.generation = nextGeneration;
+      clone.fitness = 0;
+      // Species assignment is deliberately recalculated from compatibility next generation.
+      delete clone.speciesId;
+      next[targetIndex] = clone;
+      injectedEliteSeeds++;
+    }
+
     this.genomes = next;
     this.generation = nextGeneration;
-    return { metrics, champion };
+    return { metrics, champion, injectedEliteSeeds };
   }
 }

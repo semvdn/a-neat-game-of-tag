@@ -297,31 +297,36 @@ This keeps the opponent league from filling with many generations of effectively
 
 
 
-## Temporary camera-decoupled pursuit experiment runner
+## Hybrid camera-decoupled pursuit training
 
-The Architecture diagnostics tab includes a temporary **Run experiments** tool that holds neural architecture and pursuit physics fixed, then compares only two conditions after removing the camera from gameplay physics.
+Normal training now uses the validated **B camera-decoupled pursuit baseline** permanently: Memory Discovery networks, Chaser base/sprint `5.7 / 7.9` with `28/s` sprint drain, Runner `5.0 / 7.5` with `24/s`, 900 ms post-fall Runner protection, pressure starts, non-repeatable Chaser proximity progress, and the capped Runner pressure-escape signal. The presentation camera remains observational only and never changes world physics.
 
-1. **B · Camera-fixed pursuit** — Memory Discovery; Chaser base/sprint `5.7 / 7.9` with `28/s` sprint drain; Runner `5.0 / 7.5` with `24/s`; 900 ms post-fall protection; pressure starts; non-repeatable proximity bootstrap; Runner escape cap; branches from about `x = 1200`; elite self-play; robust 70/30 breeding selection; clean-tag showcase scoring.
-2. **C · Camera-fixed strict cross-play** — identical to B, but retained challengers are also evaluated against the current retained opponent across **close (160–200 px), normal (275–325 px), long (375–425 px), and midgame** starts. A retained Chaser must show some clean-tag capability and meaningful closing from the normal/long starts.
+Population opponents use a league mixture without forcing the retained display champion into every historical panel. Each genome gets three common current-generation matches and three historical-league matches. The historical slots are scheduled so the long-run total mix is approximately **50% current, 20% strong recent, 15% strongest historical, and 15% behaviorally diverse historical**. This preserves current co-evolution pressure while repeatedly revisiting older skills.
+
+### Soft multi-distance Chaser retention
+
+The strict pass/fail contemporary gate from the earlier C experiment is no longer the normal retention rule. Chaser generalist retention combines **70% frozen benchmark score + 30% smooth pursuit score**. The pursuit score is measured across close, normal, long and midgame starts and grades four components rather than demanding a binary pass:
+
+- 30% clean-tag capability;
+- 35% closing distance in normal/long starts;
+- 20% sustained time within 200 px;
+- 15% close encounters.
+
+The component targets saturate progressively, so partial pursuit improvements remain selectable while clean tags still matter. Runner retention remains benchmark-heavy rather than inheriting the Chaser-specific pursuit rule.
+
+### Earlier recurring branches and light elite seeding
+
+Branching terrain begins around `x = 650`, with guaranteed exposure windows around the first `x ≈ 850–1150` opportunity and a second around `x ≈ 1450–1850`. Farther right, a spacing guard prevents very long stretches without another branch. This changes terrain exposure rather than granting a direct branch-choice reward.
+
+At evolution boundaries, up to two **distinct-generation retained/recent elites per role** may replace tail offspring. Their fitness is reset to zero, they re-enter normal speciation and evaluation, and they receive no artificial score. This provides a small genetic memory without freezing the population.
+
+The Architecture diagnostics **Run experiment** tool now performs one fresh **D · Hybrid soft-pursuit league** validation run using exactly this integrated setup. The original run is restored automatically after export or **Cancel & restore**. The default target remains **275 generations**, configurable from 50–1500, and the report includes soft-pursuit components plus elite-seeding provenance.
 
 ### Camera is observational only
 
-The visual/presentation camera no longer changes world physics. Agents are never clamped to the left or right viewport edge, and fair respawn is performed entirely in world coordinates. Rolling platform retention expands to include the leftmost and rightmost active agents, so a lagging Chaser keeps traversable terrain even when temporarily off-screen. The presentation camera follows the active Chaser + nearest Runner pair with smoothing.
+Agents are never clamped to the left or right viewport edge, and fair respawn is performed entirely in world coordinates. Rolling platform retention expands to include the leftmost and rightmost active agents, so a lagging Chaser keeps traversable terrain even when temporarily off-screen. The presentation camera follows the active Chaser + nearest Runner pair with smoothing.
 
-The two camera-boundary inputs were removed from the policy state, reducing the state vector from **25 to 23 inputs**. Checkpoints now carry `stateSchema: world-relative-senses-v3`; older 25-input checkpoints are rejected rather than silently remapped.
-
-### Strict multi-distance retained-champion gate
-
-Condition C uses fixed contemporary starts at four chase ranges. Chaser retention requires both:
-
-- at least one clean tag across the four contemporary tests on average (`>= 0.25 clean tags/episode`); and
-- meaningful closing in the normal/long starts: at least 80 px average best-distance improvement, or sustained time within 200 px, or repeated close encounters.
-
-Runner retention still requires at least 55% pace completion and no more than two combined tag/fall failures per contemporary episode. The report records normal/long closing diagnostics so pressure-start overfitting is visible directly.
-
-Both conditions share the same frozen benchmark bank and start from fresh populations. The original run is restored automatically after export or **Cancel & restore**. The default is **275 generations per condition** (550 total), configurable from 50–1500. Trend history is sampled every five generations while final metrics and deterministic probes remain full detail.
-
-The corrected policy representation remains **signed horizontal drive, jump, sprint**.
+The two camera-boundary inputs remain removed from the policy state, keeping the state vector at **23 inputs**. Checkpoints carry `stateSchema: world-relative-senses-v3`; older 25-input checkpoints are rejected rather than silently remapped.
 
 ## Analysis recording and deterministic behavior probes
 

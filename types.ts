@@ -289,6 +289,12 @@ export interface GeneralistChampionTelemetry {
   contemporaryNormalLongClosingPx?: number;
   contemporaryNormalLongTimeWithin200Pct?: number;
   contemporaryNormalLongCloseEncountersPerEpisode?: number;
+  /** Soft 0..100 pursuit validation used by the hybrid Chaser retention rule. */
+  contemporaryPursuitScore?: number;
+  contemporaryPursuitCleanTagScore?: number;
+  contemporaryPursuitClosingScore?: number;
+  contemporaryPursuitThreatScore?: number;
+  contemporaryPursuitEncounterScore?: number;
 }
 
 export interface CrossGenerationBenchmarkTelemetry {
@@ -311,6 +317,15 @@ export interface HallOfFameTelemetry {
   evaderDiverseSize?: number;
   chaserDiversity?: number;
   evaderDiversity?: number;
+}
+
+export interface EliteSeedingTelemetry {
+  /** Generation that received the externally retained/recent seed genomes. */
+  generation: number;
+  chaserSourceGenerations: number[];
+  runnerSourceGenerations: number[];
+  chaserInjected: number;
+  runnerInjected: number;
 }
 
 export interface ShowcasePairTelemetry {
@@ -369,9 +384,10 @@ export interface DiagnosticsState {
   trainingFitnessConfig?: TrainingFitnessConfig;
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   pursuitDesign?: PursuitDesignConfig | null;
-  pursuitExperimentFlags?: { pressureStarts: boolean; crossPlayGate: boolean; strictContemporaryGate?: boolean; cleanTagShowcase?: boolean };
+  pursuitExperimentFlags?: { pressureStarts: boolean; crossPlayGate: boolean; strictContemporaryGate?: boolean; softMultiDistancePursuit?: boolean; cleanTagShowcase?: boolean };
   selectionAggregation?: string;
   historicalOpponentPanel?: string;
+  eliteSeeding?: EliteSeedingTelemetry;
   showcasePair?: ShowcasePairTelemetry | null;
 }
 
@@ -395,9 +411,10 @@ export interface TrainingGenerationAnalysisRecord {
   fitnessConfig: TrainingFitnessConfig;
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   pursuitDesign?: PursuitDesignConfig | null;
-  pursuitExperimentFlags?: { pressureStarts: boolean; crossPlayGate: boolean; strictContemporaryGate?: boolean; cleanTagShowcase?: boolean };
+  pursuitExperimentFlags?: { pressureStarts: boolean; crossPlayGate: boolean; strictContemporaryGate?: boolean; softMultiDistancePursuit?: boolean; cleanTagShowcase?: boolean };
   selectionAggregation?: string;
   historicalOpponentPanel?: string;
+  eliteSeeding?: EliteSeedingTelemetry;
   showcasePair?: ShowcasePairTelemetry | null;
 }
 
