@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { GameState, PlatformState } from '../types';
 import { drawPlatform, drawAgent, drawAgentTrail, drawTagEffect, drawAgentSenses } from './drawing';
-import { WORLD_REF_WIDTH, WORLD_REF_HEIGHT } from '../constants';
+import { AGENT_HEIGHT, AGENT_WIDTH, WORLD_REF_WIDTH, WORLD_REF_HEIGHT } from '../constants';
 
 interface GameCanvasProps {
   gameState: GameState;
@@ -18,6 +18,13 @@ const PLATFORM_SCREEN_Y_RATIO = 0.72;
 // Vertical presentation camera easing. This is real-time based (not simulation-time based),
 // so changing champion view speed does not make the camera snap or become sluggish.
 const CAMERA_VERTICAL_FOLLOW_RATE = 5.5;
+const CAMERA_HORIZONTAL_FOLLOW_RATE = 6.0;
+// Zooming out must be immediate enough to preserve visibility when agents commit to different
+// branches. Zooming back in is deliberately slower so the presentation does not pulse.
+const CAMERA_ZOOM_IN_FOLLOW_RATE = 2.4;
+// Screen-space safe margin around the pair. This remains visually consistent across browser sizes
+// and all automatic zoom levels.
+const CAMERA_FRAME_PADDING_PX = 72;
 // While easing, keep the active platform inside this vertical screen band. The target sits at
 // 72%, leaving room above for jumps while guaranteeing that downward height changes cannot
 // disappear below the viewport at high zoom.
@@ -84,7 +91,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   cameraZoom,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const presentationCameraXRef = useRef<number | null>(null);
   const presentationCameraYRef = useRef<number | null>(null);
+  const presentationCameraScaleRef = useRef<number | null>(null);
   const lastPresentationFrameTimeRef = useRef<number | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 });
   const { agents, platforms, cameraPosition, tagEffects } = gameState;
@@ -139,46 +148,107 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       Math.min(cssWidth / WORLD_REF_WIDTH, cssHeight / WORLD_REF_HEIGHT)
     );
     const zoom = Math.max(0.5, Math.min(2, cameraZoom));
-    const cameraScale = fitScale * zoom;
+    const preferredScale = fitScale * zoom;
 
-    // Horizontal presentation tracking follows the observational chase camera. It never
-    // constrains world-space motion or changes policy inputs. Vertical tracking is independent.
-    const cameraCenterX = cameraPosition.x + WORLD_REF_WIDTH / 2;
+    // Pair framing is presentation-only. The user's zoom remains the preferred/MAXIMUM visual
+    // zoom, but recursive exclusive routes are allowed to pull the agents much farther apart than
+    // one reference viewport. In that case we automatically zoom out just enough to keep every
+    // agent body inside a fixed screen-space safety margin.
+    let minAgentX = cameraPosition.x + WORLD_REF_WIDTH * 0.5 - AGENT_WIDTH * 0.5;
+    let maxAgentX = minAgentX + AGENT_WIDTH;
+    let minAgentY = WORLD_REF_HEIGHT * 0.5 - AGENT_HEIGHT * 0.5;
+    let maxAgentY = minAgentY + AGENT_HEIGHT;
+    if (agents.length > 0) {
+      minAgentX = Math.min(...agents.map(agent => agent.position.x));
+      maxAgentX = Math.max(...agents.map(agent => agent.position.x + AGENT_WIDTH));
+      minAgentY = Math.min(...agents.map(agent => agent.position.y));
+      maxAgentY = Math.max(...agents.map(agent => agent.position.y + AGENT_HEIGHT));
+    }
 
-    // Keep the active platform at a fixed vertical percentage of the screen at every zoom.
-    // Because screen Y = (worldY - centerY) * scale + H/2, solving for centerY gives this.
+    const frameWidthPx = Math.max(40, cssWidth - CAMERA_FRAME_PADDING_PX * 2);
+    const frameHeightPx = Math.max(40, cssHeight - CAMERA_FRAME_PADDING_PX * 2);
+    const agentSpanX = Math.max(AGENT_WIDTH, maxAgentX - minAgentX);
+    const agentSpanY = Math.max(AGENT_HEIGHT, maxAgentY - minAgentY);
+    const pairFitScale = Math.max(
+      0.0001,
+      Math.min(frameWidthPx / agentSpanX, frameHeightPx / agentSpanY)
+    );
+    const desiredScale = Math.min(preferredScale, pairFitScale);
+
+    // Smooth only the zoom-IN direction. Zooming out is a safety response and happens immediately,
+    // otherwise a fast branch split can spend several frames outside the viewport.
+    const now = performance.now();
+    const previousFrameTime = lastPresentationFrameTimeRef.current;
+    lastPresentationFrameTimeRef.current = now;
+    const dtSeconds = previousFrameTime === null
+      ? 1 / 60
+      : Math.min(0.05, Math.max(0, (now - previousFrameTime) / 1000));
+
+    let cameraScale = presentationCameraScaleRef.current;
+    if (cameraScale === null || !Number.isFinite(cameraScale) || desiredScale < cameraScale) {
+      cameraScale = desiredScale;
+    } else {
+      const zoomAlpha = 1 - Math.exp(-CAMERA_ZOOM_IN_FOLLOW_RATE * dtSeconds);
+      cameraScale += (desiredScale - cameraScale) * zoomAlpha;
+    }
+    // Never allow easing or floating-point drift to exceed the scale that currently fits the pair.
+    cameraScale = Math.min(cameraScale, desiredScale);
+    presentationCameraScaleRef.current = cameraScale;
+
+    const pairCenterX = (minAgentX + maxAgentX) * 0.5;
+    let cameraCenterX = presentationCameraXRef.current;
+    if (cameraCenterX === null || !Number.isFinite(cameraCenterX)) {
+      cameraCenterX = pairCenterX;
+    } else {
+      const followAlpha = 1 - Math.exp(-CAMERA_HORIZONTAL_FOLLOW_RATE * dtSeconds);
+      cameraCenterX += (pairCenterX - cameraCenterX) * followAlpha;
+    }
+
+    // Keep the active platform at a useful vertical percentage when the pair is close. When they
+    // separate vertically, the safety clamps below override this preference only as much as needed.
     const activePlatformY = getActivePlatformY(gameState);
     const visibleWorldHeight = cssHeight / cameraScale;
     const desiredCenterY =
       activePlatformY + (0.5 - PLATFORM_SCREEN_Y_RATIO) * visibleWorldHeight;
 
-    // Smooth vertical presentation tracking in wall-clock time. Using an exponential
-    // response rather than a fixed per-frame lerp keeps the feel consistent across refresh rates.
-    const now = performance.now();
-    const previousFrameTime = lastPresentationFrameTimeRef.current;
-    lastPresentationFrameTimeRef.current = now;
-
     let cameraCenterY = presentationCameraYRef.current;
     if (cameraCenterY === null || !Number.isFinite(cameraCenterY)) {
       cameraCenterY = desiredCenterY;
     } else {
-      // Cap a single update after tab switches/resizes so the camera still eases instead of
-      // teleporting to the target after a long browser pause.
-      const dtSeconds = previousFrameTime === null
-        ? 1 / 60
-        : Math.min(0.05, Math.max(0, (now - previousFrameTime) / 1000));
       const followAlpha = 1 - Math.exp(-CAMERA_VERTICAL_FOLLOW_RATE * dtSeconds);
       cameraCenterY += (desiredCenterY - cameraCenterY) * followAlpha;
     }
 
-    // Safety band: preserve smooth motion, but never allow easing lag to push the active
-    // platform out of the useful vertical view. Solving the world->screen transform for the
-    // chosen screen ratios gives the legal center-Y interval below.
-    const minimumSafeCenterY =
+    // First preserve the old active-platform safety band so normal close pursuit keeps the same
+    // visual composition as before.
+    const minimumPlatformCenterY =
       activePlatformY + (0.5 - PLATFORM_SCREEN_Y_MAX_RATIO) * visibleWorldHeight;
-    const maximumSafeCenterY =
+    const maximumPlatformCenterY =
       activePlatformY + (0.5 - PLATFORM_SCREEN_Y_MIN_RATIO) * visibleWorldHeight;
-    cameraCenterY = Math.min(maximumSafeCenterY, Math.max(minimumSafeCenterY, cameraCenterY));
+    cameraCenterY = Math.min(maximumPlatformCenterY, Math.max(minimumPlatformCenterY, cameraCenterY));
+
+    // Then hard-clamp BOTH axes to the legal camera-center interval that keeps every agent within
+    // the screen-space safety margin. This means camera smoothing can never be the reason a Runner
+    // or Chaser disappears off-screen, even during rapid recursive branch divergence.
+    const safeHalfWorldWidth = Math.max(0, cssWidth * 0.5 - CAMERA_FRAME_PADDING_PX) / cameraScale;
+    const safeHalfWorldHeight = Math.max(0, cssHeight * 0.5 - CAMERA_FRAME_PADDING_PX) / cameraScale;
+    const minimumSafeCenterX = maxAgentX - safeHalfWorldWidth;
+    const maximumSafeCenterX = minAgentX + safeHalfWorldWidth;
+    const minimumSafeCenterY = maxAgentY - safeHalfWorldHeight;
+    const maximumSafeCenterY = minAgentY + safeHalfWorldHeight;
+
+    if (minimumSafeCenterX <= maximumSafeCenterX) {
+      cameraCenterX = Math.min(maximumSafeCenterX, Math.max(minimumSafeCenterX, cameraCenterX));
+    } else {
+      cameraCenterX = pairCenterX;
+    }
+    if (minimumSafeCenterY <= maximumSafeCenterY) {
+      cameraCenterY = Math.min(maximumSafeCenterY, Math.max(minimumSafeCenterY, cameraCenterY));
+    } else {
+      cameraCenterY = (minAgentY + maxAgentY) * 0.5;
+    }
+
+    presentationCameraXRef.current = cameraCenterX;
     presentationCameraYRef.current = cameraCenterY;
 
     ctx.save();

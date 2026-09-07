@@ -1781,12 +1781,12 @@ export const App: React.FC = () => {
                 <button key={speed} onClick={() => setVisualSpeed(speed)} className={`px-2 py-1 text-[11px] font-mono font-semibold rounded ${visualSpeed === speed ? 'bg-cyan-500 text-black' : 'text-gray-400 hover:text-cyan-300 hover:bg-gray-900'}`}>{speed}x</button>
               ))}
             </div>
-            <div className="flex items-center bg-gray-950 border border-gray-800 rounded-lg p-1" title="Visual camera zoom only; does not change physics or agent senses">
+            <div className="flex items-center bg-gray-950 border border-gray-800 rounded-lg p-1" title="Preferred visual zoom; the camera automatically zooms out when needed to keep both agents visible. Does not change physics or agent senses.">
               <button
                 onClick={() => changeCameraZoom(-0.25)}
                 disabled={cameraZoom <= 0.5}
                 className="p-1.5 rounded text-cyan-200 hover:bg-gray-900 disabled:text-gray-700 disabled:hover:bg-transparent"
-                title="Zoom camera out"
+                title="Lower preferred camera zoom (auto-framing may zoom out farther when agents separate)"
                 aria-label="Zoom camera out"
               >
                 <Minus className="w-3.5 h-3.5" />
@@ -1802,7 +1802,7 @@ export const App: React.FC = () => {
                 onClick={() => changeCameraZoom(0.25)}
                 disabled={cameraZoom >= 2}
                 className="p-1.5 rounded text-cyan-200 hover:bg-gray-900 disabled:text-gray-700 disabled:hover:bg-transparent"
-                title="Zoom camera in"
+                title="Raise preferred camera zoom (auto-framing still keeps both agents visible)"
                 aria-label="Zoom camera in"
               >
                 <Plus className="w-3.5 h-3.5" />

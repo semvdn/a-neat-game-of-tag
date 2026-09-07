@@ -333,7 +333,7 @@ The Architecture diagnostics **Run experiment** tool now performs one fresh **D 
 
 ### Camera is observational only
 
-Agents are never clamped to the left or right viewport edge, and fair respawn is performed entirely in world coordinates. Rolling platform retention expands to include the leftmost and rightmost active agents, so a lagging Chaser keeps traversable terrain even when temporarily off-screen. The presentation camera follows the active Chaser + nearest Runner pair with smoothing.
+Agents are never clamped to the left or right viewport edge, and fair respawn is performed entirely in world coordinates. Rolling platform retention expands to include the leftmost and rightmost active agents, so a lagging Chaser keeps traversable terrain even when temporarily off-screen. The presentation camera dynamically frames the active Chaser + Runner pair. The user's zoom setting is treated as the preferred maximum zoom; recursive branch separation can automatically zoom the view farther out, and horizontal/vertical safety clamps keep both agents inside a padded screen frame even while camera motion is smoothed.
 
 The two camera-boundary inputs remain removed from the policy state, keeping the state vector at **23 inputs**. Checkpoints carry `stateSchema: world-relative-senses-v3`; older 25-input checkpoints are rejected rather than silently remapped.
 

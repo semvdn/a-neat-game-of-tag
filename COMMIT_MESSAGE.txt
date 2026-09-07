@@ -1,8 +1,8 @@
-Add recursive exclusive terrain routes and moving platforms
+Keep both agents visible with dynamic pair camera framing
 
-- replace shallow branch detours with mutually exclusive recursive route trees
-- add deterministic horizontal/vertical moving platforms with grounded-agent carry
-- add training episode percentages and continuous-view spawn controls
-- expose branch depth, route length, motion speed, and branch-motion settings
-- keep sensing, respawn, diagnostics, checkpoints, and worker evaluation terrain-aware
-- isolate tag contact and pursuit scoring across divergent sibling routes
+- treat manual camera zoom as the preferred maximum presentation zoom
+- automatically zoom out when recursive branches separate the Runner and Chaser
+- frame the full agent-body bounds with a fixed screen-space safety margin
+- hard-clamp horizontal and vertical camera easing so smoothing cannot push either agent off-screen
+- zoom out immediately for safety and ease back in gradually to avoid camera pumping
+- keep presentation framing fully decoupled from physics and policy sensing
