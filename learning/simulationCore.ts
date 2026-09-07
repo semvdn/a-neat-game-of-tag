@@ -352,22 +352,41 @@ export function stepAgentPhysicsInPlace(
   // Horizontal camera bounds are presentation-only. World-space motion is never clamped to the viewport.
   let grounded = false;
   let landedPlatformId = agent.lastPlatformId;
+  const prevBottom = agent.position.y + AGENT_HEIGHT;
+  const newBottom = positionY + AGENT_HEIGHT;
+  let landing: PlatformState | undefined;
+  let landingTime = Infinity;
   for (let i = 0; i < platforms.length; i++) {
     const platform = platforms[i];
     if (!canAgentUsePlatform(agent, platform)) continue;
-    const prevBottom = agent.position.y + AGENT_HEIGHT;
-    const newBottom = positionY + AGENT_HEIGHT;
+    if (velocityY < 0 || prevBottom > platform.position.y + 8 || newBottom < platform.position.y) continue;
+    // Test horizontal overlap when the feet cross the top, not only at the end of the frame.
+    // Lower targets produce faster descents; the body can cross a corner and leave its horizontal
+    // span within one physics step. Keep the existing small contact tolerance for resting bodies.
+    const contactTime = velocityY > 0 ? Math.max(0, (platform.position.y - prevBottom) / velocityY) : 0;
+    const contactX = agent.position.x + velocityX * contactTime;
     const aligned =
-      positionX + AGENT_WIDTH > platform.position.x &&
-      positionX < platform.position.x + platform.width;
-    if (aligned && prevBottom <= platform.position.y + 8 && newBottom >= platform.position.y && velocityY >= 0) {
-      positionY = platform.position.y - AGENT_HEIGHT;
-      velocityY = 0;
-      grounded = true;
-      landedPlatformId = platform.id;
-      applyPlatformRoute(agent, platform);
-      break;
+      contactX + AGENT_WIDTH > platform.position.x &&
+      contactX < platform.position.x + platform.width;
+    // A body already at the top must be able to walk off. Rewinding a t=0 edge exit to its
+    // starting point every frame would turn the edge into an invisible horizontal wall.
+    if (contactTime === 0 && (positionX + AGENT_WIDTH <= platform.position.x || positionX >= platform.position.x + platform.width)) continue;
+    if (aligned && (contactTime < landingTime || (contactTime === landingTime && platform.id < (landing?.id ?? Infinity)))) {
+      landing = platform;
+      landingTime = contactTime;
     }
+  }
+  if (landing) {
+    // If this was a grazing edge contact, finish at the impact point rather than declaring a
+    // grounded body beyond the ledge. Normal landings retain their full horizontal movement.
+    if (positionX + AGENT_WIDTH <= landing.position.x || positionX >= landing.position.x + landing.width) {
+      positionX = agent.position.x + velocityX * landingTime;
+    }
+    positionY = landing.position.y - AGENT_HEIGHT;
+    velocityY = 0;
+    grounded = true;
+    landedPlatformId = landing.id;
+    applyPlatformRoute(agent, landing);
   }
 
   let checkpointX = agent.positionAtLastTakeoff.x;

@@ -37,7 +37,7 @@ Read [the evaluation guide](docs/EVALUATION.md) before interpreting results. The
 - Moving platforms must remain safe across their complete swept motion; sibling routes are mutually exclusive after commitment until their merge.
 - The camera excludes clearly falling bodies and holds its framing when all relevant participants are falling.
 
-Current checkpoints use `world-relative-senses-v3` and `signed-horizontal-controls-v2`. Older 25-input or four-output policies are incompatible. Objective `clean-encounters-v10` changes evade/reward accounting without changing the controller or physics schema; current-schema older checkpoints use the existing score-migration path.
+Current checkpoints use `world-relative-senses-v3` and `signed-horizontal-controls-v2`. Older 25-input or four-output policies are incompatible. Current revision `swept-landings-v11` corrects landing collisions after the v10 evade-accounting fix without changing the controller schema; current-schema older checkpoints use the existing score-migration path.
 
 ## Documentation
 

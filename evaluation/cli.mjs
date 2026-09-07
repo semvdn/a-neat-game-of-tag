@@ -8,6 +8,7 @@ import { BASELINE_PURSUIT_DESIGN } from '../learning/pursuitConfig.ts';
 import { DEFAULT_TERRAIN_VARIETY_CONFIG } from '../learning/terrainConfig.ts';
 import { fixture } from './fixtures.ts';
 import { verifyEncounterAccounting } from './regressions.mjs';
+import { verifyLandings } from './landingRegressions.mjs';
 import { SPRINT_MAX_SPEED, SPRINT_ENERGY_COST_PER_SEC } from '../constants.ts';
 
 const args = process.argv.slice(2);
@@ -23,6 +24,7 @@ for (let i = 0; i < args.length; i++) {
 }
 const seeds = Number(option('--seeds', 8));
 if (args.includes('--verify')) verifyEncounterAccounting();
+if (args.includes('--verify')) verifyLandings();
 assert(Number.isInteger(seeds) && seeds >= 1 && seeds <= 1000, '--seeds must be 1..1000');
 const modes = ['visual', 'varied', 'pressure_close', 'pressure_normal', 'pressure_long', 'midgame'];
 const conditions = args.includes('--conditions') ? JSON.parse(await readFile(option('--conditions'), 'utf8')) : [
@@ -124,7 +126,7 @@ const summary = conditions.map(c => {
 });
 const report = { format: 'neat-tag-gameplay-lab-v1', source, revision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
   workingTreeDirty: !!execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim(),
-  gameplayObjectiveVersion: 'clean-encounters-v10', stateSchema: 'world-relative-senses-v3', actionSchema: 'signed-horizontal-controls-v2',
+  gameplayObjectiveVersion: 'swept-landings-v11', stateSchema: 'world-relative-senses-v3', actionSchema: 'signed-horizontal-controls-v2',
   conditions, baseOptions, seeds, modes, verified: args.includes('--verify'), seconds: (performance.now() - started) / 1000,
   limitations: 'Fixed-policy mechanics comparison, not a training experiment or an aesthetic ranking. Report per-start results and inspect traces; do not promote defaults from a single aggregate.', summary, rows };
 const out = option('--out', 'evaluations/report.json');

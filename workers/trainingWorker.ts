@@ -259,7 +259,7 @@ interface EvolutionCheckpoint {
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   /** Fitness semantics marker for compatibility with checkpoints created before right-only exploration. */
   explorationRewardMode?: 'safe-per-runner-right-frontier';
-  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5' | 'hybrid-soft-pursuit-v6' | 'hybrid-soft-pursuit-terrain-v7' | 'hybrid-soft-pursuit-terrain-escape-v8' | 'hybrid-soft-pursuit-terrain-natural-v9' | 'clean-encounters-v10';
+  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5' | 'hybrid-soft-pursuit-v6' | 'hybrid-soft-pursuit-terrain-v7' | 'hybrid-soft-pursuit-terrain-escape-v8' | 'hybrid-soft-pursuit-terrain-natural-v9' | 'clean-encounters-v10' | 'swept-landings-v11';
   actionSchema?: 'signed-horizontal-controls-v2';
   stateSchema?: 'world-relative-senses-v3';
   horizontalControlResolution?: 'signed-axis-v2';
@@ -1578,7 +1578,7 @@ function buildEvolutionCheckpoint(analysisHistoryLimit = 0): EvolutionCheckpoint
     terrainVarietyConfig: sanitizeTerrainVarietyConfig(terrainVarietyConfig),
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     explorationRewardMode: 'safe-per-runner-right-frontier',
-    gameplayObjectiveVersion: 'clean-encounters-v10',
+    gameplayObjectiveVersion: 'swept-landings-v11',
     actionSchema: 'signed-horizontal-controls-v2',
     stateSchema: 'world-relative-senses-v3',
     horizontalControlResolution: 'signed-axis-v2',
@@ -1665,7 +1665,7 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
   upgradeConfig = sanitizeUpgradeConfig(checkpoint.upgradeConfig);
   const migratedExplorationFitness = !checkpoint.trainingFitnessConfig;
   const migratedExplorationRewardMode = checkpoint.explorationRewardMode !== 'safe-per-runner-right-frontier';
-  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'clean-encounters-v10';
+  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'swept-landings-v11';
   const migratedHorizontalControl = checkpoint.horizontalControlResolution !== 'signed-axis-v2';
   trainingFitnessConfig = sanitizeTrainingFitnessConfig(checkpoint.trainingFitnessConfig);
   terrainVarietyConfig = sanitizeTerrainVarietyConfig(checkpoint.terrainVarietyConfig);
@@ -2982,7 +2982,7 @@ function buildAnalysisExport(historyStride = 1) {
     policyOutputSpace: [...POLICY_OUTPUT_SPACE],
     actionSchema: 'signed-horizontal-controls-v2',
     horizontalControlResolution: 'signed-axis-v2',
-    gameplayObjectiveVersion: 'clean-encounters-v10',
+    gameplayObjectiveVersion: 'swept-landings-v11',
     stateSchema: 'world-relative-senses-v3',
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     pursuitDesign: activePursuitDesign ? { ...activePursuitDesign } : null,

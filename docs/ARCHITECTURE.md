@@ -22,6 +22,8 @@ Successful-evade telemetry now means a pressure exit with no intervening tag or 
 
 ## Working on the project
 
+Landing detection sweeps the feet to the platform top and checks horizontal overlap at impact. It chooses the earliest accessible surface independently of platform array order. Grazing edge contacts finish at impact; ordinary landings preserve horizontal travel. The physics revision `swept-landings-v11` refreshes checkpoint validation through the existing objective-migration path. One-way upward passage and sibling-route restrictions remain intentional.
+
 Read `AGENTS.md` and the relevant `skills/` entry. Trace both visible and headless paths for gameplay changes. Keep reproduction fitness, held-out validation, retained champions, and presentation curation separate. Move code when it isolates a real responsibility; avoid broad rewrites of the worker while changing learning behavior.
 
 Validation commands:

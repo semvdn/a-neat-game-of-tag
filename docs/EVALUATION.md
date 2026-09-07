@@ -28,7 +28,7 @@ Paired differences include a **standard error across seed clusters**: each seed'
 
 `--trace` records body positions, roles, actions, cooldowns, energy, support IDs, and accumulated events at 250 ms intervals. Compare rows with the same seed and start to diagnose whether a tag followed pursuit or a respawn. Traces are sampled diagnostics, not pixel-perfect visual replays.
 
-`--verify` checks encounter regressions, disallows `Math.random()` during headless evaluation, and runs every episode twice with deep equality checks, including traces when requested. It exercises cached midgame starts and recurrent-state reset when evaluating recurrent checkpoints.
+`--verify` checks encounter and landing regressions (including 720 downward crossings and visible/training parity), disallows `Math.random()` during headless evaluation, and runs every episode twice with deep equality checks, including traces when requested. It exercises cached midgame starts and recurrent-state reset when evaluating recurrent checkpoints.
 
 ## Experiment protocol
 
