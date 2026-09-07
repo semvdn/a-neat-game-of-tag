@@ -136,9 +136,9 @@ The architecture picker now includes curated feed-forward and recurrent presets,
 
 | Preset | Generation-1 topology | Memory growth | Intended use |
 | --- | --- | --- | --- |
-| Minimal NEAT | direct 25→3 | none | fastest control baseline |
-| Compact 12 | 25→12→3 | none | cheap nonlinear baseline |
-| Deep 16→12 | 25→16→12→3 | none | primary feed-forward control for recurrence experiments |
+| Minimal NEAT | direct 23→3 | none | fastest control baseline |
+| Compact 12 | 23→12→3 | none | cheap nonlinear baseline |
+| Deep 16→12 | 23→16→12→3 | none | primary feed-forward control for recurrence experiments |
 | Wide 24→16 | wider 2-layer + hidden skips | none | capacity-without-memory stress test |
 | Memory Lite | 12 hidden + 4 recurrent | evolves to 16 recurrent | cheapest useful recurrent experiment |
 | **Memory Balanced** | 16→12 + 8 recurrent | evolves to 32 recurrent | **recommended general recurrent preset** |
@@ -224,6 +224,15 @@ Role Elo is diagnostic only and does not influence NEAT selection.
 ## Senses overlay
 
 Press **S** or use the sidebar toggle to show the current 23 policy inputs. The overlay displays self state, target/threat, teammate position, semantic platform slots, ledges and normalized cooldowns. The presentation camera is intentionally absent from policy sensing. It no longer draws LiDAR rays because LiDAR is no longer part of the policy input.
+
+## Streamlined telemetry UI
+
+The normal sidebar intentionally shows only live role/action/stamina/Elo information for the visible agents. The old expandable 23-input bars and per-frame visual reward breakdown were removed: policy inputs are better inspected with the Senses overlay, while training quality belongs in the Diagnostics suite. The Diagnostics Overview is also deliberately compact, focusing on generation/throughput, best fitness, species count, clean tags, Runner pace, chase distance, role failure rates, retained champions and a few trend charts. Detailed topology, architecture, action distributions and run/checkpoint data remain in their own tabs, and full analysis telemetry is still preserved in exported JSON.
+
+
+## Coding-agent guidance
+
+The repository now includes both `AGENTS.md` (the cross-agent autodiscovery convention) and the requested `agent.md` copy. Project-local Agent Skills live under `skills/*/SKILL.md`. They capture the recurring workflows for NEAT co-evolution, procedural terrain, experiment diagnostics, UI telemetry, and release/Git packaging. Agents should read the relevant skill before making substantial changes and must make a real Git commit before packaging a handoff ZIP.
 
 ## Important files
 

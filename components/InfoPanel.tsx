@@ -1,22 +1,18 @@
 
 
 import React from 'react';
-import type { AgentState, RewardBreakdown, TrainingFitnessConfig, UpgradeConfig, UpgradeMode, UpgradeRule, SprintUpgradeRule, SprintRoleAdvanced, TerrainVarietyConfig } from '../types';
+import type { AgentState, TrainingFitnessConfig, UpgradeConfig, UpgradeMode, UpgradeRule, SprintUpgradeRule, SprintRoleAdvanced, TerrainVarietyConfig } from '../types';
 import { AgentStatus } from '../types';
-import { Radar, Swords, Zap, ArrowUp, SlidersHorizontal, Eye, Route, Gauge, ChevronDown } from 'lucide-react';
-import { MAX_SPEED, SPRINT_MAX_SPEED, SPRINT_ENERGY_COST_PER_SEC, MIN_RUNNER_PACE_TARGET_PX, MAX_RUNNER_PACE_TARGET_PX, MAX_RUNNER_PACE_REWARD_PER_WINDOW, MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM, STATE_VECTOR_SIZE } from '../constants';
-import { STATE_VECTOR_LABELS } from '../learning/state';
+import { Radar, Zap, ArrowUp, SlidersHorizontal, Eye, Route, Gauge, ChevronDown } from 'lucide-react';
+import { MAX_SPEED, SPRINT_MAX_SPEED, SPRINT_ENERGY_COST_PER_SEC, MIN_RUNNER_PACE_TARGET_PX, MAX_RUNNER_PACE_TARGET_PX, MAX_RUNNER_PACE_REWARD_PER_WINDOW, MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM } from '../constants';
 
 interface InfoPanelProps {
   agents: AgentState[];
-  isSimulating: boolean;
   showTrails: boolean;
   onToggleTrails: () => void;
   showSenses: boolean;
   onToggleSenses: () => void;
   onOpenDiagnostics: () => void;
-  chaserElo?: number;
-  evaderElo?: number;
   upgradeConfig: UpgradeConfig;
   sprintUpgradeActive: boolean;
   controlledJumpUpgradeActive: boolean;
@@ -94,61 +90,6 @@ const RoleToggle: React.FC<{ id: string; label: string; checked: boolean; onChan
     </span>
   </label>
 );
-
-const stateVectorLabels = STATE_VECTOR_LABELS;
-
-const rewardTermOrder = [
-    // Chaser rewards & penalties
-    'successfulTag',
-    'closingDistance',
-    'proximityToTarget',
-    'timePenalty',
-    // Runner rewards & penalties
-    'wasTagged',
-    'increasingDistance',
-    'distanceFromTagger',
-    'survival',
-    // Left-Side Boundary & Rightward Flow Reward Terms
-    'leftBoundaryTouchPenalty',
-    'leftBoundaryPushPenalty',
-    'leftBoundaryProximityPenalty',
-    'rightwardVelocityReward',
-    'rightwardProgressionReward',
-    'successfulJump',
-    'stayOnPlatform',
-    'fallPenalty',
-    'highEnergyUse',
-    'inactivity',
-    'highEnergy',
-];
-
-const VectorBar: React.FC<{label: string, value: number}> = ({label, value}) => {
-    const clampedValue = Math.max(-1, Math.min(1, value));
-    const normalizedLabel = label.toLowerCase();
-    const isBoolean = normalizedLabel.includes('grounded');
-    const isUnipolar = isBoolean || normalizedLabel.includes('energy') || normalizedLabel.includes('cooldown') || normalizedLabel.includes('width') || normalizedLabel.includes('ledge');
-    const barColor = isUnipolar
-        ? (value > 0.001 ? '#22c55e' : 'transparent')
-        : (clampedValue >= 0.01 ? '#22c55e' : (clampedValue <= -0.01 ? '#ef4444' : 'transparent'));
-    
-    return (
-        <div title={`${label}: ${value.toFixed(3)}`} className="flex items-center justify-between text-gray-300 text-xs">
-            <span className="w-20 truncate" title={label}>{label}</span>
-            <div className="flex-1 h-3 bg-gray-800 rounded-sm relative mx-2">
-                {!isUnipolar && <div className="absolute top-0 left-1/2 w-px h-full bg-gray-600"></div>}
-                <div 
-                    className="absolute top-0 h-full rounded-sm"
-                    style={{
-                        left: isUnipolar ? '0%' : (clampedValue > 0 ? '50%' : `calc(50% - ${Math.abs(clampedValue) * 50}%)`),
-                        width: isUnipolar ? `${Math.max(0, clampedValue) * 100}%` : `${Math.abs(clampedValue) * 50}%`,
-                        backgroundColor: barColor,
-                    }}
-                ></div>
-            </div>
-            <span className="w-10 text-right font-mono">{value.toFixed(2)}</span>
-        </div>
-    );
-};
 
 const UpgradeControl: React.FC<{
   title: string;
@@ -309,93 +250,13 @@ const SprintAdvancedMenus: React.FC<{
   );
 };
 
-const StateVectorDisplay: React.FC<{ vector: number[] }> = ({ vector }) => {
-  if (!vector || vector.length === 0) return null;
-  const validSize = vector.length === STATE_VECTOR_SIZE && stateVectorLabels.length === STATE_VECTOR_SIZE;
-  return (
-    <details className="group mt-3 rounded border border-gray-800 bg-black/20 px-2.5 py-2">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-[10px] font-semibold text-gray-400 transition-colors hover:text-white">
-        <span>Brain inputs · {STATE_VECTOR_SIZE}</span>
-        <span className={`font-mono text-[9px] ${validSize ? 'text-emerald-400' : 'text-red-300'}`}>{validSize ? 'schema matched' : `vector ${vector.length}`}</span>
-      </summary>
-      <div className="mt-2 space-y-1 border-t border-gray-800 pt-2">
-        {stateVectorLabels.map((label, index) => (
-          <VectorBar key={`${label}-${index}`} label={label} value={vector[index] === undefined ? 0 : vector[index]} />
-        ))}
-      </div>
-    </details>
-  );
-};
-
-const RewardBar: React.FC<{label: string, value: number}> = ({label, value}) => {
-  const MAX_VISUAL_REWARD = 5;
-  const normalizedValue = Math.max(-1, Math.min(1, value / MAX_VISUAL_REWARD));
-  const barColor = value > 0.001 ? '#22c55e' : value < -0.001 ? '#ef4444' : 'transparent';
-  
-  // Format camelCase label to 'Normal Case' for display
-  const displayLabel = label.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
-  
-  return (
-      <div title={`${displayLabel}: ${value.toFixed(3)}`} className="flex items-center justify-between text-gray-300 text-xs">
-          <span className="w-20 truncate" title={displayLabel}>{displayLabel}</span>
-          <div className="flex-1 h-3 bg-gray-800 rounded-sm relative mx-2">
-              <div className="absolute top-0 left-1/2 w-px h-full bg-gray-600"></div>
-              <div 
-                  className="absolute top-0 h-full rounded-sm"
-                  style={{
-                      left: normalizedValue > 0 ? '50%' : `calc(50% - ${Math.abs(normalizedValue) * 50}%)`,
-                      width: `${Math.abs(normalizedValue) * 50}%`,
-                      backgroundColor: barColor,
-                  }}
-              ></div>
-          </div>
-          <span className="w-10 text-right font-mono">{value.toFixed(2)}</span>
-      </div>
-  );
-};
-
-const RewardBreakdownDisplay: React.FC<{ breakdown: RewardBreakdown, status: AgentStatus }> = ({ breakdown, status }) => {
-    if (!breakdown) return null;
-
-    const totalReward = Object.values(breakdown).reduce<number>((s, v) => s + (Number(v) || 0), 0);
-    
-    const taggerTerms = ['successfulTag', 'closingDistance', 'timePenalty', 'proximityToTarget'];
-    const evaderTerms = ['wasTagged', 'increasingDistance', 'survival', 'distanceFromTagger'];
-
-    const relevantTerms = rewardTermOrder.filter(term => {
-        if (status === AgentStatus.It && evaderTerms.includes(term)) return false;
-        if (status !== AgentStatus.It && taggerTerms.includes(term)) return false;
-        return Math.abs(Number(breakdown[term] || 0)) > 0.0005;
-    });
-
-    return (
-        <details className="mt-3 group">
-            <summary className="flex cursor-pointer list-none justify-between gap-2 text-[10px] font-semibold text-gray-400 transition-colors hover:text-white">
-                <span>Visual-only heuristic</span>
-                <span className={`font-mono ${totalReward > 0 ? 'text-green-400' : totalReward < 0 ? 'text-red-400' : ''}`}>
-                    {totalReward >= 0 ? '+' : ''}{totalReward.toFixed(2)}
-                </span>
-            </summary>
-            <div className="mt-2 space-y-1 pr-1">
-                {relevantTerms.length > 0 ? relevantTerms.map(term => (
-                    <RewardBar key={term} label={term} value={breakdown[term] || 0} />
-                )) : <div className="text-[9px] text-gray-600">No active visual heuristic terms this frame.</div>}
-            </div>
-        </details>
-    );
-};
-
-
 export const InfoPanel: React.FC<InfoPanelProps> = ({
   agents,
-  isSimulating,
   showTrails,
   onToggleTrails,
   showSenses,
   onToggleSenses,
   onOpenDiagnostics,
-  chaserElo,
-  evaderElo,
   upgradeConfig,
   sprintUpgradeActive,
   controlledJumpUpgradeActive,
@@ -583,83 +444,47 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
           </fieldset>
         </details>
 
-        {chaserElo !== undefined && evaderElo !== undefined && (
-          <section className="rounded-lg border border-gray-700 bg-gray-900/55 p-2.5">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 text-[10px] font-bold text-gray-300"><Swords className="h-3.5 w-3.5 text-amber-400" /> Role Elo signal</div>
-              <button onClick={onOpenDiagnostics} className="text-[9px] font-semibold text-cyan-400 hover:text-cyan-300">Details</button>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="rounded border border-red-500/25 bg-red-950/25 px-2.5 py-2">
-                <div className="text-[9px] font-semibold uppercase tracking-wide text-red-300">Chaser</div>
-                <div className="font-mono text-base font-bold text-red-400">{chaserElo} <span className="text-[9px] font-normal text-gray-500">Elo</span></div>
-              </div>
-              <div className="rounded border border-cyan-500/25 bg-cyan-950/25 px-2.5 py-2">
-                <div className="text-[9px] font-semibold uppercase tracking-wide text-cyan-300">Runner</div>
-                <div className="font-mono text-base font-bold text-cyan-400">{evaderElo} <span className="text-[9px] font-normal text-gray-500">Elo</span></div>
-              </div>
-            </div>
-          </section>
-        )}
-
         <section>
           <div className="mb-2 flex items-center justify-between gap-2 px-0.5">
-            <h3 className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Agent telemetry</h3>
-            <span className="text-[9px] text-gray-600">expand for brain inputs</span>
+            <h3 className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Live chase</h3>
+            <span className="text-[9px] text-gray-600">role · action · stamina</span>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {agents.map(agent => {
               const safeMaxEnergy = Number.isFinite(agent.maxEnergy) && agent.maxEnergy > 0 ? agent.maxEnergy : 1;
               const safeEnergy = Number.isFinite(agent.energy) ? Math.max(0, Math.min(agent.energy, safeMaxEnergy)) : 0;
               const staminaRatio = safeEnergy / safeMaxEnergy;
               const staminaPercent = staminaRatio * 100;
               const roleLabel = agent.status === AgentStatus.It ? 'Chaser' : 'Runner';
-              const badgeLabel = agent.status === AgentStatus.Cooldown ? 'Tag cooldown' : roleLabel;
+              const badgeLabel = agent.status === AgentStatus.Cooldown ? 'Cooldown' : roleLabel;
               const formattedAction = (agent.lastAction || 'idle').replace(/_/g, ' ');
-              const displayModelId = (agent.modelId || 'model unavailable').replace(/evader/gi, 'runner');
+              const actionDetail = [
+                formattedAction,
+                (agent.sprintIntensity || 0) > 0.05 ? `sprint ${Math.round((agent.sprintIntensity || 0) * 100)}%` : null,
+                (agent.jumpPower || 0) > 0 ? `jump ${Math.round((agent.jumpPower || 0) * 100)}%` : null,
+              ].filter(Boolean).join(' · ');
 
               return (
-                <details key={agent.id} className="group rounded-lg border border-gray-700 bg-gray-900/55">
-                  <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5">
-                    <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: agent.color }} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-bold text-gray-200">Agent {agent.id}</span>
-                        <span className={`rounded px-1.5 py-0.5 text-[8px] font-bold uppercase ${statusColors[agent.status]}`}>{badgeLabel}</span>
-                      </div>
-                      <div className="truncate text-[9px] text-gray-600">{formattedAction} · stamina {staminaPercent.toFixed(0)}%</div>
-                    </div>
-                    <ChevronDown className="h-3.5 w-3.5 text-gray-600 transition-transform group-open:rotate-180" />
-                  </summary>
-                  <div className="border-t border-gray-800 p-3">
-                    <div className="mb-1 flex items-center justify-between gap-2 font-mono text-[9px] text-gray-500">
-                      <span>Stamina {safeEnergy.toFixed(1)} / {safeMaxEnergy.toFixed(1)}</span>
-                      <span className="max-w-[145px] truncate text-right" title={agent.lastAction}>
-                        {formattedAction}
-                        {(agent.sprintIntensity || 0) > 0.05 ? ` · sprint ${Math.round((agent.sprintIntensity || 0) * 100)}%` : ''}
-                        {(agent.jumpPower || 0) > 0 ? ` · jump ${Math.round((agent.jumpPower || 0) * 100)}%` : ''}
-                        {agent.jumpArmed === false ? ' · jump locked' : ''}
-                      </span>
-                    </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-gray-700" role="progressbar" aria-label={`Agent ${agent.id} stamina`} aria-valuemin={0} aria-valuemax={safeMaxEnergy} aria-valuenow={safeEnergy}>
+                <div key={agent.id} className="rounded-lg border border-gray-700 bg-gray-900/55 px-2.5 py-2" title={agent.modelId || undefined}>
+                  <div className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: agent.color }} />
+                    <span className="text-[10px] font-bold text-gray-200">Agent {agent.id}</span>
+                    <span className={`rounded px-1.5 py-0.5 text-[8px] font-bold uppercase ${statusColors[agent.status]}`}>{badgeLabel}</span>
+                    <span className="min-w-0 flex-1 truncate text-right text-[9px] text-gray-500">{actionDetail}</span>
+                    {agent.elo !== undefined && <span className="shrink-0 font-mono text-[9px] text-amber-300">{agent.elo}</span>}
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-700" role="progressbar" aria-label={`Agent ${agent.id} stamina`} aria-valuemin={0} aria-valuemax={safeMaxEnergy} aria-valuenow={safeEnergy}>
                       <div className={`${staminaRatio < 0.3 ? 'bg-amber-500' : 'bg-emerald-500'} h-full w-full origin-left`} style={{ transform: `scaleX(${staminaRatio})` }} />
                     </div>
-                    <div className="mt-2 flex items-center justify-between gap-2 font-mono text-[9px] text-gray-500" title={agent.modelId}>
-                      <span className="min-w-0 truncate">{displayModelId}</span>
-                      {agent.elo !== undefined ? <span className="shrink-0 rounded bg-black/30 px-1.5 py-0.5 text-amber-300">{agent.elo} Elo</span> : agent.modelPerformance !== undefined ? <span className="shrink-0 text-cyan-400">{(agent.modelPerformance / 1000).toFixed(1)}s</span> : null}
-                    </div>
-                    {agent.stateVector && isSimulating && <StateVectorDisplay vector={agent.stateVector} />}
-                    {agent.rewardBreakdown && isSimulating && <RewardBreakdownDisplay breakdown={agent.rewardBreakdown} status={agent.status} />}
+                    <span className="w-8 text-right font-mono text-[9px] text-gray-500">{staminaPercent.toFixed(0)}%</span>
                   </div>
-                </details>
+                </div>
               );
             })}
           </div>
         </section>
 
-        <div className="rounded-lg border border-gray-800 bg-black/20 px-3 py-2 text-[9px] leading-relaxed text-gray-600">
-          Policy schema: <span className="font-mono text-gray-400">23 inputs → 3 outputs</span> · signed horizontal drive + independent jump + sprint. Camera state is presentation-only.
-        </div>
       </div>
     </aside>
   );

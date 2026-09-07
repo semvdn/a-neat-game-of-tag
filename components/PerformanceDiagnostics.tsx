@@ -458,8 +458,6 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
   const chaserHistory = diagnostics.chaserNeatHistory || [];
   const evaderHistory = diagnostics.evaderNeatHistory || [];
   const balanceHistory = diagnostics.balanceHistory || [];
-  const benchmarkHistory = diagnostics.benchmarkHistory || [];
-  const benchmark = diagnostics.lastCrossGenerationBenchmark;
   const balance = diagnostics.lastGenerationBalance;
   const retainedChaser = diagnostics.chaserGeneralistChampion;
   const retainedRunner = diagnostics.evaderGeneralistChampion;
@@ -489,7 +487,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
         <div className="w-10 h-10 rounded-xl bg-violet-500/20 border border-violet-400/30 flex items-center justify-center"><Brain className="w-5 h-5 text-violet-300" /></div>
         <div>
           <div className="flex items-center gap-2"><h2 className="font-bold text-lg text-white">NEAT Evolution Diagnostics</h2><span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/30">population based</span></div>
-          <p className="text-xs text-gray-500">Population fitness, speciation, topology growth, retention and behavior probes in one place.</p>
+          <p className="text-xs text-gray-500">Key training health at a glance, with detailed evolution and run tools in separate tabs.</p>
         </div>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <div className="flex items-center gap-1 rounded-lg border border-gray-800 bg-black/30 p-1" title="Champion-view speed">
@@ -543,147 +541,61 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
       <main className="flex-1 overflow-auto p-5">
         {tab === 'overview' && (
           <div className="max-w-7xl mx-auto space-y-5">
-            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
-              <MetricCard label="Generation" value={generation} hint="one full population evaluation" />
-              <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} hint="tags − own falls − escape failures + capped follow shaping" />
-              <MetricCard label="Runner best" value={fmt(evaderMetrics?.bestFitness)} hint="−tags − own falls + capped pace/escape shaping" />
-              <MetricCard label="Species C / R" value={`${chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.speciesCount ?? '—'}`} hint={`reproducing ${chaserMetrics?.reproductiveSpeciesCount ?? chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.reproductiveSpeciesCount ?? evaderMetrics?.speciesCount ?? '—'}`} />
-              <MetricCard label="Tag rate" value={balance ? `${(balance.tagRate * 100).toFixed(1)}%` : '—'} hint="contact tags only" />
-              <MetricCard label="Runner clean survival" value={balance ? `${(balance.survivalRate * 100).toFixed(1)}%` : '—'} hint="no tag and no runner fall" />
-              <MetricCard label="Chaser fall rate" value={balance?.chaserFallRate != null ? `${(balance.chaserFallRate * 100).toFixed(1)}%` : '—'} hint={balance?.chaserFalls != null ? `${balance.chaserFalls} matches with chaser fall` : 'population matches'} />
-              <MetricCard label="Chaser escape rate" value={balance?.chaserEscapeRate != null ? `${(balance.chaserEscapeRate * 100).toFixed(1)}%` : '—'} hint={balance?.chaserEscapes != null ? `${balance.chaserEscapes} matches lost every Runner beyond the 50% camera envelope` : 'terminal chase-separation failures'} />
-              <MetricCard label="Runner fall rate" value={balance?.runnerFallRate != null ? `${(balance.runnerFallRate * 100).toFixed(1)}%` : '—'} hint={balance?.runnerFalls != null ? `${balance.runnerFalls} matches with runner fall` : 'population matches'} />
-              <MetricCard label="Avg tag time" value={balance?.avgTagTimeMs != null ? `${(balance.avgTagTimeMs / 1000).toFixed(2)}s` : '—'} hint="when a contact tag occurs" />
-              <MetricCard label="Matches" value={balance?.matches ?? '—'} hint="last completed generation" />
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h3 className="font-semibold text-white">Training snapshot</h3>
+                <p className="mt-1 text-xs text-gray-500">Only the signals needed to judge learning health and gameplay quality. Detailed evolution, topology, actions and run data stay in their dedicated tabs and exports.</p>
+              </div>
+              <span className="rounded-full border border-gray-800 bg-black/25 px-2.5 py-1 text-[10px] text-gray-500">last completed generation</span>
             </div>
 
-            <div className="grid lg:grid-cols-2 gap-4">
-              <FitnessSummary title="Chaser population" metrics={chaserMetrics} />
-              <FitnessSummary title="Runner population" metrics={evaderMetrics} />
-            </div>
-            <div className="grid md:grid-cols-2 xl:grid-cols-5 gap-3">
-              <MetricCard label="Hall of Fame C / R" value={`${diagnostics.hallOfFame?.chaserSize ?? 0} / ${diagnostics.hallOfFame?.evaderSize ?? 0}`} hint={`max ${diagnostics.hallOfFame?.maxSize ?? 0} champions per role`} />
-              <MetricCard label="Recent C / R" value={`${diagnostics.hallOfFame?.chaserRecentSize ?? 0} / ${diagnostics.hallOfFame?.evaderRecentSize ?? 0}`} hint="always retained to track current coevolution" />
-              <MetricCard label="Diverse history C / R" value={`${diagnostics.hallOfFame?.chaserDiverseSize ?? 0} / ${diagnostics.hallOfFame?.evaderDiverseSize ?? 0}`} hint="behaviorally distinct older champions" />
-              <MetricCard label="Archive diversity C / R" value={`${fmt(diagnostics.hallOfFame?.chaserDiversity, 3)} / ${fmt(diagnostics.hallOfFame?.evaderDiversity, 3)}`} hint="mean behavioral descriptor distance" />
-              <MetricCard label="Elite seeds C / R" value={`${diagnostics.eliteSeeding?.chaserInjected ?? 0} / ${diagnostics.eliteSeeding?.runnerInjected ?? 0}`} hint={diagnostics.eliteSeeding ? `generation ${diagnostics.eliteSeeding.generation} · sources C [${diagnostics.eliteSeeding.chaserSourceGenerations.join(', ') || '—'}] / R [${diagnostics.eliteSeeding.runnerSourceGenerations.join(', ') || '—'}]` : 'validated retained/recent lineages injected with zero fitness'} />
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+              <MetricCard label="Generation" value={generation} hint="one full population evaluation" />
+              <MetricCard label="Training rate" value={`${formatTrainingRate(diagnostics.trainingEpisodesPerSecond)} ep/s`} hint={`${diagnostics.trainingWorkerCount || 1} worker${(diagnostics.trainingWorkerCount || 1) === 1 ? '' : 's'} · max-throughput background training`} />
+              <MetricCard label="Chaser best" value={fmt(chaserMetrics?.bestFitness)} hint="best population fitness this generation" />
+              <MetricCard label="Runner best" value={fmt(evaderMetrics?.bestFitness)} hint="best population fitness this generation" />
+              <MetricCard label="Species C / R" value={`${chaserMetrics?.speciesCount ?? '—'} / ${evaderMetrics?.speciesCount ?? '—'}`} hint="active evolutionary niches" />
+              <MetricCard label="Clean tags / ep" value={balance?.cleanTagsPerEpisode != null ? balance.cleanTagsPerEpisode.toFixed(2) : '—'} hint="contact tags not caused by a recent Runner fall" />
+              <MetricCard label="Runner pace" value={balance?.runnerPaceCompletion != null ? `${(balance.runnerPaceCompletion * 100).toFixed(0)}%` : '—'} hint={`${diagnostics.trainingFitnessConfig?.runnerPaceTargetPxPerWindow ?? 0}px target every 2s`} />
+              <MetricCard label="Mean chase distance" value={balance?.meanNearestRunnerDistancePx != null ? `${balance.meanNearestRunnerDistancePx.toFixed(0)} px` : '—'} hint={balance?.timeWithin400Pct != null ? `${(balance.timeWithin400Pct * 100).toFixed(0)}% of time within 400px` : 'nearest reachable Runner'} />
+              <MetricCard label="Chaser fall / escape" value={balance ? `${((balance.chaserFallRate ?? 0) * 100).toFixed(0)}% / ${((balance.chaserEscapeRate ?? 0) * 100).toFixed(0)}%` : '—'} hint="physical falls / terminal lost-chase escapes" />
+              <MetricCard label="Runner fall" value={balance?.runnerFallRate != null ? `${(balance.runnerFallRate * 100).toFixed(0)}%` : '—'} hint="population matches containing a Runner fall" />
             </div>
 
             <div className="grid md:grid-cols-3 gap-3">
-              <MetricCard label="Fixed benchmark C" value={benchmark ? fmt(benchmark.chaser.meanFitness) : '—'} hint={benchmark ? `${benchmark.chaser.matches} permanent reference matches · generation champion` : 'frozen-suite validation'} />
-              <MetricCard label="Fixed benchmark R" value={benchmark ? fmt(benchmark.evader.meanFitness) : '—'} hint={benchmark ? `${benchmark.evader.matches} matches · ${((benchmark.evader.paceCompletion ?? 0) * 100).toFixed(0)}% pace · generation champion` : 'frozen-suite validation'} />
-              <MetricCard label="Benchmark suite" value={benchmark ? `v${benchmark.suiteRevision}` : `v${diagnostics.benchmarkSuiteRevision ?? 0}`} hint="same frozen opponents, seeds and start modes across generations" />
+              <MetricCard label="Retained Chaser" value={retainedChaser ? `g${retainedChaser.generation}` : '—'} hint={retainedChaser ? `pursuit ${fmt(retainedChaser.contemporaryPursuitScore)} · benchmark ${retainedChaser.benchmark.meanFitness.toFixed(1)}` : 'best validated generalist so far'} />
+              <MetricCard label="Retained Runner" value={retainedRunner ? `g${retainedRunner.generation}` : '—'} hint={retainedRunner ? `${((retainedRunner.contemporaryPaceCompletion ?? 0) * 100).toFixed(0)}% contemporary pace · ${((retainedRunner.benchmark.paceCompletion ?? 0) * 100).toFixed(0)}% benchmark pace` : 'best validated generalist so far'} />
+              <MetricCard label="Showcase pair" value={showcase ? `g${showcase.chaserGeneration} / g${showcase.runnerGeneration}` : '—'} hint={showcase ? `${(showcase.cleanTagsPerEpisode ?? showcase.tagsPerEpisode).toFixed(2)} clean tags/ep · ${(showcase.runnerPaceCompletion * 100).toFixed(0)}% Runner pace` : 'readable retained pair used by the champion view'} />
             </div>
 
-            <div className="grid md:grid-cols-2 xl:grid-cols-5 gap-3">
-              <MetricCard label="Retained Chaser" value={retainedChaser ? `g${retainedChaser.generation}` : '—'} hint={retainedChaser ? `generalist ${retainedChaser.score.toFixed(1)} · benchmark ${retainedChaser.benchmark.meanFitness.toFixed(1)} · escapes ${(retainedChaser.benchmark.escapeFailuresPerEpisode ?? 0).toFixed(2)}/ep · contemporary clean tags ${(retainedChaser.contemporaryCleanTagsPerEpisode ?? 0).toFixed(2)}/ep` : 'best validated generalist so far'} />
-              <MetricCard label="Retained Runner" value={retainedRunner ? `g${retainedRunner.generation}` : '—'} hint={retainedRunner ? `generalist ${retainedRunner.score.toFixed(1)} · ${((retainedRunner.benchmark.paceCompletion ?? 0) * 100).toFixed(0)}% benchmark pace · contemporary ${((retainedRunner.contemporaryPaceCompletion ?? 0) * 100).toFixed(0)}% pace` : 'best validated generalist so far'} />
-              <MetricCard label="Showcase pair" value={showcase ? `g${showcase.chaserGeneration} / g${showcase.runnerGeneration}` : '—'} hint={showcase ? `${(showcase.cleanTagsPerEpisode ?? showcase.tagsPerEpisode).toFixed(1)} clean / ${showcase.tagsPerEpisode.toFixed(1)} total tags · ${(showcase.chaserEscapesPerEpisode ?? 0).toFixed(2)} escapes · ${showcase.closeEncountersPerEpisode.toFixed(1)} close · ${(showcase.runnerPaceCompletion * 100).toFixed(0)}% pace` : 'non-breeding archived pair chosen for readable mutual gameplay'} />
-              <MetricCard label="Chaser soft pursuit" value={retainedChaser?.contemporaryPursuitScore != null ? retainedChaser.contemporaryPursuitScore.toFixed(1) : '—'} hint={retainedChaser ? `tag ${fmt(retainedChaser.contemporaryPursuitCleanTagScore)} · closing ${fmt(retainedChaser.contemporaryPursuitClosingScore)} · threat ${fmt(retainedChaser.contemporaryPursuitThreatScore)} · encounters ${fmt(retainedChaser.contemporaryPursuitEncounterScore)}` : '0–100 multi-distance retention evidence'} />
-              <MetricCard label="Retention margin" value="+1.5" hint="challenger must clearly beat incumbent; population breeding uses the separate robust matchup score" />
-            </div>
-
-            <div className="grid md:grid-cols-4 gap-3">
-              <MetricCard label="Runner right-drive" value={benchmark ? `${(benchmark.evader.rightActionShare * 100).toFixed(1)}%` : '—'} hint="effective rightward motor command; can overlap jump" />
-              <MetricCard label="Runner jump" value={benchmark ? `${(benchmark.evader.jumpActionShare * 100).toFixed(1)}%` : '—'} hint="independent control active" />
-              <MetricCard label="Runner sprint" value={benchmark ? `${(benchmark.evader.sprintActionShare * 100).toFixed(1)}%` : '—'} hint="effective sprint boost; saturated Sprint without movement no longer counts" />
-              <MetricCard label="Runner idle" value={benchmark ? `${(benchmark.evader.idleActionShare * 100).toFixed(1)}%` : '—'} hint="no effective control above activation threshold" />
-            </div>
-
-            <div className="grid md:grid-cols-4 gap-3">
-              <MetricCard label="Runner pace completion" value={balance?.runnerPaceCompletion != null ? `${(balance.runnerPaceCompletion * 100).toFixed(1)}%` : '—'} hint={`${diagnostics.trainingFitnessConfig?.runnerPaceTargetPxPerWindow ?? 0}px target every 2s`} />
-              <MetricCard label="Runner pace bonus / ep" value={balance?.runnerPaceBonusPerEpisode != null ? `+${balance.runnerPaceBonusPerEpisode.toFixed(2)}` : '—'} hint={`capped at +${diagnostics.trainingFitnessConfig?.runnerPaceRewardPerWindow ?? 0} per window`} />
-              <MetricCard label="Pace shortfall / ep" value={balance?.runnerPaceShortfallPenaltyPerEpisode != null ? `-${balance.runnerPaceShortfallPenaltyPerEpisode.toFixed(2)}` : '—'} hint="unsatisfied pace-window fraction; prevents free stationary survival" />
-              <MetricCard label="Pressure escape + / ep" value={balance?.runnerPressureEscapeBonusPerEpisode != null ? `+${balance.runnerPressureEscapeBonusPerEpisode.toFixed(2)}` : '—'} hint="small capped reward for opening a <=180px encounter beyond 380px without tag/fall" />
-              <MetricCard label="Chaser pursuit bonus / ep" value={balance?.chaserPursuitBonusPerEpisode != null ? `+${balance.chaserPursuitBonusPerEpisode.toFixed(2)}` : '—'} hint="runner-visited platforms; capped +5 / 2s" />
-              <MetricCard label="Chaser closing + / ep" value={balance?.chaserProximityBonusPerEpisode != null ? `+${balance.chaserProximityBonusPerEpisode.toFixed(2)}` : '—'} hint="full pursuit condition only: new-best closing distance, capped +6 per chase segment" />
-              <MetricCard label="Safe right / episode" value={balance?.runnerFrontierExpansionViewportsPerEpisode != null ? `${balance.runnerFrontierExpansionViewportsPerEpisode.toFixed(2)} view` : '—'} hint="diagnostic distance only; no longer linear fitness" />
-            </div>
-
-            <div className="grid md:grid-cols-4 gap-3">
-              <MetricCard label="Chaser dir conflict" value={balance?.chaserDirectionConflictShare != null ? `${(balance.chaserDirectionConflictShare * 100).toFixed(1)}%` : '—'} hint="signed horizontal axis cannot express contradictory left+right commands; should remain 0%" />
-              <MetricCard label="Runner dir conflict" value={balance?.runnerDirectionConflictShare != null ? `${(balance.runnerDirectionConflictShare * 100).toFixed(1)}%` : '—'} hint="signed horizontal axis cannot express contradictory left+right commands; should remain 0%" />
-              <MetricCard label="Close encounters / ep" value={balance?.closeEncountersPerEpisode != null ? balance.closeEncountersPerEpisode.toFixed(2) : '—'} hint="nearest Runner enters ≤180px" />
-              <MetricCard label="Successful evades / ep" value={balance?.successfulEvadesPerEpisode != null ? balance.successfulEvadesPerEpisode.toFixed(2) : '—'} hint="encounter opens back beyond 380px without a tag" />
-              <MetricCard label="Mean chase distance" value={balance?.meanNearestRunnerDistancePx != null ? `${balance.meanNearestRunnerDistancePx.toFixed(0)} px` : '—'} hint={balance?.timeWithin400Pct != null ? `${(balance.timeWithin400Pct * 100).toFixed(0)}% of time within 400px` : 'nearest Runner'} />
-              <MetricCard label="Tags after Runner fall" value={balance?.tagsSoonAfterRunnerFallPerEpisode != null ? balance.tagsSoonAfterRunnerFallPerEpisode.toFixed(2) : '—'} hint="tags within 2s of a Runner fall/respawn" />
-              <MetricCard label="Clean tags / ep" value={balance?.cleanTagsPerEpisode != null ? balance.cleanTagsPerEpisode.toFixed(2) : '—'} hint="tags not attributable to a Runner fall in the previous 2 seconds" />
-            </div>
-
-            <div className="grid md:grid-cols-4 gap-3">
-              <MetricCard label="Runner landings / ep" value={balance?.runnerPlatformLandingsPerEpisode != null ? balance.runnerPlatformLandingsPerEpisode.toFixed(2) : '—'} hint={balance?.runnerBranchLandingsPerEpisode != null ? `${balance.runnerBranchLandingsPerEpisode.toFixed(2)} on branch routes` : 'new-platform landings'} />
-              <MetricCard label="Chaser landings / ep" value={balance?.chaserPlatformLandingsPerEpisode != null ? balance.chaserPlatformLandingsPerEpisode.toFixed(2) : '—'} hint={balance?.chaserBranchLandingsPerEpisode != null ? `${balance.chaserBranchLandingsPerEpisode.toFixed(2)} on branch routes` : 'new-platform landings'} />
-              <MetricCard label="Pursuit landings / ep" value={balance?.chaserPursuitLandingsPerEpisode != null ? balance.chaserPursuitLandingsPerEpisode.toFixed(2) : '—'} hint="first landing on Runner-used terrain" />
-              <MetricCard label="Pace windows met / ep" value={balance?.runnerPaceWindowsSatisfiedPerEpisode != null ? balance.runnerPaceWindowsSatisfiedPerEpisode.toFixed(2) : '—'} hint="6 possible in a 12s episode" />
+            <div className="grid lg:grid-cols-2 gap-4">
+              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
+                <div className="flex items-center gap-2 mb-3"><Trophy className="w-4 h-4 text-amber-300" /><h3 className="font-semibold text-white">Best fitness trend</h3></div>
+                <LineChart series={[{ label: 'Chaser', values: chaserHistory.map(m => m.bestFitness) }, { label: 'Runner', values: evaderHistory.map(m => m.bestFitness) }]} />
+              </div>
+              <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/10 p-4">
+                <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-cyan-300" /><h3 className="font-semibold text-white">Gameplay trend</h3></div>
+                <LineChart
+                  series={[
+                    { label: 'Tag rate %', values: balanceHistory.map(m => m.tagRate * 100) },
+                    { label: 'Clean survival %', values: balanceHistory.map(m => m.survivalRate * 100) },
+                    { label: 'Runner pace %', values: balanceHistory.map(m => (m.runnerPaceCompletion ?? 0) * 100) },
+                  ]}
+                  emptyLabel="Complete generations to populate gameplay telemetry."
+                />
+              </div>
             </div>
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-              <div className="flex items-center gap-2 mb-3"><Trophy className="w-4 h-4 text-emerald-300" /><h3 className="font-semibold text-white">Fixed cross-generation benchmark</h3></div>
-              <LineChart
-                series={[
-                  { label: 'Chaser benchmark', values: benchmarkHistory.map(m => m.chaser.meanFitness) },
-                  { label: 'Runner benchmark', values: benchmarkHistory.map(m => m.evader.meanFitness) },
-                ]}
-                emptyLabel="Complete at least two generations to compare champions on the permanent benchmark suite."
-              />
-              <p className="mt-2 text-xs text-gray-500">Each generation champion is tested against the same frozen run-start reference bank, permanent seeds, and visual/varied/mid-game scenario mix. These matches never alter breeding fitness or Elo. Retained Chasers use 70% frozen benchmark quality plus 30% smooth multi-distance pursuit evidence; there is no hard contemporary pass/fail gate. Runner retention keeps the benchmark-heavy B-style score so pace and platforming remain valuable. Training opponents are sampled independently through the current/recent/strong/diverse league. The showcase pair is separate and affects only the visual arena.</p>
-            </div>
-
-            <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-              <div className="flex items-center gap-2 mb-3"><Trophy className="w-4 h-4 text-amber-300" /><h3 className="font-semibold text-white">Best fitness by generation</h3></div>
-              <LineChart series={[{ label: 'Chaser', values: chaserHistory.map(m => m.bestFitness) }, { label: 'Runner', values: evaderHistory.map(m => m.bestFitness) }]} />
-            </div>
-
-            <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-              <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-cyan-300" /><h3 className="font-semibold text-white">Game balance by generation</h3></div>
-              <LineChart
-                series={[
-                  { label: 'Chaser tag %', values: balanceHistory.map(m => m.tagRate * 100) },
-                  { label: 'Runner clean survival %', values: balanceHistory.map(m => m.survivalRate * 100) },
-                ]}
-                emptyLabel="Complete generations to populate the balance chart."
-              />
-              <p className="mt-2 text-xs text-gray-500">Measured only on current-population matchups; Hall-of-Fame tests are excluded so the balance signal stays comparable.</p>
-            </div>
-
-            <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/10 p-4">
-              <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-cyan-300" /><h3 className="font-semibold text-white">Runner pace & safe progression by generation</h3></div>
-              <LineChart
-                series={[
-                  { label: 'Pace completion %', values: balanceHistory.map(m => (m.runnerPaceCompletion ?? 0) * 100) },
-                  { label: 'Full windows met %', values: balanceHistory.map(m => ((m.runnerPaceWindowsSatisfiedPerEpisode ?? 0) / 6) * 100) },
-                ]}
-                emptyLabel="Complete generations to populate pace diagnostics."
-              />
-              <p className="mt-2 text-xs text-gray-500">Both lines are normalized percentages. The pace reward saturates inside each 2-second window, so 100% means the minimum movement target is being met—not that the Runner should keep accelerating.</p>
-            </div>
-
-            <div className="rounded-xl border border-amber-500/20 bg-amber-950/10 p-4">
-              <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-amber-300" /><h3 className="font-semibold text-white">Chase interaction by generation</h3></div>
-              <LineChart series={[
-                { label: 'Close encounters / ep', values: balanceHistory.map(m => m.closeEncountersPerEpisode ?? 0) },
-                { label: 'Successful evades / ep', values: balanceHistory.map(m => m.successfulEvadesPerEpisode ?? 0) },
-                { label: 'Tags after Runner fall / ep', values: balanceHistory.map(m => m.tagsSoonAfterRunnerFallPerEpisode ?? 0) },
-                { label: 'Chaser pursuit bonus / ep', values: balanceHistory.map(m => m.chaserPursuitBonusPerEpisode ?? 0) },
-              ]} emptyLabel="Complete generations to populate interaction diagnostics." />
-              <p className="mt-2 text-xs text-gray-500">This separates actual pursuit/escape interactions from catches caused mainly by a Runner missing a platform and respawning.</p>
-            </div>
-
-            <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-              <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-rose-300" /><h3 className="font-semibold text-white">Failure rate by generation</h3></div>
+              <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-rose-300" /><h3 className="font-semibold text-white">Failure trend</h3></div>
               <LineChart
                 series={[
                   { label: 'Chaser fall %', values: balanceHistory.map(m => (m.chaserFallRate ?? 0) * 100) },
                   { label: 'Chaser escape %', values: balanceHistory.map(m => (m.chaserEscapeRate ?? 0) * 100) },
                   { label: 'Runner fall %', values: balanceHistory.map(m => (m.runnerFallRate ?? 0) * 100) },
                 ]}
-                emptyLabel="Complete generations to populate the failure-rate chart."
+                emptyLabel="Complete generations to populate failure telemetry."
               />
-              <p className="mt-2 text-xs text-gray-500">Failure telemetry covers current-population matches only. Fall rates count matches containing the corresponding fall; escape rate counts matches terminated because the Chaser is outside the 50% readable camera envelope of every Runner. Falls/tags normally continue; an escape ends the chase immediately. Hall-of-Fame tests are excluded.</p>
-            </div>
-
-            <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> persistent NEAT species now carry lineage age and progress across generations, with conservative stagnation pruning and protected young/top lineages. The compact 23-input world-relative policy now has a signed horizontal-drive output plus independent jump and sprint outputs, so horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities. Every genome is evaluated against common opponent panels plus Hall of Fame champions. Recent champions are retained alongside a strength-aware behaviorally diverse historical archive, while a separate fixed benchmark tracks cross-generation progress and now gates only visible/generalist champion retention, never population breeding. Runner shaping is a capped 2-second pace requirement plus a small capped clean pressure-escape bonus, and Chaser shaping gives a small capped signal for safely following Runner-used terrain. A chase terminates as a Chaser failure only when the Chaser is outside the minimum useful 50% camera envelope of every Runner, preventing runaway separation without penalizing Runner–Runner divergence. Jump requires a release before it can fire again, and procedural terrain can create route-locked recursive forks and moving platforms that reconnect at explicit merges. The worker pool preloads genomes and batches episodes for lower messaging overhead.
             </div>
           </div>
         )}

@@ -1,8 +1,8 @@
-Space branch routes and ignore falling agents in camera framing
+Streamline telemetry and add repository agent skills
 
-- divide recursive branches into stable vertical route corridors so sibling paths stay visually distinct
-- add reachable divergence ramps: the first landing commits the route before later platforms spread to the full corridor
-- prevent trunk agents from skipping directly into nested descendants and preserve hard sibling route locks after commitment
-- lengthen branch runways, increase route-platform spacing, and keep branch moving platforms horizontal so paths remain readable
-- exclude clearly falling bodies from both rolling camera tracking and presentation framing, holding the camera if everyone is falling
-- preserve the existing swept no-overlap invariant and moving-platform safety rules
+- reduce the sidebar to compact live role/action/stamina telemetry and remove duplicated Elo/debug internals
+- simplify the Diagnostics overview to essential training-health and gameplay signals while preserving detailed exports/tabs
+- remove the unused per-frame visual reward-breakdown calculation and only attach live policy vectors when the senses overlay is enabled
+- add AGENTS.md plus the requested agent.md with project invariants, workflow, validation, Git, and packaging requirements
+- add portable project-local SKILL.md workflows for NEAT co-evolution, terrain generation, training diagnostics, UI telemetry, and release/Git handoffs
+- correct stale architecture documentation to the current 23-input / 3-output policy schema

@@ -31,7 +31,6 @@ import type {
   GameState,
   AgentState,
   PlatformState,
-  RewardBreakdown,
   DiagnosticsState,
   PerformanceDataPoint,
   UpgradeConfig,
@@ -54,8 +53,6 @@ import {
   SURVIVAL_TIME_HISTORY_LENGTH,
   TIME_TO_TAG_HISTORY_LENGTH,
   INITIAL_ELO,
-  RIGHTWARD_VELOCITY_REWARD,
-  RIGHTWARD_PROGRESSION_REWARD,
   DEFAULT_RUNNER_PACE_TARGET_PX,
   MIN_RUNNER_PACE_TARGET_PX,
   MAX_RUNNER_PACE_TARGET_PX,
@@ -310,7 +307,6 @@ export const App: React.FC = () => {
   const totalJumpsRef = useRef(0);
   const visualTagsRef = useRef(0);
   const visualFallsRef = useRef(0);
-  const visualJumpsRef = useRef(0);
 
   const mainContainerRef = useRef<HTMLDivElement>(null);
   const platformIdCounter = useRef(10);
@@ -931,106 +927,6 @@ export const App: React.FC = () => {
     setTerrainVarietyConfig(prev => sanitizeTerrainVarietyConfig({ ...prev, ...patch }));
   }, []);
 
-  const calculateReward = (
-    agent: AgentState,
-    prevState: AgentState,
-    currentGameState: GameState,
-    tagEvent: { taggerId?: number; taggedId?: number },
-    fell: boolean,
-    size: { width: number; height: number }
-  ): { total: number; breakdown: RewardBreakdown } => {
-    const breakdown: RewardBreakdown = {};
-
-    if (fell) {
-      breakdown['fallPenalty'] = -20;
-      return { total: -20, breakdown };
-    }
-
-    if (agent.lastAction === 'idle') {
-      breakdown['inactivity'] = -0.02;
-    }
-
-    const energyRatio = agent.energy / MAX_ENERGY;
-    if (energyRatio > 0.5) {
-      const highEnergyFactor = (energyRatio - 0.5) / 0.5;
-      breakdown['highEnergy'] = highEnergyFactor * 0.03;
-    }
-
-    const agentCenterX = agent.position.x + AGENT_WIDTH / 2;
-    const platformBelow = currentGameState.platforms.find(
-      p => agentCenterX >= p.position.x && agentCenterX <= p.position.x + p.width
-    );
-
-    if (platformBelow) {
-      const platformCenterX = platformBelow.position.x + platformBelow.width / 2;
-      const distFromCenter = Math.abs(agentCenterX - platformCenterX);
-      const halfWidth = platformBelow.width / 2;
-      if (agent.isOnGround && platformBelow.id === agent.lastPlatformId) {
-        breakdown['stayOnPlatform'] = (1 - distFromCenter / halfWidth) * 0.01;
-      }
-    }
-
-    const landedOnNewPlatform =
-      agent.isOnGround && !prevState.isOnGround && agent.lastPlatformId !== prevState.lastPlatformId && prevState.lastPlatformId !== null;
-    if (landedOnNewPlatform) {
-      visualJumpsRef.current++;
-      breakdown['successfulJump'] = 2.0;
-    }
-
-    // Rightward flow momentum incentives (visual telemetry only).
-    if (agent.velocity.x > 0.5) {
-      const forwardRatio = Math.min(1.0, agent.velocity.x / MAX_SPEED);
-      breakdown['rightwardVelocityReward'] = RIGHTWARD_VELOCITY_REWARD * forwardRatio;
-    }
-
-    // Rightward spatial progression reward (moving further right than previous frame)
-    if (agent.position.x > prevState.position.x + 0.1) {
-      const deltaX = agent.position.x - prevState.position.x;
-      breakdown['rightwardProgressionReward'] = Math.min(RIGHTWARD_PROGRESSION_REWARD, deltaX * 0.02);
-    }
-
-    if (agent.status === AgentStatus.It) {
-      if (tagEvent.taggerId === agent.id) {
-        breakdown['successfulTag'] = 20;
-      } else {
-        const evaders = currentGameState.agents.filter(a => a.status !== AgentStatus.It) || [];
-        if (evaders.length > 0) {
-          const prevClosestDist = Math.min(
-            ...evaders.map(e => Math.hypot(prevState.position.x - e.position.x, prevState.position.y - e.position.y))
-          );
-          const currentClosestDist = Math.min(
-            ...evaders.map(e => Math.hypot(agent.position.x - e.position.x, agent.position.y - e.position.y))
-          );
-          breakdown['closingDistance'] = (prevClosestDist - currentClosestDist) * 0.05;
-          const maxVisibleDistance = Math.hypot(size.width, size.height);
-          const normalizedDistance = Math.min(1, currentClosestDist / maxVisibleDistance);
-          breakdown['proximityToTarget'] = Math.pow(1 - normalizedDistance, 2) * 0.16;
-        }
-        breakdown['timePenalty'] = -0.04;
-      }
-    } else {
-      if (tagEvent.taggedId === agent.id) {
-        breakdown['wasTagged'] = -20;
-      } else {
-        const itAgent = currentGameState.agents.find(a => a.status === AgentStatus.It);
-        if (itAgent) {
-          const prevDist = Math.hypot(prevState.position.x - itAgent.position.x, prevState.position.y - itAgent.position.y);
-          const currentDist = Math.hypot(agent.position.x - itAgent.position.x, agent.position.y - itAgent.position.y);
-          breakdown['increasingDistance'] = (currentDist - prevDist) * 0.05;
-          const maxVisibleDistance = Math.hypot(size.width, size.height);
-          const normalizedDistance = Math.min(1, currentDist / maxVisibleDistance);
-          breakdown['distanceFromTagger'] = Math.pow(normalizedDistance, 2) * 0.16;
-          breakdown['survival'] = 0.02;
-        } else {
-          breakdown['survival'] = 0.02;
-        }
-      }
-    }
-
-    const total = Object.values(breakdown).reduce((sum, value) => sum + value, 0);
-    return { total, breakdown };
-  };
-
   const updateGame = useCallback(
     (deltaTime: number) => {
       setGameState(prevGameState => {
@@ -1150,7 +1046,6 @@ export const App: React.FC = () => {
           if (pursuit.runnerSprintStaminaCostPerSec !== undefined) activeUpgrades.sprintRunnerStaminaCostPerSec = pursuit.runnerSprintStaminaCostPerSec;
         }
 
-        const fallEvents: { [id: number]: boolean } = {};
         const agentsBeforePhysics = newState.agents;
         newState.agents = agentsBeforePhysics.map(agent => {
           const actionDecision = agentActions[agent.id];
@@ -1173,7 +1068,6 @@ export const App: React.FC = () => {
 
           if (physics.jumped) playDynamicJumpSound(physics.jumpVelocity);
           if (physics.fell) {
-            fallEvents[agent.id] = true;
             visualFallsRef.current++;
             playFallSound();
           }
@@ -1217,10 +1111,8 @@ export const App: React.FC = () => {
         }
 
         // 5. Tag Detection & role swap through the shared visual-game rule.
-        let tagEvent: { taggerId?: number; taggedId?: number } = {};
         const tagTransition = resolveTagSwap(newState.agents);
         if (tagTransition) {
-          tagEvent = { taggerId: tagTransition.taggerId, taggedId: tagTransition.taggedId };
           visualTagsRef.current++;
 
           recentSurvivalTimes.current.push(tagTransition.survivalTimeMs);
@@ -1269,26 +1161,11 @@ export const App: React.FC = () => {
           newState.avgTimeToTag = currentActiveTagger.timeSinceBecameIt || 0;
         }
 
-        // 7. Visual reward breakdown is retained only as explanatory UI telemetry.
-        const rewardBreakdowns: { [id: number]: RewardBreakdown } = {};
-        newState.agents.forEach(agent => {
-          const prevState = prevGameState.agents.find(a => a.id === agent.id)!;
-          const { breakdown } = calculateReward(
-            agent,
-            prevState,
-            newState,
-            tagEvent,
-            fallEvents[agent.id] || false,
-            viewportSize
-          );
-          rewardBreakdowns[agent.id] = breakdown;
-        });
-
         // Evolution is intentionally absent from the main thread; the worker owns generations.
 
         // Evolutionary diagnostics remain worker-owned; the visible game is presentation only.
 
-        // 8. Camera Tracking (shared with headless training)
+        // 7. Camera Tracking (shared with headless training)
         newState.cameraPosition.x = updateChaseCameraX(
           newState.agents,
           newState.platforms,
@@ -1296,7 +1173,7 @@ export const App: React.FC = () => {
           viewportSize.width
         );
 
-        // 9. Platform Generation. The visual game continues to use Math.random; training
+        // 8. Platform Generation. The visual game continues to use Math.random; training
         // supplies a seeded RNG to this same rule so all compared genomes see identical terrain.
         const platformUpdate = maintainPlatformsForCamera(
           newState.platforms,
@@ -1311,27 +1188,22 @@ export const App: React.FC = () => {
         newState.platforms = platformUpdate.platforms;
         platformIdCounter.current = platformUpdate.nextPlatformId;
 
-        // 10. Tag Visual Effects
+        // 9. Tag Visual Effects
         newState.tagEffects = newState.tagEffects
           .map(effect => ({ ...effect, life: effect.life - deltaTime }))
           .filter(effect => effect.life > 0);
 
-        // Attach UI State
-        newState.agents = newState.agents.map(agent => {
-          const breakdown = rewardBreakdowns[agent.id] || {};
-          const stateVector = getAgentStateVector(agent, newState, viewportSize);
-
-          return {
-            ...agent,
-            stateVector,
-            rewardBreakdown: breakdown,
-          };
-        });
+        // Attach only the live policy input vector needed by the optional senses overlay.
+        newState.agents = newState.agents.map(agent => ({
+          ...agent,
+          stateVector: showSenses ? getAgentStateVector(agent, newState, viewportSize) : undefined,
+          rewardBreakdown: undefined,
+        }));
 
         return newState;
       });
     },
-    [isSimulating, viewportSize, sprintUpgradeActive, controlledJumpUpgradeActive, upgradeConfig, architectureExperimentStatus, terrainVarietyConfig]
+    [isSimulating, viewportSize, sprintUpgradeActive, controlledJumpUpgradeActive, upgradeConfig, architectureExperimentStatus, terrainVarietyConfig, showSenses]
   );
 
   const updateSimulation = useCallback(
@@ -1394,7 +1266,6 @@ export const App: React.FC = () => {
     recentTimesToTag.current = [];
     visualTagsRef.current = 0;
     visualFallsRef.current = 0;
-    visualJumpsRef.current = 0;
     actionCountsRef.current = { all: {}, chaser: {}, evader: {} };
     visualStepAccumulatorRef.current = 0;
     platformIdCounter.current = 10;
@@ -1944,13 +1815,10 @@ export const App: React.FC = () => {
         </main>
         <InfoPanel
           agents={gameState.agents}
-          isSimulating={isSimulating}
             showTrails={showTrails}
           onToggleTrails={handleToggleTrails}
           showSenses={showSenses}
           onToggleSenses={handleToggleSenses}
-          chaserElo={chaserElo.current}
-          evaderElo={evaderElo.current}
           onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
           upgradeConfig={upgradeConfig}
           sprintUpgradeActive={sprintUpgradeActive}
