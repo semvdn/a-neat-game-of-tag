@@ -248,8 +248,9 @@ interface EvolutionCheckpoint {
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   /** Fitness semantics marker for compatibility with checkpoints created before right-only exploration. */
   explorationRewardMode?: 'safe-per-runner-right-frontier';
-  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4';
+  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5';
   actionSchema?: 'signed-horizontal-controls-v2';
+  stateSchema?: 'world-relative-senses-v3';
   horizontalControlResolution?: 'signed-axis-v2';
   chaserElo: number;
   evaderElo: number;
@@ -425,7 +426,7 @@ const analysisHistory: TrainingGenerationAnalysisRecord[] = [];
 let latestSafeCheckpoint: EvolutionCheckpoint | null = null;
 
 interface ArchitectureExperimentDefinition {
-  id: 'full_pursuit_control' | 'stronger_pursuit_protection' | 'strict_clean_crossplay';
+  id: 'camera_fixed_pursuit' | 'camera_fixed_strict_crossplay';
   label: string;
   hypothesis: string;
   architecture: NetworkArchitectureSuiteConfig;
@@ -771,6 +772,9 @@ interface ContemporaryMatchupEvaluation {
   timeWithin200Pct: number;
   closeEncountersPerEpisode: number;
   failureEventsPerEpisode: number;
+  normalLongClosingPx: number;
+  normalLongTimeWithin200Pct: number;
+  normalLongCloseEncountersPerEpisode: number;
 }
 
 function generalistCrossPlayOpponents(role: 'chaser' | 'evader'): NeatGenomeData[] {
@@ -844,19 +848,26 @@ function evaluateContemporaryMatchup(genome: NeatGenomeData, role: 'chaser' | 'e
       timeWithin200Pct: 0,
       closeEncountersPerEpisode: 0,
       failureEventsPerEpisode: 0,
+      normalLongClosingPx: 0,
+      normalLongTimeWithin200Pct: 0,
+      normalLongCloseEncountersPerEpisode: 0,
     };
   }
 
   const candidate = new LearningAgent(role, genome);
   const opponentRole = role === 'chaser' ? 'evader' : 'chaser';
   const opponent = new LearningAgent(opponentRole, opposingRetained.genome);
-  const modes: TrainingStartMode[] = ['pressure', 'varied', 'midgame'];
+  const modes: TrainingStartMode[] = ['pressure_close', 'pressure_normal', 'pressure_long', 'midgame'];
   let fitness = 0;
   let cleanTags = 0;
   let pace = 0;
   let within200 = 0;
   let close = 0;
   let failures = 0;
+  let normalLongClosing = 0;
+  let normalLongWithin200 = 0;
+  let normalLongClose = 0;
+  let normalLongMatches = 0;
   let matches = 0;
   for (let i = 0; i < modes.length; i++) {
     const seed = (0x4c11db7 ^ Math.imul(i + 1, 0x9e3779b1) ^ (role === 'chaser' ? 0x5137a91d : 0x2a6f5c31)) >>> 0;
@@ -880,6 +891,12 @@ function evaluateContemporaryMatchup(genome: NeatGenomeData, role: 'chaser' | 'e
     within200 += result.timeWithin200Ms / Math.max(1, result.elapsedMs);
     close += result.closeEncounters;
     failures += result.tags + result.evaderFalls;
+    if (modes[i] === 'pressure_normal' || modes[i] === 'pressure_long') {
+      normalLongClosing += Math.max(0, result.initialNearestRunnerDistancePx - result.minNearestRunnerDistancePx);
+      normalLongWithin200 += result.timeWithin200Ms / Math.max(1, result.elapsedMs);
+      normalLongClose += result.closeEncounters;
+      normalLongMatches++;
+    }
     matches++;
   }
   const denom = Math.max(1, matches);
@@ -891,17 +908,22 @@ function evaluateContemporaryMatchup(genome: NeatGenomeData, role: 'chaser' | 'e
     timeWithin200Pct: within200 / denom,
     closeEncountersPerEpisode: close / denom,
     failureEventsPerEpisode: failures / denom,
+    normalLongClosingPx: normalLongClosing / Math.max(1, normalLongMatches),
+    normalLongTimeWithin200Pct: normalLongWithin200 / Math.max(1, normalLongMatches),
+    normalLongCloseEncountersPerEpisode: normalLongClose / Math.max(1, normalLongMatches),
   };
 }
 
 function passesStrictContemporaryGate(role: 'chaser' | 'evader', evaluation: ContemporaryMatchupEvaluation): boolean {
   if (evaluation.matches === 0) return true;
   if (role === 'chaser') {
-    // A retained Chaser must prove it can actually engage the current elite Runner: preferably a
-    // clean catch, otherwise sustained close pursuit. This blocks high frozen-benchmark specialists
-    // whose contemporary matchup simply runs out of interaction range.
-    return evaluation.cleanTagsPerEpisode >= 1 / 3 ||
-      (evaluation.timeWithin200Pct >= 0.12 && evaluation.closeEncountersPerEpisode >= 1);
+    // A retained Chaser must prove both clean-catch capability and the ability to close from
+    // ordinary/long pursuit starts. This blocks specialists that only work in close-pressure resets.
+    const hasCleanCatchCapability = evaluation.cleanTagsPerEpisode >= 0.25;
+    const closesFromNormalOrLong = evaluation.normalLongClosingPx >= 80 ||
+      evaluation.normalLongTimeWithin200Pct >= 0.08 ||
+      evaluation.normalLongCloseEncountersPerEpisode >= 0.5;
+    return hasCleanCatchCapability && closesFromNormalOrLong;
   }
   // A retained Runner must remain a progressing survivor against the current elite Chaser rather
   // than winning only by camping or by repeatedly falling through the course.
@@ -918,7 +940,7 @@ function evaluateGeneralistCandidate(
   const crossPlay = evaluateGeneralistCrossPlay(genome, role);
   const contemporary = activePursuitExperimentFlags.strictContemporaryGate
     ? evaluateContemporaryMatchup(genome, role)
-    : { meanFitness: 100, matches: 0, cleanTagsPerEpisode: 0, paceCompletion: 0, timeWithin200Pct: 0, closeEncountersPerEpisode: 0, failureEventsPerEpisode: 0 };
+    : { meanFitness: 100, matches: 0, cleanTagsPerEpisode: 0, paceCompletion: 0, timeWithin200Pct: 0, closeEncountersPerEpisode: 0, failureEventsPerEpisode: 0, normalLongClosingPx: 0, normalLongTimeWithin200Pct: 0, normalLongCloseEncountersPerEpisode: 0 };
   // Frozen benchmark anchors generalization, while broader cross-play and (only in condition C)
   // the direct contemporary matchup prevent retained policies from looking strong only on paper.
   const score = activePursuitExperimentFlags.strictContemporaryGate && contemporary.matches > 0
@@ -967,6 +989,9 @@ function revalidateRetainedGeneralist(role: 'chaser' | 'evader'): void {
     contemporaryTimeWithin200Pct: evaluation.contemporary.timeWithin200Pct,
     contemporaryCloseEncountersPerEpisode: evaluation.contemporary.closeEncountersPerEpisode,
     contemporaryFailureEventsPerEpisode: evaluation.contemporary.failureEventsPerEpisode,
+    contemporaryNormalLongClosingPx: evaluation.contemporary.normalLongClosingPx,
+    contemporaryNormalLongTimeWithin200Pct: evaluation.contemporary.normalLongTimeWithin200Pct,
+    contemporaryNormalLongCloseEncountersPerEpisode: evaluation.contemporary.normalLongCloseEncountersPerEpisode,
   };
 }
 
@@ -1005,6 +1030,9 @@ function restoreRetainedGeneralist(
       contemporaryTimeWithin200Pct: evaluation.contemporary.timeWithin200Pct,
       contemporaryCloseEncountersPerEpisode: evaluation.contemporary.closeEncountersPerEpisode,
       contemporaryFailureEventsPerEpisode: evaluation.contemporary.failureEventsPerEpisode,
+      contemporaryNormalLongClosingPx: evaluation.contemporary.normalLongClosingPx,
+      contemporaryNormalLongTimeWithin200Pct: evaluation.contemporary.normalLongTimeWithin200Pct,
+      contemporaryNormalLongCloseEncountersPerEpisode: evaluation.contemporary.normalLongCloseEncountersPerEpisode,
     };
   }
   setRetainedGeneralist(role, { genome: storedGenome, controller, telemetry });
@@ -1046,6 +1074,9 @@ function considerRetainedGeneralistCandidates(
     incumbent.telemetry.contemporaryTimeWithin200Pct = current.contemporary.timeWithin200Pct;
     incumbent.telemetry.contemporaryCloseEncountersPerEpisode = current.contemporary.closeEncountersPerEpisode;
     incumbent.telemetry.contemporaryFailureEventsPerEpisode = current.contemporary.failureEventsPerEpisode;
+    incumbent.telemetry.contemporaryNormalLongClosingPx = current.contemporary.normalLongClosingPx;
+    incumbent.telemetry.contemporaryNormalLongTimeWithin200Pct = current.contemporary.normalLongTimeWithin200Pct;
+    incumbent.telemetry.contemporaryNormalLongCloseEncountersPerEpisode = current.contemporary.normalLongCloseEncountersPerEpisode;
     incumbentScore = current.score;
     incumbentBenchmarkScore = current.benchmarkScore;
   }
@@ -1093,6 +1124,9 @@ function considerRetainedGeneralistCandidates(
       contemporaryTimeWithin200Pct: bestEvaluation.contemporary.timeWithin200Pct,
       contemporaryCloseEncountersPerEpisode: bestEvaluation.contemporary.closeEncountersPerEpisode,
       contemporaryFailureEventsPerEpisode: bestEvaluation.contemporary.failureEventsPerEpisode,
+      contemporaryNormalLongClosingPx: bestEvaluation.contemporary.normalLongClosingPx,
+      contemporaryNormalLongTimeWithin200Pct: bestEvaluation.contemporary.normalLongTimeWithin200Pct,
+      contemporaryNormalLongCloseEncountersPerEpisode: bestEvaluation.contemporary.normalLongCloseEncountersPerEpisode,
     },
   };
   setRetainedGeneralist(role, retained);
@@ -1475,8 +1509,9 @@ function buildEvolutionCheckpoint(analysisHistoryLimit = 0): EvolutionCheckpoint
     trainingFitnessConfig: sanitizeTrainingFitnessConfig(trainingFitnessConfig),
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     explorationRewardMode: 'safe-per-runner-right-frontier',
-    gameplayObjectiveVersion: 'pursuit-design-v4',
+    gameplayObjectiveVersion: 'world-camera-decoupled-v5',
     actionSchema: 'signed-horizontal-controls-v2',
+    stateSchema: 'world-relative-senses-v3',
     horizontalControlResolution: 'signed-axis-v2',
     chaserElo,
     evaderElo,
@@ -1543,8 +1578,8 @@ function checkpointWithRecentAnalysis(base: EvolutionCheckpoint | null, historyL
 }
 
 function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
-  if (!checkpoint || checkpoint.format !== 'neat-tag-evolution-checkpoint' || checkpoint.version !== 2 || checkpoint.actionSchema !== 'signed-horizontal-controls-v2') {
-    throw new Error('This checkpoint uses an incompatible older controller. Start a fresh run or load a checkpoint created by this build.');
+  if (!checkpoint || checkpoint.format !== 'neat-tag-evolution-checkpoint' || checkpoint.version !== 2 || checkpoint.actionSchema !== 'signed-horizontal-controls-v2' || checkpoint.stateSchema !== 'world-relative-senses-v3') {
+    throw new Error('This checkpoint uses an incompatible older policy state/controller schema. This build requires fresh 23-input world-relative policies.');
   }
 
   networkArchitecture = sanitizeNetworkArchitectureSuite(checkpoint.networkArchitecture || DEFAULT_NETWORK_ARCHITECTURE_SUITE);
@@ -1560,7 +1595,7 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
   upgradeConfig = sanitizeUpgradeConfig(checkpoint.upgradeConfig);
   const migratedExplorationFitness = !checkpoint.trainingFitnessConfig;
   const migratedExplorationRewardMode = checkpoint.explorationRewardMode !== 'safe-per-runner-right-frontier';
-  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'pursuit-design-v4';
+  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'world-camera-decoupled-v5';
   const migratedHorizontalControl = checkpoint.horizontalControlResolution !== 'signed-axis-v2';
   trainingFitnessConfig = sanitizeTrainingFitnessConfig(checkpoint.trainingFitnessConfig);
   chaserElo = Number.isFinite(checkpoint.chaserElo) ? checkpoint.chaserElo : INITIAL_ELO;
@@ -2538,18 +2573,19 @@ function cloneCheckpoint<T>(value: T): T {
 }
 
 function architectureExperimentDefinitions(): ArchitectureExperimentDefinition[] {
-  // Hold architecture fixed so this suite isolates competitive game design rather than neural capacity.
+  // Architecture and pursuit physics are fixed so this suite isolates the strict contemporary gate
+  // after removing camera-frame physics from the world.
   const fixedArchitecture: NetworkArchitectureSuiteConfig = sanitizeNetworkArchitectureSuite({
     linkedRoles: true,
     chaser: { ...NETWORK_ARCHITECTURE_PRESETS.memory_evolve, hiddenLayers: [...NETWORK_ARCHITECTURE_PRESETS.memory_evolve.hiddenLayers] },
     runner: { ...NETWORK_ARCHITECTURE_PRESETS.memory_evolve, hiddenLayers: [...NETWORK_ARCHITECTURE_PRESETS.memory_evolve.hiddenLayers] },
   });
-  const currentFullPursuit: PursuitDesignConfig = {
-    chaserBaseMaxSpeed: 5.4,
+  const cameraFixedPursuit: PursuitDesignConfig = {
+    chaserBaseMaxSpeed: 5.7,
     runnerBaseMaxSpeed: 5.0,
-    chaserSprintMaxSpeed: 7.8,
+    chaserSprintMaxSpeed: 7.9,
     runnerSprintMaxSpeed: 7.5,
-    chaserSprintStaminaCostPerSec: 32,
+    chaserSprintStaminaCostPerSec: 28,
     runnerSprintStaminaCostPerSec: 24,
     pressureStartDistribution: true,
     chaserProximityProgressReward: true,
@@ -2557,44 +2593,27 @@ function architectureExperimentDefinitions(): ArchitectureExperimentDefinition[]
     chaserProximityRewardPerStep: 1,
     chaserProximityRewardCapPerSegment: 6,
     runnerPressureEscapeEpisodeCap: 6,
-    branchStructureMinX: 1200,
-  };
-  const strongerPursuit: PursuitDesignConfig = {
-    ...currentFullPursuit,
-    chaserBaseMaxSpeed: 5.7,
-    chaserSprintMaxSpeed: 7.9,
-    chaserSprintStaminaCostPerSec: 28,
     postFallRunnerTagProtectionMs: 900,
+    branchStructureMinX: 1200,
   };
   return [
     {
-      id: 'full_pursuit_control',
-      label: 'Current Full Pursuit control',
-      hypothesis: 'Re-runs the previous Full Pursuit condition unchanged as the baseline for clean-tag and pursuit-balance comparison.',
+      id: 'camera_fixed_pursuit',
+      label: 'B · Camera-fixed pursuit',
+      hypothesis: 'Tests the 5.7/7.9 pursuit + 900ms fall-protection design after removing camera walls and camera-relative policy senses.',
       architecture: fixedArchitecture,
-      pursuitDesign: { ...currentFullPursuit },
+      pursuitDesign: { ...cameraFixedPursuit },
       pressureStarts: true,
       crossPlayGate: true,
       strictContemporaryGate: false,
-      cleanTagShowcase: false,
+      cleanTagShowcase: true,
     },
     {
-      id: 'stronger_pursuit_protection',
-      label: 'Stronger pursuit + fall protection',
-      hypothesis: 'Tests whether a 5.7 base / 7.9 sprint Chaser with lower sprint drain plus 900ms Runner post-fall protection creates clean catches without selection changes.',
+      id: 'camera_fixed_strict_crossplay',
+      label: 'C · Camera-fixed strict cross-play',
+      hypothesis: 'Adds a multi-distance contemporary gate that requires clean-tag capability plus meaningful closing from normal/long pursuit starts.',
       architecture: fixedArchitecture,
-      pursuitDesign: { ...strongerPursuit },
-      pressureStarts: true,
-      crossPlayGate: true,
-      strictContemporaryGate: false,
-      cleanTagShowcase: false,
-    },
-    {
-      id: 'strict_clean_crossplay',
-      label: 'Strict cross-play + clean-tag showcase',
-      hypothesis: 'Adds a direct retained-opponent engagement gate and scores showcase tags only when they are not attributable to a recent Runner fall.',
-      architecture: fixedArchitecture,
-      pursuitDesign: { ...strongerPursuit },
+      pursuitDesign: { ...cameraFixedPursuit },
       pressureStarts: true,
       crossPlayGate: true,
       strictContemporaryGate: true,
@@ -2759,7 +2778,7 @@ function completeArchitectureExperimentSuite(): void {
   const completedAt = Date.now();
   const report = {
     format: 'neat-tag-pursuit-design-experiment-suite',
-    version: 2,
+    version: 3,
     generatedAt: completedAt,
     targetGeneration: suite.targetGeneration,
     experiments: suite.results,
@@ -2769,7 +2788,7 @@ function completeArchitectureExperimentSuite(): void {
         id, label, hypothesis, architecture, pursuitDesign, pressureStarts, crossPlayGate, strictContemporaryGate, cleanTagShowcase,
       })),
       controlledGameSettingsAcrossRuns: true,
-      deliberatePursuitDesignDifferencesAcrossRuns: true,
+      deliberatePursuitDesignDifferencesAcrossRuns: false,
       sameUpgradeSettingsAcrossRuns: true,
       sharedFrozenBenchmarkOpponentBank: true,
       stationaryCollapseFix: {
@@ -2778,14 +2797,15 @@ function completeArchitectureExperimentSuite(): void {
         directionConflictTelemetry: true,
       },
       fixedArchitectureAcrossRuns: 'Memory Discovery (16→12 feed-forward start, recurrence may evolve)',
-      fullPursuitFrameworkAcrossRuns: 'pressure starts + proximity bootstrap + early branching + existing benchmark/cross-play retention gate',
+      fullPursuitFrameworkAcrossRuns: 'camera-decoupled world physics + 5.7/7.9 pursuit + 900ms fall protection + pressure starts + proximity bootstrap + early branching + benchmark/cross-play retention',
       eliteOpponentTrainingAcrossRuns: true,
       robustSelectionAcrossRuns: '70% mean fitness + 30% lower-quartile fitness',
-      conditionA: 'Exact previous Full Pursuit control: Chaser 5.4/7.8, 32/s sprint drain; Runner 5.0/7.5, 24/s.',
-      conditionB: 'A with Chaser 5.7/7.9, 28/s sprint drain and 900ms Runner post-fall tag protection.',
-      conditionC: 'B plus direct retained-opponent engagement gating and clean-tag showcase scoring.',
+      conditionB: 'Camera-decoupled world + Chaser 5.7/7.9, 28/s sprint drain + Runner 5.0/7.5, 24/s + 900ms Runner post-fall protection.',
+      conditionC: 'B plus strict contemporary evaluation across close (160–200px), normal (275–325px), long (375–425px), and midgame starts. Chaser retention requires clean-tag capability plus normal/long closing.',
       exportedHistorySampling: 'Every 5 generations plus first/final generation; final state and deterministic probes remain full detail.',
-      notes: 'Each condition starts from a fresh population with the same architecture, Full Pursuit curriculum, user upgrade/fitness settings, and frozen benchmark bank. B isolates stronger pursuit/fall fairness; C isolates stricter contemporary and clean-tag selection on top of B. The user\'s original run is restored after export.',
+      cameraPhysics: 'Presentation camera is observational only; agents are never clamped to the viewport, respawns are world-relative, and platform retention covers all active agents.',
+      policyState: '23 world-relative inputs; camera-boundary inputs removed.',
+      notes: 'Both conditions start from fresh populations with identical architecture, pursuit physics, curriculum, user upgrade/fitness settings, and frozen benchmark bank. Only C adds the multi-distance strict contemporary gate. The user\'s original run is restored after export.',
     },
     suiteWallTimeMs: completedAt - suite.startedAt,
   };
@@ -2837,7 +2857,7 @@ function maybeAdvanceArchitectureExperiment(evaluatedGeneration: number): void {
 
 function startArchitectureExperimentSuite(targetGeneration: number): void {
   if (architectureExperimentSuite) throw new Error('An architecture experiment suite is already running.');
-  const target = Math.max(50, Math.min(1500, Math.round(Number(targetGeneration) || 350)));
+  const target = Math.max(50, Math.min(1500, Math.round(Number(targetGeneration) || 275)));
   const originalCheckpoint = checkpointWithRecentAnalysis(latestSafeCheckpoint, MAX_EXPERIMENT_RESTORE_HISTORY);
   architectureExperimentSuite = {
     targetGeneration: target,
@@ -3084,6 +3104,9 @@ function buildAnalysisProbeSet(
         closeEncounters: result.closeEncounters,
         successfulEvades: result.successfulEvades,
         meanNearestRunnerDistancePx: result.meanNearestRunnerDistancePx,
+        initialNearestRunnerDistancePx: result.initialNearestRunnerDistancePx,
+        minNearestRunnerDistancePx: result.minNearestRunnerDistancePx,
+        closingImprovementPx: Math.max(0, result.initialNearestRunnerDistancePx - result.minNearestRunnerDistancePx),
         timeWithin100Ms: result.timeWithin100Ms,
         timeWithin200Ms: result.timeWithin200Ms,
         timeWithin400Ms: result.timeWithin400Ms,
@@ -3153,7 +3176,8 @@ function buildAnalysisExport(historyStride = 1) {
     policyOutputSpace: [...POLICY_OUTPUT_SPACE],
     actionSchema: 'signed-horizontal-controls-v2',
     horizontalControlResolution: 'signed-axis-v2',
-    gameplayObjectiveVersion: 'pursuit-design-v4',
+    gameplayObjectiveVersion: 'world-camera-decoupled-v5',
+    stateSchema: 'world-relative-senses-v3',
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     pursuitDesign: activePursuitDesign ? { ...activePursuitDesign } : null,
     pursuitExperimentFlags: { ...activePursuitExperimentFlags },

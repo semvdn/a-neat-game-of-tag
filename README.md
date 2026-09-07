@@ -4,43 +4,37 @@ This build evolves two NEAT policies—**Chaser** and **Runner**—inside the sa
 
 ## Policy interface
 
-The controller intentionally stays small, but its four outputs are now **factorized rather than mutually exclusive**:
+The controller is deliberately compact and uses a **single signed horizontal axis**, which prevents left/right outputs from cancelling each other:
 
-- **Outputs (4):** `move_left`, `move_right`, `jump`, `sprint`
-- **Simultaneous controls:** left/right drive and jump can be active on the same physics step; Sprint is independent and ignored when the manual Sprint ability is disabled
-- **Policy inputs:** **25 compact state values**
-- **Role-specific networks:** the chaser and runner use separate NEAT populations
+- **Policy outputs (3):** `horizontal_drive` (-1 left … +1 right), `jump`, `sprint`
+- **Derived action telemetry:** `move_left` / `move_right` are diagnostic labels derived from the signed drive; they are not separate neural outputs
+- **Policy inputs:** **23 world-relative state values**; presentation-camera position is intentionally excluded
+- **Role-specific networks:** the Chaser and Runner use separate NEAT populations
 - **Jump button hysteresis:** jump fires only on a high press and cannot fire again until the output is released below a lower release threshold, eliminating held-output auto-repeat
 - **Controlled Jump:** when enabled manually, jump-output magnitude controls jump power/cost instead of requiring a separate action
 
-### Compact 25-input sense vector
+### Compact 23-input world-relative sense vector
 
 `learning/state.ts` writes directly into caller-owned buffers during training. The layout is:
 
 | Inputs | Meaning |
 | --- | --- |
-| 0–4 | self velocity, vertical velocity, energy, grounded state, **normalized remaining cooldown** |
-| 5–7 | left/right policy-frame distance and **target/threat normalized remaining cooldown** |
-| 8–9 | left/right ledge distance on the current/reference platform |
-| 10–12 | nearest platform ahead: dx, dy, width |
-| 13–15 | second platform ahead: dx, dy, width |
-| 16–18 | nearest platform behind: dx, dy, width |
-| 19–22 | current target/threat: dx, dy, vx, vy |
-| 23–24 | closest runner teammate: dx, dy |
+| 0–4 | self horizontal/vertical velocity, energy, grounded state, **normalized remaining cooldown** |
+| 5 | target/threat normalized remaining cooldown |
+| 6–7 | left/right ledge distance on the current/reference platform |
+| 8–10 | nearest platform ahead: dx, dy, width |
+| 11–13 | second platform ahead: dx, dy, width |
+| 14–16 | nearest platform behind: dx, dy, width |
+| 17–20 | current target/threat: dx, dy, vx, vy |
+| 21–22 | closest Runner teammate: dx, dy |
 
-The old 39-input representation was deliberately simplified. Removed channels were either deterministic duplicates or costly overlapping geometry:
+The policy state is intentionally **world-relative**. The former left/right camera-boundary channels have been removed because the camera is now presentation-only and must not influence physics or learned decisions. Other previously removed channels remain omitted because they are deterministic duplicates or costly overlapping geometry: role bit, duplicate ledge flags, teammate velocity, LiDAR rays, and a constant bias input.
 
-- role / `is It` bit — redundant because the networks are role-specific;
-- closest-ledge and near-ledge flags — derivable from the retained left/right ledge distances;
-- teammate velocity — lower-value duplicate dynamic information;
-- eight LiDAR rays — overlapped with platform, ledge and frame information;
-- constant bias input — NEAT nodes already have evolvable biases.
+Nearby platforms use **stable semantic slots** (`next`, `next2`, `previous`) rather than being sorted by Euclidean distance, avoiding sudden slot identity swaps as an agent moves.
 
-Nearby platforms now have **stable semantic slots** (`next`, `next2`, `previous`) rather than being sorted by Euclidean distance, avoiding sudden slot identity swaps as an agent moves.
+Cooldown sensing is continuous rather than boolean. A value of `1` means the relevant body has just entered a protected/no-tag window and it falls smoothly to `0` as that window expires.
 
-Cooldown sensing is continuous rather than boolean. A value of `1` means the relevant body has just entered its role-specific protected/no-tag window and it falls smoothly to `0` as that window expires. This correctly exposes both the new Chaser's brief 600 ms no-tag delay and a protected Runner's 2 s cooldown. The target/threat cooldown occupies the former fall-depth channel, which was nearly constant during normal gameplay.
-
-> **Compatibility:** old 39-input champions remain incompatible. In addition, checkpoints/policies from the former mutually-exclusive left/right/jump/wait controller are intentionally rejected because the same four output neurons now have factorized semantics. Start a fresh evolutionary run in this build.
+> **Compatibility:** this experiment requires fresh policies. Older 39-input, 25-input camera-relative, and four-output left/right checkpoints are intentionally rejected rather than silently remapped.
 
 ## Manual abilities only
 
@@ -218,12 +212,12 @@ Role Elo is diagnostic only and does not influence NEAT selection.
 
 ## Senses overlay
 
-Press **S** or use the sidebar toggle to show the current 25 policy inputs. The overlay displays self state, target/threat, teammate position, semantic platform slots, ledges, frame boundaries and normalized cooldowns. It no longer draws LiDAR rays because LiDAR is no longer part of the policy input.
+Press **S** or use the sidebar toggle to show the current 23 policy inputs. The overlay displays self state, target/threat, teammate position, semantic platform slots, ledges and normalized cooldowns. The presentation camera is intentionally absent from policy sensing. It no longer draws LiDAR rays because LiDAR is no longer part of the policy input.
 
 ## Important files
 
-- `learning/state.ts` — compact allocation-efficient 25-D policy state
-- `learning/agent.ts` — four-output factorized NEAT controller wrapper and compatibility checks
+- `learning/state.ts` — compact allocation-efficient 23-D world-relative policy state
+- `learning/agent.ts` — three-output signed-horizontal NEAT controller wrapper and compatibility checks
 - `learning/trainingEpisode.ts` — fixed-horizon persistent evaluation with reusable buffers
 - `learning/simulationCore.ts` — gameplay shared by visual and headless simulation
 - `learning/neat.ts` — NEAT evolution/network implementation
@@ -269,7 +263,7 @@ The persistence controls now save **full NEAT evolutionary checkpoints**, not on
 - the accumulated per-generation analysis log;
 - UI diagnostic histories when saved/exported through the app.
 
-Checkpoints are captured at **completed-generation boundaries**. If Save/Export is pressed while evaluator workers are halfway through the next generation, the latest complete boundary is written rather than serializing an inconsistent subset of completed worker batches. Restoring resumes that full population at the beginning of its next evaluation. Champion-only JSON created by the factorized-control builds can seed fresh populations/species/Hall-of-Fame state. This temporary experiment build intentionally changes the neural action schema from four outputs to three (`signed horizontal drive`, `jump`, `sprint`). Older four-output checkpoints/policies are therefore rejected rather than silently remapped; start a fresh run for the experiment. Checkpoints created by this build remain fully restorable.
+Checkpoints are captured at **completed-generation boundaries**. If Save/Export is pressed while evaluator workers are halfway through the next generation, the latest complete boundary is written rather than serializing an inconsistent subset of completed worker batches. Restoring resumes that full population at the beginning of its next evaluation. Champion-only JSON created by the factorized-control builds can seed fresh populations/species/Hall-of-Fame state. This temporary experiment build uses three policy outputs (`signed horizontal drive`, `jump`, `sprint`) and the new 23-input world-relative state schema. Older four-output or 25-input camera-relative checkpoints are rejected rather than silently remapped; start a fresh run for this experiment. Checkpoints created by this build remain fully restorable.
 
 The full checkpoint JSON can become much larger than a champion-only file; **Export checkpoint** is therefore the most robust long-term archive path. Browser-local Save still uses local storage and can hit the browser's quota on very large, highly complex populations.
 
@@ -303,48 +297,31 @@ This keeps the opponent league from filling with many generations of effectively
 
 
 
-## Temporary pursuit-design experiment runner
+## Temporary camera-decoupled pursuit experiment runner
 
-The Architecture diagnostics tab includes a temporary **Run experiments** tool that holds neural architecture fixed at **Memory Discovery** (16→12 feed-forward start, recurrence may evolve) and now tests only the final Full Pursuit balance questions:
+The Architecture diagnostics tab includes a temporary **Run experiments** tool that holds neural architecture and pursuit physics fixed, then compares only two conditions after removing the camera from gameplay physics.
 
-1. **Current Full Pursuit control** — the previous Full Pursuit condition unchanged: Chaser base/sprint speed `5.4 / 7.8`, Runner `5.0 / 7.5`, Chaser sprint drain `32/s`, Runner `24/s`, pressure-start curriculum, non-repeatable Chaser proximity bootstrap, Runner escape cap, branches from about `x = 1200`, elite self-play, robust 70/30 breeding selection, and the existing retained-champion cross-play gate.
-2. **Stronger pursuit + fall protection** — keeps the entire Full Pursuit framework but changes only pursuit/fairness physics: Chaser base/sprint speed `5.7 / 7.9`, Chaser sprint drain `28/s`, and **900 ms Runner tag immunity after a fair fall respawn**. Runner speed/endurance remains `5.0 / 7.5` and `24/s`.
-3. **Strict cross-play + clean-tag showcase** — uses exactly the same physics as condition 2, then adds a direct contemporary retained-opponent gate and makes showcase scoring value **clean pursuit tags** rather than tags that occur within two seconds of a Runner fall.
+1. **B · Camera-fixed pursuit** — Memory Discovery; Chaser base/sprint `5.7 / 7.9` with `28/s` sprint drain; Runner `5.0 / 7.5` with `24/s`; 900 ms post-fall protection; pressure starts; non-repeatable proximity bootstrap; Runner escape cap; branches from about `x = 1200`; elite self-play; robust 70/30 breeding selection; clean-tag showcase scoring.
+2. **C · Camera-fixed strict cross-play** — identical to B, but retained challengers are also evaluated against the current retained opponent across **close (160–200 px), normal (275–325 px), long (375–425 px), and midgame** starts. A retained Chaser must show some clean-tag capability and meaningful closing from the normal/long starts.
 
-All three conditions share the same user-facing sprint/jump capability settings, pace/pursuit configuration, Memory Discovery architecture, pressure-start curriculum, early branching, elite opponent panel, robust breeding aggregation, and frozen benchmark opponent bank. Each condition starts from a fresh population. Before the suite starts, the worker snapshots the current run at the latest completed-generation boundary; the original run is restored automatically after export or after **Cancel & restore**.
+### Camera is observational only
 
-### Elite self-play and robust selection
+The visual/presentation camera no longer changes world physics. Agents are never clamped to the left or right viewport edge, and fair respawn is performed entirely in world coordinates. Rolling platform retention expands to include the leftmost and rightmost active agents, so a lagging Chaser keeps traversable terrain even when temporarily off-screen. The presentation camera follows the active Chaser + nearest Runner pair with smoothing.
 
-Every genome is evaluated against common current-population opponents plus a historical panel containing the **retained opposing generalist**, the **strongest archived opponent by frozen-benchmark score**, and a **behaviorally diverse archived opponent**. Breeding fitness uses **70% mean performance + 30% lower-quartile performance**, making catastrophic elite matchups costly instead of allowing several easy wins to hide them. This aggregation affects evolution; frozen benchmark and champion-retention evaluation remain separate.
+The two camera-boundary inputs were removed from the policy state, reducing the state vector from **25 to 23 inputs**. Checkpoints now carry `stateSchema: world-relative-senses-v3`; older 25-input checkpoints are rejected rather than silently remapped.
 
-### Full-pursuit learning bridges
+### Strict multi-distance retained-champion gate
 
-All three conditions retain the small Full Pursuit learning bridges. The Chaser receives `+1` for each new 50px improvement in best proximity during a chase segment, capped at `+6` per segment. Moving away and returning to the same distance does not pay again. Runner pressure-escape shaping remains `+3` for a clean `<=180px → >=380px` escape, capped at **+6 total per episode**. Fresh training starts deliberately contain more immediate pressure, and branch structures can begin around `x = 1200`.
+Condition C uses fixed contemporary starts at four chase ranges. Chaser retention requires both:
 
-### Post-fall fairness and clean tags
+- at least one clean tag across the four contemporary tests on average (`>= 0.25 clean tags/episode`); and
+- meaningful closing in the normal/long starts: at least 80 px average best-distance improvement, or sustained time within 200 px, or repeated close encounters.
 
-Conditions 2 and 3 grant a Runner **900 ms of tag immunity immediately after a fall respawn**. The fall itself still receives the normal competitive penalty; the protection only prevents the Chaser from turning the same mistake into a second immediate tag event. The protection is implemented in the shared physics state, so headless training and the visible arena use the same rule.
+Runner retention still requires at least 55% pace completion and no more than two combined tag/fall failures per contemporary episode. The report records normal/long closing diagnostics so pressure-start overfitting is visible directly.
 
-Analysis now records both total tags and **clean tags**. A clean tag is a tag that is not attributable to a Runner fall in the previous two seconds. `tagsSoonAfterRunnerFall` remains exported explicitly so the experiment can verify whether catches are coming from actual pursuit or from fall cleanup.
+Both conditions share the same frozen benchmark bank and start from fresh populations. The original run is restored automatically after export or **Cancel & restore**. The default is **275 generations per condition** (550 total), configurable from 50–1500. Trend history is sampled every five generations while final metrics and deterministic probes remain full detail.
 
-### Strict contemporary retained-champion gate
-
-Condition 3 keeps the existing 90% frozen-benchmark quality floor, but a retained challenger must also prove itself directly against the **current retained opposing champion** over fixed pressure/varied/mid-game seeds.
-
-- A Chaser challenger must either average at least one clean tag per three contemporary matches, or demonstrate sustained engagement (at least 12% of time within 200px and at least one close encounter per episode).
-- A Runner challenger must maintain at least 55% pace completion while averaging no more than two combined tag/fall failures per episode.
-
-Condition 3's retention score also gives contemporary direct-match fitness an explicit 30% weight, alongside frozen benchmark quality and the broader retained/Hall-of-Fame cross-play panel.
-
-### Retained generalists versus showcase pair
-
-Saved/retained Chaser and Runner generalists remain the true best validated models. The non-breeding **showcase pair** remains separate and exists only to choose an informative visible matchup from retained/strong/diverse archive candidates.
-
-In condition 3, showcase scoring uses **clean tags** for the positive tag term and additionally penalizes post-fall tags. Diagnostics and exported reports include total tags, clean tags, post-fall tags, close encounters, successful evades, pace, falls, branch use, and contemporary retained-opponent metrics.
-
-When all three conditions reach the chosen target generation, the app downloads `neat_tag_pursuit_design_experiments_genN.json`. The default is now **350 generations per condition** (1,050 total), with 50–1500 configurable. The report samples trend history every five generations while retaining full final state, retained/showcase metadata, and deterministic probes.
-
-The policy representation remains the corrected three-output controller: **signed horizontal drive, jump, sprint**. Contradictory left/right commands are impossible by construction and direction-conflict telemetry should remain zero.
+The corrected policy representation remains **signed horizontal drive, jump, sprint**.
 
 ## Analysis recording and deterministic behavior probes
 
@@ -373,4 +350,4 @@ Browsers cannot keep JavaScript running if the operating system fully suspends/h
 
 ### Memory-safe long runs and experiment export
 
-The pursuit experiment runner avoids large transient browser allocations: generation-boundary restart checkpoints no longer duplicate the full analysis history, explicit model checkpoints retain only the latest 500 diagnostic generations, and the temporary three-condition report stores compact trajectory points every 5 generations while keeping final metrics and probes at full detail. The final experiment report is serialized inside the training worker and handed to the UI as a single JSON string, avoiding a second structured-cloned report object plus another renderer-side stringify copy. This is intended to prevent V8/renderer out-of-memory crashes even when the operating system still has substantial free RAM.
+The pursuit experiment runner avoids large transient browser allocations: generation-boundary restart checkpoints no longer duplicate the full analysis history, explicit model checkpoints retain only the latest 500 diagnostic generations, and the temporary two-condition report stores compact trajectory points every 5 generations while keeping final metrics and probes at full detail. The final experiment report is serialized inside the training worker and handed to the UI as a single JSON string, avoiding a second structured-cloned report object plus another renderer-side stringify copy. This is intended to prevent V8/renderer out-of-memory crashes even when the operating system still has substantial free RAM.

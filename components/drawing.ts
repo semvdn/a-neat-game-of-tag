@@ -2,7 +2,7 @@
 
 import type { PlatformState, AgentState, TagEffect, GameState } from '../types';
 import { AgentStatus } from '../types';
-import { AGENT_WIDTH, AGENT_HEIGHT, WORLD_REF_WIDTH, WORLD_REF_HEIGHT, FALL_BOUNDARY } from '../constants';
+import { AGENT_WIDTH, AGENT_HEIGHT } from '../constants';
 
 export const drawTagEffect = (ctx: CanvasRenderingContext2D, effect: TagEffect) => {
     const progress = 1 - (effect.life / effect.initialLife); // 0 to 1
@@ -90,7 +90,7 @@ const rgbaFromHex = (hex: string, alpha: number) => {
 };
 
 /**
- * Visualizes the exact compact 25-input policy state. No extra sensing is calculated here;
+ * Visualizes the exact compact 23-input world-relative policy state. No extra sensing is calculated here;
  * object lookup is used only to place labels/lines corresponding to already-computed inputs.
  */
 export const drawAgentSenses = (
@@ -100,7 +100,7 @@ export const drawAgentSenses = (
     cameraScale: number,
 ) => {
     const state = agent.stateVector;
-    if (!state || state.length < 25) return;
+    if (!state || state.length < 23) return;
 
     const unit = 1 / Math.max(0.0001, cameraScale);
     const cx = agent.position.x + AGENT_WIDTH / 2;
@@ -109,10 +109,6 @@ export const drawAgentSenses = (
     const medium = rgbaFromHex(agent.color, 0.52);
     const faint = rgbaFromHex(agent.color, 0.24);
     const textBg = 'rgba(3, 7, 18, 0.78)';
-
-    const leftEdge = gameState.cameraPosition.x;
-    const rightEdge = leftEdge + WORLD_REF_WIDTH;
-    const visibleBottom = gameState.cameraPosition.y + WORLD_REF_HEIGHT;
 
     const label = (text: string, x: number, y: number, align: CanvasTextAlign = 'left') => {
         ctx.save();
@@ -204,7 +200,7 @@ export const drawAgentSenses = (
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // Target/threat channels: 19..22.
+    // Target/threat channels: 17..20, with target/threat cooldown in channel 5.
     if (target) {
         const tx = target.position.x + AGENT_WIDTH / 2;
         const ty = target.position.y + AGENT_HEIGHT / 2;
@@ -215,14 +211,14 @@ export const drawAgentSenses = (
         ctx.strokeStyle = primary;
         ctx.stroke();
         label(
-            `T A${target.id} d(${state[19].toFixed(2)},${state[20].toFixed(2)}) v(${state[21].toFixed(2)},${state[22].toFixed(2)})`,
+            `T A${target.id} d(${state[17].toFixed(2)},${state[18].toFixed(2)}) v(${state[19].toFixed(2)},${state[20].toFixed(2)}) CD${state[5].toFixed(2)}`,
             (cx + tx) / 2,
             (cy + ty) / 2 - 10 * unit,
             'center',
         );
     }
 
-    // Teammate position channels: 23..24.
+    // Teammate position channels: 21..22.
     if (teammate) {
         const mx = teammate.position.x + AGENT_WIDTH / 2;
         const my = teammate.position.y + AGENT_HEIGHT / 2;
@@ -234,13 +230,13 @@ export const drawAgentSenses = (
         ctx.strokeStyle = medium;
         ctx.stroke();
         ctx.setLineDash([]);
-        label(`M A${teammate.id} d(${state[23].toFixed(2)},${state[24].toFixed(2)})`, (cx + mx) / 2, (cy + my) / 2 + 10 * unit, 'center');
+        label(`M A${teammate.id} d(${state[21].toFixed(2)},${state[22].toFixed(2)})`, (cx + mx) / 2, (cy + my) / 2 + 10 * unit, 'center');
     }
 
     const semanticPlatforms: Array<{ platform: PlatformState | null; name: string; base: number }> = [
-        { platform: ahead1, name: 'NEXT', base: 10 },
-        { platform: ahead2, name: 'NEXT2', base: 13 },
-        { platform: behind, name: 'PREV', base: 16 },
+        { platform: ahead1, name: 'NEXT', base: 8 },
+        { platform: ahead2, name: 'NEXT2', base: 11 },
+        { platform: behind, name: 'PREV', base: 14 },
     ];
     semanticPlatforms.forEach(({ platform, name, base }, index) => {
         if (!platform) return;
@@ -258,7 +254,7 @@ export const drawAgentSenses = (
         label(`${name} d(${state[base].toFixed(2)},${state[base + 1].toFixed(2)}) w${state[base + 2].toFixed(2)}`, platform.position.x + platform.width / 2, platform.position.y - (10 + index * 13) * unit, 'center');
     });
 
-    // Current/reference ledges: 8..9.
+    // Current/reference ledges: 6..7.
     if (referencePlatform) {
         const leftX = referencePlatform.position.x;
         const rightX = referencePlatform.position.x + referencePlatform.width;
@@ -273,32 +269,10 @@ export const drawAgentSenses = (
         ctx.lineTo(rightX, topY);
         ctx.stroke();
         ctx.setLineDash([]);
-        label(`LEDGE L${state[8].toFixed(2)} R${state[9].toFixed(2)}`, referencePlatform.position.x + referencePlatform.width / 2, referencePlatform.position.y + referencePlatform.height + 11 * unit, 'center');
+        label(`LEDGE L${state[6].toFixed(2)} R${state[7].toFixed(2)}`, referencePlatform.position.x + referencePlatform.width / 2, referencePlatform.position.y + referencePlatform.height + 11 * unit, 'center');
     }
 
-    // Policy-camera/fall boundaries: 5..7.
-    ctx.setLineDash([2 * unit, 5 * unit]);
-    ctx.lineWidth = 1.0 * unit;
-    ctx.strokeStyle = faint;
-    ctx.beginPath();
-    ctx.moveTo(leftEdge, cy);
-    ctx.lineTo(cx, cy);
-    ctx.lineTo(rightEdge, cy);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    label(`L ${state[5].toFixed(2)}`, leftEdge + 7 * unit, cy - 10 * unit, 'left');
-    label(`R ${state[6].toFixed(2)}`, rightEdge - 7 * unit, cy - 10 * unit, 'right');
-
-    const agentBottom = agent.position.y + AGENT_HEIGHT;
-    const fallVisible = FALL_BOUNDARY >= gameState.cameraPosition.y && FALL_BOUNDARY <= visibleBottom;
-    const fallEndY = fallVisible ? FALL_BOUNDARY : visibleBottom - 8 * unit;
-    ctx.beginPath();
-    ctx.moveTo(cx, agentBottom);
-    ctx.lineTo(cx, fallEndY);
-    ctx.lineWidth = 1.0 * unit;
-    ctx.strokeStyle = faint;
-    ctx.stroke();
-    label(`FALL${fallVisible ? '' : '↓'} ${state[7].toFixed(2)}`, cx + 7 * unit, Math.min(fallEndY - 10 * unit, cy + 62 * unit), 'left');
+    // Camera position and viewport boundaries are intentionally absent from policy sensing.
 
     // Self channels: 0..4. Role is displayed from actual game status, not as a redundant input.
     const role = agent.status === AgentStatus.It ? 'C' : 'R';

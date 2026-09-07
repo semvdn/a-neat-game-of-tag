@@ -7,7 +7,7 @@ import {
   resolveTagSwap,
   stepAgentPhysics,
   stepAgentPhysicsInPlace,
-  updateRunnerCameraX,
+  updateChaseCameraX,
 } from './simulationCore';
 import type { ActiveUpgradeState, AgentState, GameState, PlatformState, PursuitDesignConfig } from '../types';
 import { AgentStatus } from '../types';
@@ -99,6 +99,8 @@ export interface TrainingEpisodeResult {
   closeEncounters: number;
   successfulEvades: number;
   meanNearestRunnerDistancePx: number;
+  initialNearestRunnerDistancePx: number;
+  minNearestRunnerDistancePx: number;
   timeWithin100Ms: number;
   timeWithin200Ms: number;
   timeWithin400Ms: number;
@@ -152,7 +154,7 @@ export interface TrainingEpisodeTraceSample {
   agents: TrainingEpisodeTraceAgent[];
 }
 
-export type TrainingStartMode = 'visual' | 'varied' | 'pressure' | 'midgame' | 'mixed';
+export type TrainingStartMode = 'visual' | 'varied' | 'pressure' | 'pressure_close' | 'pressure_normal' | 'pressure_long' | 'midgame' | 'mixed';
 
 export interface TrainingEpisodeOptions {
   trackChaserActions?: boolean;
@@ -220,23 +222,29 @@ function makeAgent(id: number, x: number, isChaser: boolean): AgentState {
 function chooseFreshTrainingStart(
   rng: () => number,
   viewportWidth: number,
-  mode: 'visual' | 'varied' | 'pressure'
+  mode: 'visual' | 'varied' | 'pressure' | 'pressure_close' | 'pressure_normal' | 'pressure_long'
 ): { positions: number[]; itId: number } {
   const visualPositions = [100, 400, 700];
   if (mode === 'visual') return { positions: visualPositions, itId: 1 };
 
-  if (mode === 'pressure') {
+  if (mode === 'pressure' || mode === 'pressure_close' || mode === 'pressure_normal' || mode === 'pressure_long') {
     // Pressure curriculum: retain random body identity for the Chaser while placing that role
     // behind both Runners. Gap categories follow the intended 40/30/20/10 chase distribution.
     const itId = 1 + Math.floor(rng() * 3);
     const roll = rng();
-    const nearestGap = roll < 0.40
-      ? 220 + rng() * 80
-      : roll < 0.70
-        ? 140 + rng() * 80
-        : roll < 0.90
-          ? 300 + rng() * 80
-          : 180 + rng() * 180;
+    const nearestGap = mode === 'pressure_close'
+      ? 160 + rng() * 40
+      : mode === 'pressure_normal'
+        ? 275 + rng() * 50
+        : mode === 'pressure_long'
+          ? 375 + rng() * 50
+          : roll < 0.40
+            ? 220 + rng() * 80
+            : roll < 0.70
+              ? 140 + rng() * 80
+              : roll < 0.90
+                ? 300 + rng() * 80
+                : 180 + rng() * 180;
     const chaserX = 90 + rng() * 100;
     const secondGap = 170 + rng() * 110;
     const runnerXs = [chaserX + nearestGap, chaserX + nearestGap + secondGap];
@@ -345,7 +353,7 @@ function cloneEpisodeStart(start: EpisodeStartState): EpisodeStartState {
 function createFreshEpisodeState(
   rng: () => number,
   viewportSize: { width: number; height: number },
-  mode: 'visual' | 'varied' | 'pressure'
+  mode: 'visual' | 'varied' | 'pressure' | 'pressure_close' | 'pressure_normal' | 'pressure_long'
 ): EpisodeStartState {
   const groundY = viewportSize.height - 100;
   const platforms: PlatformState[] = [
@@ -452,7 +460,7 @@ function stepScriptedMidgameWorld(
   // Tags and falls during the pre-roll are genuine game transitions, but deliberately do not
   // contribute to evolutionary fitness; they only determine the state from which scoring begins.
   resolveTagSwap(gameState.agents);
-  gameState.cameraPosition.x = updateRunnerCameraX(
+  gameState.cameraPosition.x = updateChaseCameraX(
     gameState.agents,
     gameState.cameraPosition.x,
     viewportSize.width
@@ -796,6 +804,8 @@ export function runTrainingEpisode(
   let runnerFallsAtEncounterStart = 0;
   let nearestRunnerDistanceAccum = 0;
   let nearestRunnerDistanceSamples = 0;
+  let initialNearestRunnerDistancePx = Infinity;
+  let minNearestRunnerDistancePx = Infinity;
   let timeWithin100Ms = 0;
   let timeWithin200Ms = 0;
   let timeWithin400Ms = 0;
@@ -1024,6 +1034,8 @@ export function runTrainingEpisode(
       }
     }
     if (Number.isFinite(nearestRunnerDistance)) {
+      if (!Number.isFinite(initialNearestRunnerDistancePx)) initialNearestRunnerDistancePx = nearestRunnerDistance;
+      minNearestRunnerDistancePx = Math.min(minNearestRunnerDistancePx, nearestRunnerDistance);
       nearestRunnerDistanceAccum += nearestRunnerDistance;
       if (pursuitDesign?.chaserProximityProgressReward && chaserBody) {
         const resetSegment = proximitySegmentChaserId !== chaserBody.id || chaserFalls > chaserFallsBeforeStep;
@@ -1118,7 +1130,7 @@ export function runTrainingEpisode(
       nextPaceWindowAtMs += RUNNER_PACE_WINDOW_MS;
     }
 
-    gameState.cameraPosition.x = updateRunnerCameraX(
+    gameState.cameraPosition.x = updateChaseCameraX(
       gameState.agents,
       gameState.cameraPosition.x,
       viewportSize.width
@@ -1249,6 +1261,8 @@ export function runTrainingEpisode(
     closeEncounters,
     successfulEvades,
     meanNearestRunnerDistancePx,
+    initialNearestRunnerDistancePx: Number.isFinite(initialNearestRunnerDistancePx) ? initialNearestRunnerDistancePx : 0,
+    minNearestRunnerDistancePx: Number.isFinite(minNearestRunnerDistancePx) ? minNearestRunnerDistancePx : 0,
     timeWithin100Ms,
     timeWithin200Ms,
     timeWithin400Ms,

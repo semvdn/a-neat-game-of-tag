@@ -87,6 +87,9 @@ export function validateFullCheckpointJson(serialized: string): { valid: boolean
     if (checkpoint.actionSchema !== 'signed-horizontal-controls-v2') {
       return { valid: false, message: 'Checkpoint uses an incompatible controller action schema.' };
     }
+    if (checkpoint.stateSchema !== 'world-relative-senses-v3') {
+      return { valid: false, message: 'Checkpoint uses the old 25-input camera-relative policy state. This build requires fresh 23-input world-relative policies.' };
+    }
     if (!checkpoint.championChaser || !checkpoint.championEvader || !checkpoint.chaserPopulation || !checkpoint.evaderPopulation) {
       return { valid: false, message: 'Checkpoint is missing population or champion state.' };
     }

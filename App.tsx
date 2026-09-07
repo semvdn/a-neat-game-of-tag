@@ -22,7 +22,7 @@ import {
   maintainPlatformsForCamera,
   resolveTagSwap,
   stepAgentPhysics,
-  updateRunnerCameraX,
+  updateChaseCameraX,
 } from './learning/simulationCore';
 import type {
   GameState,
@@ -50,10 +50,6 @@ import {
   SURVIVAL_TIME_HISTORY_LENGTH,
   TIME_TO_TAG_HISTORY_LENGTH,
   INITIAL_ELO,
-  LEFT_BOUNDARY_TOUCH_PENALTY,
-  LEFT_BOUNDARY_PUSH_PENALTY,
-  LEFT_BOUNDARY_BUFFER_RATIO,
-  LEFT_BOUNDARY_PROXIMITY_PENALTY,
   RIGHTWARD_VELOCITY_REWARD,
   RIGHTWARD_PROGRESSION_REWARD,
   DEFAULT_RUNNER_PACE_TARGET_PX,
@@ -201,11 +197,11 @@ type ArchitectureExperimentUiState = {
 const IDLE_ARCHITECTURE_EXPERIMENT_STATE: ArchitectureExperimentUiState = {
   running: false,
   currentIndex: 0,
-  totalExperiments: 3,
+  totalExperiments: 2,
   experimentId: null,
   label: 'Ready',
   generation: 0,
-  targetGeneration: 350,
+  targetGeneration: 275,
   completedExperiments: 0,
   message: null,
   pursuitDesign: null,
@@ -215,7 +211,7 @@ export const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSimulating, setIsSimulating] = useState(false);
-  // Physics and policy senses stay fixed to the original 1200x800 logical world.
+  // Rendering uses a fixed 1200x800 reference frame; physics and policy senses are world-relative.
   const viewportSize = CHAMPION_WORLD_VIEWPORT;
   const [showTrails, setShowTrails] = useState(true);
   const [showSenses, setShowSenses] = useState(true);
@@ -614,11 +610,11 @@ export const App: React.FC = () => {
           setArchitectureExperimentStatus({
             running: true,
             currentIndex: Number(payload?.currentIndex) || 0,
-            totalExperiments: Number(payload?.totalExperiments) || 3,
+            totalExperiments: Number(payload?.totalExperiments) || 2,
             experimentId: payload?.experimentId || null,
             label: payload?.label || 'Running pursuit-design experiment',
             generation: Number(payload?.generation) || 0,
-            targetGeneration: Number(payload?.targetGeneration) || 350,
+            targetGeneration: Number(payload?.targetGeneration) || 275,
             completedExperiments: Number(payload?.completedExperiments) || 0,
             message: payload?.message || null,
             pursuitDesign: payload?.pursuitDesign || null,
@@ -689,7 +685,7 @@ export const App: React.FC = () => {
           pendingCheckpointActionRef.current = null;
           const checkpoint = payload.checkpoint;
           const filePayload = {
-            version: '4.1.0',
+            version: '4.2.0',
             algorithm: 'NEAT',
             kind: 'full-evolution-checkpoint',
             timestamp: Date.now(),
@@ -943,27 +939,7 @@ export const App: React.FC = () => {
       breakdown['successfulJump'] = 2.0;
     }
 
-    // Left-Side Boundary Constraints & Rightward Flow Reward Shaping
-    const leftBoundary = currentGameState.cameraPosition.x;
-    const distFromLeft = agent.position.x - leftBoundary;
-
-    const isTouchingLeftEdge = distFromLeft <= 2.5 || (agent.touchingCameraFrame && agent.cameraFrameContact === 'left');
-    const isPushingLeft = isTouchingLeftEdge && (agent.lastAction.includes('left') || agent.velocity.x < 0);
-
-    if (isTouchingLeftEdge) {
-      breakdown['leftBoundaryTouchPenalty'] = LEFT_BOUNDARY_TOUCH_PENALTY;
-    }
-    if (isPushingLeft) {
-      breakdown['leftBoundaryPushPenalty'] = LEFT_BOUNDARY_PUSH_PENALTY;
-    }
-
-    const leftDangerZone = size.width * LEFT_BOUNDARY_BUFFER_RATIO;
-    if (distFromLeft < leftDangerZone) {
-      const penaltyFactor = (leftDangerZone - Math.max(0, distFromLeft)) / leftDangerZone;
-      breakdown['leftBoundaryProximityPenalty'] = LEFT_BOUNDARY_PROXIMITY_PENALTY * penaltyFactor;
-    }
-
-    // Rightward flow momentum incentives
+    // Rightward flow momentum incentives (visual telemetry only).
     if (agent.velocity.x > 0.5) {
       const forwardRatio = Math.min(1.0, agent.velocity.x / MAX_SPEED);
       breakdown['rightwardVelocityReward'] = RIGHTWARD_VELOCITY_REWARD * forwardRatio;
@@ -1003,16 +979,12 @@ export const App: React.FC = () => {
           const prevDist = Math.hypot(prevState.position.x - itAgent.position.x, prevState.position.y - itAgent.position.y);
           const currentDist = Math.hypot(agent.position.x - itAgent.position.x, agent.position.y - itAgent.position.y);
           breakdown['increasingDistance'] = (currentDist - prevDist) * 0.05;
-          if (!isTouchingLeftEdge) {
-            const maxVisibleDistance = Math.hypot(size.width, size.height);
-            const normalizedDistance = Math.min(1, currentDist / maxVisibleDistance);
-            breakdown['distanceFromTagger'] = Math.pow(normalizedDistance, 2) * 0.16;
-            breakdown['survival'] = 0.02;
-          } else {
-            breakdown['survival'] = 0;
-          }
+          const maxVisibleDistance = Math.hypot(size.width, size.height);
+          const normalizedDistance = Math.min(1, currentDist / maxVisibleDistance);
+          breakdown['distanceFromTagger'] = Math.pow(normalizedDistance, 2) * 0.16;
+          breakdown['survival'] = 0.02;
         } else {
-          breakdown['survival'] = isTouchingLeftEdge ? 0 : 0.02;
+          breakdown['survival'] = 0.02;
         }
       }
     }
@@ -1039,7 +1011,7 @@ export const App: React.FC = () => {
         // 1. Update Timers using the same shared rule as headless training.
         advanceRoleTimers(newState.agents, deltaTime);
 
-        // 2. Champion action selection using factorized 25-input / 4-output NEAT controls.
+        // 2. Champion action selection using 23-input / 3-output signed-axis NEAT controls.
         // Left/right drive, jump and sprint are independent, so agents can run and jump together.
         const agentActions: {
           [key: number]: {
@@ -1244,7 +1216,7 @@ export const App: React.FC = () => {
         // Evolutionary diagnostics remain worker-owned; the visible game is presentation only.
 
         // 7. Camera Tracking (shared with headless training)
-        newState.cameraPosition.x = updateRunnerCameraX(
+        newState.cameraPosition.x = updateChaseCameraX(
           newState.agents,
           newState.cameraPosition.x,
           viewportSize.width
@@ -1680,7 +1652,7 @@ export const App: React.FC = () => {
 
   const handleRunArchitectureExperiments = (targetGeneration: number) => {
     if (!workerRef.current || architectureExperimentRunningRef.current) return;
-    const target = Math.max(50, Math.min(1500, Math.round(Number(targetGeneration) || 350)));
+    const target = Math.max(50, Math.min(1500, Math.round(Number(targetGeneration) || 275)));
     architectureExperimentDiagnosticsSnapshotRef.current = JSON.parse(JSON.stringify(diagnosticsStateRef.current)) as DiagnosticsState;
     architectureExperimentArchitectureSnapshotRef.current = sanitizeNetworkArchitectureSuite(networkArchitecture);
     architectureExperimentPreviousPauseRef.current = isTrainingPaused;
@@ -1691,9 +1663,9 @@ export const App: React.FC = () => {
     setArchitectureExperimentStatus({
       running: true,
       currentIndex: 0,
-      totalExperiments: 3,
-      experimentId: 'full_pursuit_control',
-      label: 'Preparing Current Full Pursuit control',
+      totalExperiments: 2,
+      experimentId: 'camera_fixed_pursuit',
+      label: 'Preparing B · Camera-fixed pursuit',
       generation: 0,
       targetGeneration: target,
       completedExperiments: 0,
@@ -1861,7 +1833,7 @@ export const App: React.FC = () => {
                 <h2 className="text-2xl font-bold text-cyan-400 mb-2">Autonomous Agent Arena</h2>
                 <p className="text-sm text-gray-400 mb-6 leading-relaxed">
                   Three autonomous agents evolve chasing, dodging, jumping, and spatial awareness using
-                  dual NEAT populations, speciation, structural mutation, a compact 25-input state, and headless generation evaluation.
+                  dual NEAT populations, speciation, structural mutation, a compact 23-input world-relative state, and headless generation evaluation.
                 </p>
                 <button
                   onClick={startSimulation}

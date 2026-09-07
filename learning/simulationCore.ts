@@ -196,22 +196,7 @@ export function stepAgentPhysicsInPlace(
   positionX += velocityX;
   positionY += velocityY;
 
-  const minVisibleX = cameraX;
-  const maxVisibleX = cameraX + viewportSize.width - AGENT_WIDTH;
-  let isTouchingFrame = false;
-  let contactSide: 'left' | 'right' | null = null;
-  if (positionX < minVisibleX) {
-    positionX = minVisibleX;
-    velocityX = 0;
-    isTouchingFrame = true;
-    contactSide = 'left';
-  } else if (positionX > maxVisibleX) {
-    positionX = maxVisibleX;
-    velocityX = 0;
-    isTouchingFrame = true;
-    contactSide = 'right';
-  }
-
+  // Horizontal camera bounds are presentation-only. World-space motion is never clamped to the viewport.
   let grounded = false;
   let landedPlatformId = agent.lastPlatformId;
   for (let i = 0; i < platforms.length; i++) {
@@ -242,10 +227,7 @@ export function stepAgentPhysicsInPlace(
   let fell = false;
   if (positionY > FALL_BOUNDARY) {
     fell = true;
-    const respawn = getFairRespawn(agent, platforms, allAgentsBeforePhysics, {
-      minX: minVisibleX,
-      maxX: maxVisibleX,
-    });
+    const respawn = getFairRespawn(agent, platforms, allAgentsBeforePhysics);
     positionX = respawn.position.x;
     positionY = respawn.position.y;
     velocityX = 0;
@@ -286,8 +268,6 @@ export function stepAgentPhysicsInPlace(
   agent.positionAtLastTakeoff.x = checkpointX;
   agent.positionAtLastTakeoff.y = checkpointY;
   agent.energyAtLastTakeoff = checkpointEnergy;
-  agent.touchingCameraFrame = isTouchingFrame;
-  agent.cameraFrameContact = contactSide;
   agent.sprintIntensity = sprintIntensity;
   agent.jumpPower = jumpPower;
   agent.jumpArmed = jumpArmed;
@@ -379,32 +359,49 @@ export function resolveTagSwap(agents: AgentState[]): TagTransition | null {
   return transition;
 }
 
-/** Exact runner-dominant horizontal camera rule from the visual simulation. */
-export function updateRunnerCameraX(agents: AgentState[], currentCameraX: number, viewportWidth: number): number {
-  let minRunnerX = Infinity;
-  let maxRunnerX = -Infinity;
-  let evaderCount = 0;
+/**
+ * Presentation/rolling-world camera rule centered on the active chase pair. The camera is
+ * observational only: physics and policy inputs never depend on this value.
+ */
+export function updateChaseCameraX(agents: AgentState[], currentCameraX: number, viewportWidth: number): number {
+  if (agents.length === 0) return currentCameraX;
 
+  let chaser: AgentState | null = null;
   for (let i = 0; i < agents.length; i++) {
-    const agent = agents[i];
-    if (agent.status === AgentStatus.It) continue;
-    evaderCount++;
-    if (agent.position.x < minRunnerX) minRunnerX = agent.position.x;
-    const right = agent.position.x + AGENT_WIDTH;
-    if (right > maxRunnerX) maxRunnerX = right;
-  }
-
-  if (evaderCount === 0) {
-    for (let i = 0; i < agents.length; i++) {
-      const agent = agents[i];
-      if (agent.position.x < minRunnerX) minRunnerX = agent.position.x;
-      const right = agent.position.x + AGENT_WIDTH;
-      if (right > maxRunnerX) maxRunnerX = right;
+    if (agents[i].status === AgentStatus.It) {
+      chaser = agents[i];
+      break;
     }
   }
 
-  const runnersCenterX = (minRunnerX + maxRunnerX) / 2;
-  const desiredCameraX = runnersCenterX - viewportWidth * 0.45;
+  let centerX = 0;
+  if (chaser) {
+    const chaserCenter = chaser.position.x + AGENT_WIDTH / 2;
+    let nearestRunner: AgentState | null = null;
+    let nearestDistanceSq = Infinity;
+    for (let i = 0; i < agents.length; i++) {
+      const candidate = agents[i];
+      if (candidate.id === chaser.id || candidate.status === AgentStatus.It) continue;
+      const dx = candidate.position.x - chaser.position.x;
+      const dy = candidate.position.y - chaser.position.y;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq < nearestDistanceSq) {
+        nearestDistanceSq = distanceSq;
+        nearestRunner = candidate;
+      }
+    }
+    if (nearestRunner) {
+      const runnerCenter = nearestRunner.position.x + AGENT_WIDTH / 2;
+      centerX = (chaserCenter + runnerCenter) / 2;
+    } else {
+      centerX = chaserCenter;
+    }
+  } else {
+    for (let i = 0; i < agents.length; i++) centerX += agents[i].position.x + AGENT_WIDTH / 2;
+    centerX /= agents.length;
+  }
+
+  const desiredCameraX = centerX - viewportWidth / 2;
   return currentCameraX + (desiredCameraX - currentCameraX) * 0.12;
 }
 
@@ -507,11 +504,24 @@ export function maintainPlatformsForCameraInPlace(
   rng: () => number,
   branchMinX = BRANCH_STRUCTURE_MIN_X
 ): number {
-  const rightGenerationEdge = cameraX + viewportSize.width + PLATFORM_SPAWN_BUFFER;
-  const leftGenerationEdge = cameraX - PLATFORM_SPAWN_BUFFER;
+  let leftmostAgentX = cameraX;
+  let rightmostAgentX = cameraX + viewportSize.width;
+  if (agents.length > 0) {
+    leftmostAgentX = Infinity;
+    rightmostAgentX = -Infinity;
+    for (let i = 0; i < agents.length; i++) {
+      leftmostAgentX = Math.min(leftmostAgentX, agents[i].position.x);
+      rightmostAgentX = Math.max(rightmostAgentX, agents[i].position.x + AGENT_WIDTH);
+    }
+  }
+  const rightGenerationEdge = Math.max(
+    cameraX + viewportSize.width + PLATFORM_SPAWN_BUFFER,
+    rightmostAgentX + PLATFORM_SPAWN_BUFFER
+  );
+  const leftGenerationEdge = Math.min(cameraX - PLATFORM_SPAWN_BUFFER, leftmostAgentX - PLATFORM_SPAWN_BUFFER);
   const despawnMargin = PLATFORM_SPAWN_BUFFER * 2;
-  const minKeepX = cameraX - despawnMargin;
-  const maxKeepX = cameraX + viewportSize.width + despawnMargin;
+  const minKeepX = Math.min(cameraX - despawnMargin, leftmostAgentX - despawnMargin);
+  const maxKeepX = Math.max(cameraX + viewportSize.width + despawnMargin, rightmostAgentX + despawnMargin);
 
   let write = 0;
   for (let i = 0; i < platforms.length; i++) {
@@ -571,9 +581,24 @@ export function maintainPlatformsForCamera(
   rng: () => number,
   branchMinX = BRANCH_STRUCTURE_MIN_X
 ): { platforms: PlatformState[]; nextPlatformId: number } {
-  const rightGenerationEdge = cameraX + viewportSize.width + PLATFORM_SPAWN_BUFFER;
-  const leftGenerationEdge = cameraX - PLATFORM_SPAWN_BUFFER;
+  let leftmostAgentX = cameraX;
+  let rightmostAgentX = cameraX + viewportSize.width;
+  if (agents.length > 0) {
+    leftmostAgentX = Infinity;
+    rightmostAgentX = -Infinity;
+    for (let i = 0; i < agents.length; i++) {
+      leftmostAgentX = Math.min(leftmostAgentX, agents[i].position.x);
+      rightmostAgentX = Math.max(rightmostAgentX, agents[i].position.x + AGENT_WIDTH);
+    }
+  }
+  const rightGenerationEdge = Math.max(
+    cameraX + viewportSize.width + PLATFORM_SPAWN_BUFFER,
+    rightmostAgentX + PLATFORM_SPAWN_BUFFER
+  );
+  const leftGenerationEdge = Math.min(cameraX - PLATFORM_SPAWN_BUFFER, leftmostAgentX - PLATFORM_SPAWN_BUFFER);
   const despawnMargin = PLATFORM_SPAWN_BUFFER * 2;
+  const minKeepX = Math.min(cameraX - despawnMargin, leftmostAgentX - despawnMargin);
+  const maxKeepX = Math.max(cameraX + viewportSize.width + despawnMargin, rightmostAgentX + despawnMargin);
   // At most three platform ids are protected. Avoid Set/map/filter/sort allocations in this
   // per-physics-step path. `platforms` is already maintained in x-order by push/unshift, and
   // filtering preserves that order exactly.
@@ -583,8 +608,6 @@ export function maintainPlatformsForCamera(
     if (id !== null && id !== undefined && !protectedIds.includes(id)) protectedIds.push(id);
   }
   const retained: PlatformState[] = [];
-  const minKeepX = cameraX - despawnMargin;
-  const maxKeepX = cameraX + viewportSize.width + despawnMargin;
   for (let i = 0; i < platforms.length; i++) {
     const p = platforms[i];
     let protectedPlatform = false;

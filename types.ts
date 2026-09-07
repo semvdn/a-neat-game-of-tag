@@ -122,8 +122,6 @@ export interface AgentState {
   modelPerformance?: number;
   elo?: number;
   role?: 'chaser' | 'evader';
-  touchingCameraFrame?: boolean;
-  cameraFrameContact?: 'left' | 'right' | null;
   sprintIntensity?: number;
   jumpPower?: number;
   /** Mechanical jump latch: false after a jump until the jump output is released. */
@@ -287,6 +285,10 @@ export interface GeneralistChampionTelemetry {
   contemporaryTimeWithin200Pct?: number;
   contemporaryCloseEncountersPerEpisode?: number;
   contemporaryFailureEventsPerEpisode?: number;
+  /** Strict-gate diagnostics restricted to normal/long pursuit starts. */
+  contemporaryNormalLongClosingPx?: number;
+  contemporaryNormalLongTimeWithin200Pct?: number;
+  contemporaryNormalLongCloseEncountersPerEpisode?: number;
 }
 
 export interface CrossGenerationBenchmarkTelemetry {

@@ -13,13 +13,6 @@ export interface FairRespawnResult {
   platformId: number;
 }
 
-export interface RespawnHorizontalBounds {
-  /** Minimum allowed agent-left X in the current playable camera frame. */
-  minX: number;
-  /** Maximum allowed agent-left X in the current playable camera frame. */
-  maxX: number;
-}
-
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -50,17 +43,10 @@ function chooseXOnPlatform(
   platform: PlatformState,
   preferredX: number,
   agent: AgentState,
-  otherAgents: AgentState[],
-  horizontalBounds?: RespawnHorizontalBounds
+  otherAgents: AgentState[]
 ): number | null {
-  const minX = Math.max(
-    platform.position.x + EDGE_MARGIN,
-    horizontalBounds?.minX ?? -Infinity
-  );
-  const maxX = Math.min(
-    platform.position.x + platform.width - AGENT_WIDTH - EDGE_MARGIN,
-    horizontalBounds?.maxX ?? Infinity
-  );
+  const minX = platform.position.x + EDGE_MARGIN;
+  const maxX = platform.position.x + platform.width - AGENT_WIDTH - EDGE_MARGIN;
   if (maxX < minX) return null;
 
   const base = clamp(preferredX, minX, maxX);
@@ -98,8 +84,7 @@ function chooseXOnPlatform(
 export function getFairRespawn(
   agent: AgentState,
   platforms: PlatformState[],
-  allAgents: AgentState[],
-  horizontalBounds?: RespawnHorizontalBounds
+  allAgents: AgentState[]
 ): FairRespawnResult {
   if (platforms.length === 0) {
     // This should never occur in normal gameplay, but keep the function total and safe.
@@ -136,7 +121,7 @@ export function getFairRespawn(
   });
 
   for (const platform of ranked) {
-    const spawnX = chooseXOnPlatform(platform, checkpointX, agent, allAgents, horizontalBounds);
+    const spawnX = chooseXOnPlatform(platform, checkpointX, agent, allAgents);
     if (spawnX == null) continue;
     return {
       position: { x: spawnX, y: platform.position.y - AGENT_HEIGHT },
@@ -144,15 +129,11 @@ export function getFairRespawn(
     };
   }
 
-  // If every safe point is occupied, use the closest platform that still has a valid
-  // playable-frame intersection. This permits contact only as a last resort rather than
-  // placing the agent outside the camera bounds or over empty space.
+  // If every safe point is occupied, use the closest platform extent. This permits contact
+  // only as a last resort rather than placing the agent over empty space.
   for (const platform of ranked) {
-    const minX = Math.max(platform.position.x + EDGE_MARGIN, horizontalBounds?.minX ?? -Infinity);
-    const maxX = Math.min(
-      platform.position.x + platform.width - AGENT_WIDTH - EDGE_MARGIN,
-      horizontalBounds?.maxX ?? Infinity
-    );
+    const minX = platform.position.x + EDGE_MARGIN;
+    const maxX = platform.position.x + platform.width - AGENT_WIDTH - EDGE_MARGIN;
     if (maxX < minX) continue;
     return {
       position: { x: clamp(checkpointX, minX, maxX), y: platform.position.y - AGENT_HEIGHT },
@@ -160,8 +141,8 @@ export function getFairRespawn(
     };
   }
 
-  // Extremely defensive fallback for a malformed world with no platform intersecting the
-  // playable frame. Generated game worlds should never reach this branch.
+  // Extremely defensive fallback for a malformed world. Generated game worlds should never
+  // reach this branch.
   const platform = checkpointPlatform || ranked[0];
   const minX = platform.position.x + EDGE_MARGIN;
   const maxX = Math.max(minX, platform.position.x + platform.width - AGENT_WIDTH - EDGE_MARGIN);

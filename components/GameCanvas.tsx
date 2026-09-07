@@ -70,7 +70,7 @@ const getActivePlatformY = (gameState: GameState): number => {
  * Responsive, full-bleed presentation camera.
  *
  * Important separation of concerns:
- * - Physics + policy sensing keep using GameState.cameraPosition and the fixed 1200x800 frame.
+ * - Physics + policy sensing are world-relative and do not depend on GameState.cameraPosition.
  * - This component owns only the PRESENTATION camera.
  * - Canvas resize never changes world geometry or agent observations.
  * - Visual zoom is a single uniform scale, so nothing can deform.
@@ -141,8 +141,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const zoom = Math.max(0.5, Math.min(2, cameraZoom));
     const cameraScale = fitScale * zoom;
 
-    // Horizontal presentation tracking remains aligned with the policy camera, preserving
-    // the familiar forward-flow composition. Vertical presentation tracking is independent.
+    // Horizontal presentation tracking follows the observational chase camera. It never
+    // constrains world-space motion or changes policy inputs. Vertical tracking is independent.
     const cameraCenterX = cameraPosition.x + WORLD_REF_WIDTH / 2;
 
     // Keep the active platform at a fixed vertical percentage of the screen at every zoom.
@@ -212,7 +212,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.textBaseline = 'top';
       ctx.fillStyle = '#d1d5db';
       ctx.fillText(
-        'SENSES · compact 25 policy inputs · target/threat · teammate · platforms · ledges · boundaries',
+        'SENSES · compact 23 policy inputs · target/threat · teammate · platforms · ledges',
         legendX + 7,
         legendY + 7
       );

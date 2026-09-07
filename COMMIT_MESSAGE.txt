@@ -1,1 +1,1 @@
-Refine Full Pursuit balance experiment
+Decouple camera physics and refine pursuit experiment

@@ -387,7 +387,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
           <Radar className="w-4 h-4 text-cyan-400" />
           <div>
             <h3 className="font-semibold text-gray-300">Agent Senses</h3>
-            <p className="text-[10px] text-gray-400">25-D compact brain inputs · no redundant LiDAR · press S</p>
+            <p className="text-[10px] text-gray-400">23-D world-relative brain inputs · no redundant LiDAR · press S</p>
           </div>
         </div>
         <ToggleSwitch id="senses-toggle" checked={showSenses} onChange={onToggleSenses} />
@@ -547,7 +547,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
 
       <div className="mt-auto bg-gray-700 p-3 rounded-md text-xs text-gray-400">
         <h4 className="font-bold text-gray-300 mb-1">How it works:</h4>
-        <p>Agents use three factorized outputs—signed horizontal drive, jump, and sprint—on the compact 25-input state. Horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities.</p>
+        <p>Agents use three factorized outputs—signed horizontal drive, jump, and sprint—on the compact 23-input world-relative state. Horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities.</p>
       </div>
     </aside>
   );

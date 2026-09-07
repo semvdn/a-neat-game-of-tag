@@ -22,8 +22,6 @@ export const STATE_VECTOR_LABELS = [
   'Energy / stamina',
   'Grounded state',
   'Self tag cooldown',
-  'Distance to left camera boundary',
-  'Distance to right camera boundary',
   'Target / threat tag cooldown',
   'Distance to left platform ledge',
   'Distance to right platform ledge',
@@ -78,21 +76,22 @@ function writePlatformFeatures(
 }
 
 /**
- * Writes the compact 25-dimensional policy state into a caller-owned buffer.
+ * Writes the compact 23-dimensional policy state into a caller-owned buffer.
  *
  * The layout deliberately avoids derived/duplicated channels and expensive LiDAR:
  *  0..4   self: vx, vy, energy, grounded, remaining cooldown
- *  5..7   policy-frame left/right distance + target/threat remaining cooldown
- *  8..9   left/right ledge distance on the current/reference platform
- * 10..18  semantic platforms: next-ahead, second-ahead, previous-behind [dx,dy,width]
- * 19..22  target/threat [dx,dy,vx,vy]
- * 23..24  closest teammate [dx,dy] (zero for the chaser)
+ *  5      target/threat remaining cooldown
+ *  6..7   left/right ledge distance on the current/reference platform
+ *  8..16  semantic platforms: next-ahead, second-ahead, previous-behind [dx,dy,width]
+ * 17..20  target/threat [dx,dy,vx,vy]
+ * 21..22  closest teammate [dx,dy] (zero for the chaser)
  *
  * Important removals from the old 39-D vector:
  * - Is-It bit: role-specific networks already imply it.
  * - closest-ledge and ledge-alert: both were deterministic functions of left/right ledges.
  * - teammate velocity: lower-value duplicate dynamics; relative position is retained.
- * - 8 LiDAR rays: nearby-platform + ledge + frame senses already encode the relevant geometry.
+ * - 8 LiDAR rays: nearby-platform + ledge senses already encode the relevant geometry.
+ * - camera-boundary distances: the presentation camera is observational only and must not affect policy.
  * - constant bias: every NEAT non-input node already has an evolvable bias.
  */
 export function writeAgentStateVector(
@@ -135,12 +134,6 @@ export function writeAgentStateVector(
     }
   }
   const targetOrThreat = agent.status === AgentStatus.It ? closestEvader : itAgent;
-
-  // Policy-camera/fall boundaries.
-  const screenLeft = gameState.cameraPosition.x;
-  const screenRight = screenLeft + viewportSize.width;
-  const distToLeftBoundary = clamp01((agentCenterX - screenLeft) / WORLD_REF_WIDTH);
-  const distToRightBoundary = clamp01((screenRight - agentCenterX) / WORLD_REF_WIDTH);
 
   // Current platform if known; otherwise nearest platform becomes the ledge reference.
   let referencePlatform: PlatformState | null = null;
@@ -208,24 +201,22 @@ export function writeAgentStateVector(
   out[3] = agent.isOnGround ? 1 : 0;
   out[4] = normalizedCooldown(agent);
 
-  out[5] = distToLeftBoundary;
-  out[6] = distToRightBoundary;
-  out[7] = normalizedCooldown(targetOrThreat);
+  out[5] = normalizedCooldown(targetOrThreat);
 
-  out[8] = distToLeftLedge;
-  out[9] = distToRightLedge;
+  out[6] = distToLeftLedge;
+  out[7] = distToRightLedge;
 
-  writePlatformFeatures(out, 10, ahead1, agentCenterX, agentCenterY);
-  writePlatformFeatures(out, 13, ahead2, agentCenterX, agentCenterY);
-  writePlatformFeatures(out, 16, behind, agentCenterX, agentCenterY);
+  writePlatformFeatures(out, 8, ahead1, agentCenterX, agentCenterY);
+  writePlatformFeatures(out, 11, ahead2, agentCenterX, agentCenterY);
+  writePlatformFeatures(out, 14, behind, agentCenterX, agentCenterY);
 
-  out[19] = targetOrThreat ? (targetOrThreat.position.x - agent.position.x) / WORLD_REF_WIDTH : 0;
-  out[20] = targetOrThreat ? (targetOrThreat.position.y - agent.position.y) / WORLD_REF_HEIGHT : 0;
-  out[21] = targetOrThreat ? targetOrThreat.velocity.x / MAX_SPEED : 0;
-  out[22] = targetOrThreat ? targetOrThreat.velocity.y / Math.abs(JUMP_STRENGTH) : 0;
+  out[17] = targetOrThreat ? (targetOrThreat.position.x - agent.position.x) / WORLD_REF_WIDTH : 0;
+  out[18] = targetOrThreat ? (targetOrThreat.position.y - agent.position.y) / WORLD_REF_HEIGHT : 0;
+  out[19] = targetOrThreat ? targetOrThreat.velocity.x / MAX_SPEED : 0;
+  out[20] = targetOrThreat ? targetOrThreat.velocity.y / Math.abs(JUMP_STRENGTH) : 0;
 
-  out[23] = closestTeammate ? (closestTeammate.position.x - agent.position.x) / WORLD_REF_WIDTH : 0;
-  out[24] = closestTeammate ? (closestTeammate.position.y - agent.position.y) / WORLD_REF_HEIGHT : 0;
+  out[21] = closestTeammate ? (closestTeammate.position.x - agent.position.x) / WORLD_REF_WIDTH : 0;
+  out[22] = closestTeammate ? (closestTeammate.position.y - agent.position.y) / WORLD_REF_HEIGHT : 0;
 
   return out;
 }

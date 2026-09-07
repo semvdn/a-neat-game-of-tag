@@ -52,20 +52,17 @@ export const POLICY_CONTROL_ACTIVE_THRESHOLD = 0.10;
 export const JUMP_PRESS_THRESHOLD = 0.55;
 export const JUMP_RELEASE_THRESHOLD = 0.20;
 // Compact non-redundant senses:
-// 5 self + 2 policy-frame boundaries + 1 target/threat cooldown + 2 current/reference ledges
-// + 9 semantic platform slots + 4 target/threat dynamics + 2 teammate position = 25.
-export const STATE_VECTOR_SIZE = 25;
+// 5 self + 1 target/threat cooldown + 2 current/reference ledges
+// + 9 semantic platform slots + 4 target/threat dynamics + 2 teammate position = 23.
+// Presentation-camera position is intentionally excluded: rendering is not game state.
+export const STATE_VECTOR_SIZE = 23;
 // Invariant Coordinate Reference (prevents window resizing from changing neural network inputs)
 export const WORLD_REF_WIDTH = 1200;
 export const WORLD_REF_HEIGHT = 800;
 
-// Camera Frame Boundary Constraints & Rightward Flow Reward Shaping
-export const LEFT_BOUNDARY_TOUCH_PENALTY = -2.5; // Direct penalty per frame when pinned against left screen edge
-export const LEFT_BOUNDARY_PUSH_PENALTY = -2.0; // Penalty when actively pushing left against the screen edge
-export const LEFT_BOUNDARY_BUFFER_RATIO = 0.20; // Leftmost 20% of screen margin is the trailing danger zone
-export const LEFT_BOUNDARY_PROXIMITY_PENALTY = -1.2; // Progressive penalty scaling up as agent nears left boundary
-export const RIGHTWARD_VELOCITY_REWARD = 0.05; // Forward momentum incentive rewarding rightward movement across all agents
-export const RIGHTWARD_PROGRESSION_REWARD = 0.08; // Reward for expanding the group's forward horizon to the right
+// Visual-only rightward flow reward breakdown. Evolutionary fitness is defined separately in trainingEpisode.ts.
+export const RIGHTWARD_VELOCITY_REWARD = 0.05;
+export const RIGHTWARD_PROGRESSION_REWARD = 0.08;
 
 // Elo Rating System Hyperparameters
 export const INITIAL_ELO = 1200;
