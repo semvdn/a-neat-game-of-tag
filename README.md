@@ -356,3 +356,8 @@ Background evolution now has two safeguards for long unattended runs:
 The training header shows `awake` while the screen wake lock is active. A `↻N` badge and the diagnostics panel show how many stalled evaluator batches were automatically recovered. Recovery data is also included in the analysis JSON export.
 
 Browsers cannot keep JavaScript running if the operating system fully suspends/hibernates the computer or the browser process is explicitly discarded, but the trainer will recover outstanding evaluator work when execution resumes.
+
+
+### Memory-safe long runs and experiment export
+
+The pursuit experiment runner avoids large transient browser allocations: generation-boundary restart checkpoints no longer duplicate the full analysis history, explicit model checkpoints retain only the latest 500 diagnostic generations, and the temporary three-condition report stores compact trajectory points every 5 generations while keeping final metrics and probes at full detail. The final experiment report is serialized inside the training worker and handed to the UI as a single JSON string, avoiding a second structured-cloned report object plus another renderer-side stringify copy. This is intended to prevent V8/renderer out-of-memory crashes even when the operating system still has substantial free RAM.

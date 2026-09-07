@@ -625,13 +625,13 @@ export const App: React.FC = () => {
           });
         } else if (type === 'ARCHITECTURE_EXPERIMENT_COMPLETE') {
           architectureExperimentRunningRef.current = false;
-          const report = payload?.report;
-          if (report) {
-            const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+          const reportJson = typeof payload?.reportJson === 'string' ? payload.reportJson : '';
+          if (reportJson) {
+            const blob = new Blob([reportJson], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `neat_tag_pursuit_design_experiments_gen${report.targetGeneration || 0}.json`;
+            a.download = `neat_tag_pursuit_design_experiments_gen${Number(payload?.targetGeneration) || 0}.json`;
             a.click();
             URL.revokeObjectURL(url);
           }
@@ -697,7 +697,9 @@ export const App: React.FC = () => {
             evolutionCheckpoint: checkpoint,
             uiDiagnostics: diagnosticsStateRef.current,
           };
-          const serialized = JSON.stringify(filePayload, null, pending.action === 'export' ? 2 : 0);
+          // Pretty-printing a full population checkpoint can double the temporary string footprint.
+          // Keep the file compact; it remains ordinary JSON and imports identically.
+          const serialized = JSON.stringify(filePayload);
           if (pending.action === 'library') {
             const name = pending.name?.trim() || `Generation ${checkpoint.generation}`;
             saveStoredCheckpoint(serialized, name)

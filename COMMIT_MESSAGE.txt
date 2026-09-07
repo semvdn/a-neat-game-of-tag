@@ -1,1 +1,1 @@
-Implement pursuit-design experiment suite
+Reduce browser memory pressure during long training and experiment export

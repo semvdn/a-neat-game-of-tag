@@ -408,7 +408,9 @@ let generationIdleCountEvader = 0;
 let generationDirectionConflictCountChaser = 0;
 let generationDirectionConflictCountEvader = 0;
 let lastGenerationBalance: BalanceTelemetry | null = null;
-const MAX_ANALYSIS_HISTORY = 5000;
+const MAX_ANALYSIS_HISTORY = 2000;
+const MAX_CHECKPOINT_ANALYSIS_HISTORY = 500;
+const MAX_EXPERIMENT_RESTORE_HISTORY = 1000;
 const analysisHistory: TrainingGenerationAnalysisRecord[] = [];
 let latestSafeCheckpoint: EvolutionCheckpoint | null = null;
 
@@ -1320,7 +1322,7 @@ function recordGenerationAnalysis(generation: number): void {
   if (analysisHistory.length > MAX_ANALYSIS_HISTORY) analysisHistory.splice(0, analysisHistory.length - MAX_ANALYSIS_HISTORY);
 }
 
-function buildEvolutionCheckpoint(): EvolutionCheckpoint {
+function buildEvolutionCheckpoint(analysisHistoryLimit = 0): EvolutionCheckpoint {
   return {
     format: 'neat-tag-evolution-checkpoint',
     version: 2,
@@ -1380,7 +1382,9 @@ function buildEvolutionCheckpoint(): EvolutionCheckpoint {
       actionCountsChaser: { ...actionCountsChaser },
       actionCountsEvader: { ...actionCountsEvader },
       lastGenerationBalance: lastGenerationBalance ? { ...lastGenerationBalance } : null,
-      analysisHistory: JSON.parse(JSON.stringify(analysisHistory)) as TrainingGenerationAnalysisRecord[],
+      analysisHistory: analysisHistoryLimit > 0
+        ? JSON.parse(JSON.stringify(analysisHistory.slice(-analysisHistoryLimit))) as TrainingGenerationAnalysisRecord[]
+        : [],
     },
   };
 }
@@ -1388,7 +1392,17 @@ function buildEvolutionCheckpoint(): EvolutionCheckpoint {
 function captureSafeCheckpoint(): void {
   // Called only at an evaluation boundary (new/reset/imported population). This intentionally
   // excludes half-finished evaluator batches so a restored run never double-counts matches.
-  latestSafeCheckpoint = buildEvolutionCheckpoint();
+  latestSafeCheckpoint = buildEvolutionCheckpoint(0);
+}
+
+function checkpointWithRecentAnalysis(base: EvolutionCheckpoint | null, historyLimit: number): EvolutionCheckpoint {
+  // Frequent safe checkpoints intentionally carry no analysis history. Add a bounded diagnostic
+  // tail only for explicit user saves or the one-off temporary experiment restore snapshot.
+  const checkpoint = cloneCheckpoint(base || buildEvolutionCheckpoint(0));
+  checkpoint.telemetry.analysisHistory = JSON.parse(JSON.stringify(
+    analysisHistory.slice(-Math.max(0, Math.floor(historyLimit)))
+  )) as TrainingGenerationAnalysisRecord[];
+  return checkpoint;
 }
 
 function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
@@ -2569,7 +2583,9 @@ function architectureExperimentSummary(result: ArchitectureExperimentResult) {
 }
 
 function restoreRunAfterArchitectureExperiments(suite: ArchitectureExperimentSuiteState): void {
-  const originalCheckpoint = cloneCheckpoint(suite.originalCheckpoint);
+  // The suite owns this immutable restore snapshot. Re-cloning it here creates a needless second
+  // full population/history graph exactly at experiment completion, when memory pressure is highest.
+  const originalCheckpoint = suite.originalCheckpoint;
   const originalWasRunning = suite.originalWasRunning;
   activePursuitDesign = null;
   activePursuitExperimentFlags = { pressureStarts: false, crossPlayGate: false };
@@ -2606,13 +2622,21 @@ function completeArchitectureExperimentSuite(): void {
       fixedArchitectureAcrossRuns: 'Memory Discovery (16→12 feed-forward start, recurrence may evolve)',
       eliteOpponentTrainingAcrossRuns: true,
       robustSelectionAcrossRuns: '70% mean fitness + 30% lower-quartile fitness',
+      exportedHistorySampling: 'Every 5 generations plus first/final generation; final state and deterministic probes remain full detail.',
       notes: 'Each pursuit condition starts from a fresh population with the same architecture and the same user upgrade/fitness settings. Only the pursuit-design profile intentionally differs. The first condition defines a frozen benchmark opponent bank reused by all three runs. The user\'s original run is restored after export.',
     },
     suiteWallTimeMs: completedAt - suite.startedAt,
   };
+  // Serialize inside the worker while the report is still compact. Sending the object itself would
+  // make structured clone create a second large object graph in the renderer, followed by another
+  // JSON.stringify copy there. A single compact string keeps the completion peak predictable.
+  const reportJson = JSON.stringify(report);
   architectureExperimentSuite = null;
   restoreRunAfterArchitectureExperiments(suite);
-  self.postMessage({ type: 'ARCHITECTURE_EXPERIMENT_COMPLETE', payload: { report } });
+  self.postMessage({
+    type: 'ARCHITECTURE_EXPERIMENT_COMPLETE',
+    payload: { reportJson, targetGeneration: report.targetGeneration },
+  });
 }
 
 function maybeAdvanceArchitectureExperiment(evaluatedGeneration: number): void {
@@ -2635,7 +2659,7 @@ function maybeAdvanceArchitectureExperiment(evaluatedGeneration: number): void {
     pursuitDesign: { ...definition.pursuitDesign },
     pressureStarts: definition.pressureStarts,
     crossPlayGate: definition.crossPlayGate,
-    analysis: buildAnalysisExport(),
+    analysis: buildAnalysisExport(5),
   });
 
   const nextIndex = suite.currentIndex + 1;
@@ -2650,7 +2674,7 @@ function maybeAdvanceArchitectureExperiment(evaluatedGeneration: number): void {
 function startArchitectureExperimentSuite(targetGeneration: number): void {
   if (architectureExperimentSuite) throw new Error('An architecture experiment suite is already running.');
   const target = Math.max(50, Math.min(1500, Math.round(Number(targetGeneration) || 500)));
-  const originalCheckpoint = cloneCheckpoint(latestSafeCheckpoint || buildEvolutionCheckpoint());
+  const originalCheckpoint = checkpointWithRecentAnalysis(latestSafeCheckpoint, MAX_EXPERIMENT_RESTORE_HISTORY);
   architectureExperimentSuite = {
     targetGeneration: target,
     startedAt: Date.now(),
@@ -2909,7 +2933,44 @@ function buildAnalysisProbeSet(
   });
 }
 
-function buildAnalysisExport() {
+function compactAnalysisHistoryRecord(record: TrainingGenerationAnalysisRecord) {
+  // Analysis exports omit large repeated configuration blocks. Experiment suites additionally
+  // sample this compact history every few generations; the top-level export records config once.
+  return {
+    generation: record.generation,
+    recordedAt: record.recordedAt,
+    simulatedTimeMs: record.simulatedTimeMs,
+    completedEpisodes: record.completedEpisodes,
+    chaserMetrics: record.chaserMetrics ? { ...record.chaserMetrics } : null,
+    runnerMetrics: record.runnerMetrics ? { ...record.runnerMetrics } : null,
+    balance: record.balance ? { ...record.balance } : null,
+    benchmark: record.benchmark ? JSON.parse(JSON.stringify(record.benchmark)) as CrossGenerationBenchmarkTelemetry : null,
+    generalistChampions: record.generalistChampions
+      ? JSON.parse(JSON.stringify(record.generalistChampions)) as TrainingGenerationAnalysisRecord['generalistChampions']
+      : undefined,
+    hallOfFame: {
+      chaserSize: record.hallOfFame.chaserSize,
+      evaderSize: record.hallOfFame.evaderSize,
+      maxSize: record.hallOfFame.maxSize,
+      opponentsPerGenome: record.hallOfFame.opponentsPerGenome,
+      chaserRecentSize: record.hallOfFame.chaserRecentSize,
+      evaderRecentSize: record.hallOfFame.evaderRecentSize,
+      chaserDiverseSize: record.hallOfFame.chaserDiverseSize,
+      evaderDiverseSize: record.hallOfFame.evaderDiverseSize,
+      chaserDiversity: record.hallOfFame.chaserDiversity,
+      evaderDiversity: record.hallOfFame.evaderDiversity,
+    },
+    chaserElo: record.chaserElo,
+    runnerElo: record.runnerElo,
+    actionShares: {
+      chaser: { ...record.actionShares.chaser },
+      runner: { ...record.actionShares.runner },
+    },
+    showcasePair: record.showcasePair ? { ...record.showcasePair } : null,
+  };
+}
+
+function buildAnalysisExport(historyStride = 1) {
   // Keep both views in the report. `probes` remains the showcase pair for visual-game diagnosis,
   // while retainedProbes measures the actual saved best-generalist matchup directly.
   const probes = buildAnalysisProbeSet(showcaseChaser, showcaseEvader, 'showcase');
@@ -2950,7 +3011,13 @@ function buildAnalysisExport() {
       evaluatorRecoveryCount,
       lastEvaluatorRecoveryReason,
     },
-    history: JSON.parse(JSON.stringify(analysisHistory)) as TrainingGenerationAnalysisRecord[],
+    historyEncoding: historyStride > 1 ? `compact-v1-every-${historyStride}-generations` : 'compact-v1',
+    history: analysisHistory
+      .filter((record, index) => historyStride <= 1
+        || index === 0
+        || index === analysisHistory.length - 1
+        || record.generation % historyStride === 0)
+      .map(compactAnalysisHistoryRecord),
     current: {
       chaserMetrics: lastChaserMetrics ? { ...lastChaserMetrics } : null,
       runnerMetrics: lastEvaderMetrics ? { ...lastEvaderMetrics } : null,
@@ -3328,7 +3395,7 @@ self.onmessage = (event: MessageEvent) => {
         self.postMessage({ type: 'CHECKPOINT_RESPONSE', payload: { requestId: payload?.requestId ?? null, error: 'Checkpoint capture is disabled while architecture experiments are running.' } });
         break;
       }
-      const checkpoint = latestSafeCheckpoint || buildEvolutionCheckpoint();
+      const checkpoint = checkpointWithRecentAnalysis(latestSafeCheckpoint, MAX_CHECKPOINT_ANALYSIS_HISTORY);
       self.postMessage({
         type: 'CHECKPOINT_RESPONSE',
         payload: {
