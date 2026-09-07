@@ -1,1 +1,1 @@
-Add temporary automated architecture experiment runner
+Refine tactical controls and cross-play validation

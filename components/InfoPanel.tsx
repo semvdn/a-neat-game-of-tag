@@ -547,7 +547,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
 
       <div className="mt-auto bg-gray-700 p-3 rounded-md text-xs text-gray-400">
         <h4 className="font-bold text-gray-300 mb-1">How it works:</h4>
-        <p>Agents use four factorized outputs—left drive, right drive, jump, and sprint—on the compact 25-input state. Horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities.</p>
+        <p>Agents use three factorized outputs—signed horizontal drive, jump, and sprint—on the compact 25-input state. Horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities.</p>
       </div>
     </aside>
   );

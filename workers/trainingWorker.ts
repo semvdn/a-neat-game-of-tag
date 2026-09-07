@@ -34,6 +34,7 @@ import {
   WORLD_REF_WIDTH,
   WORLD_REF_HEIGHT,
   ACTION_SPACE,
+  POLICY_OUTPUT_SPACE,
   STATE_VECTOR_SIZE,
   MAX_SPEED,
   SPRINT_MAX_SPEED,
@@ -217,9 +218,9 @@ interface EvolutionCheckpoint {
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   /** Fitness semantics marker for compatibility with checkpoints created before right-only exploration. */
   explorationRewardMode?: 'safe-per-runner-right-frontier';
-  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2';
-  actionSchema?: 'factorized-controls-v1';
-  horizontalControlResolution?: 'winner-with-release-hysteresis-v1';
+  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3';
+  actionSchema?: 'signed-horizontal-controls-v2';
+  horizontalControlResolution?: 'signed-axis-v2';
   chaserElo: number;
   evaderElo: number;
   hallOfFame: {
@@ -357,6 +358,7 @@ let generationRunnerRightFrontierExpansionPx = 0;
 let generationRunnerExplorationBonus = 0;
 let generationRunnerPaceBonus = 0;
 let generationRunnerPaceShortfallPenalty = 0;
+let generationRunnerPressureEscapeBonus = 0;
 let generationRunnerPaceCompletion = 0;
 let generationRunnerPaceWindowsSatisfied = 0;
 let generationRunnerPaceWindowsTotal = 0;
@@ -477,6 +479,7 @@ interface EpisodeStats {
   runnerExplorationFitnessBonus: number;
   runnerPaceFitnessBonus: number;
   runnerPaceShortfallPenalty: number;
+  runnerPressureEscapeFitnessBonus: number;
   runnerPaceCompletion: number;
   runnerPaceWindowsSatisfied: number;
   runnerPaceWindowsTotal: number;
@@ -574,7 +577,7 @@ function benchmarkSeed(role: 'chaser' | 'evader', referenceIndex: number, modeIn
   return (roleSalt ^ Math.imul(referenceIndex + 1, 0x9e3779b1) ^ Math.imul(modeIndex + 1, 0x85ebca6b)) >>> 0;
 }
 
-function controlActiveShare(counts: number[], action: string, decisions: number): number {
+function controlActiveShare(counts: number[], action: (typeof ACTION_SPACE)[number], decisions: number): number {
   const index = ACTION_SPACE.indexOf(action);
   return index >= 0 ? (counts[index] || 0) / Math.max(1, decisions) : 0;
 }
@@ -701,6 +704,84 @@ function generalistValidationScore(role: 'chaser' | 'evader', telemetry: Benchma
   return telemetry.meanFitness + paceCredit - lowPacePenalty - idlePenalty - conflictPenalty - 2 * falls;
 }
 
+
+interface GeneralistCandidateEvaluation {
+  benchmark: BenchmarkRoleEvaluation;
+  crossPlayMeanFitness: number;
+  crossPlayMatches: number;
+  score: number;
+}
+
+function generalistCrossPlayOpponents(role: 'chaser' | 'evader'): NeatGenomeData[] {
+  const opposingRetained = role === 'chaser' ? retainedEvaderGeneralist : retainedChaserGeneralist;
+  const opposingArchive = role === 'chaser' ? evaderHallOfFame : chaserHallOfFame;
+  const unique = new Map<string, NeatGenomeData>();
+  if (opposingRetained) unique.set(opposingRetained.genome.id, opposingRetained.genome);
+  const ranked = hallOfFamePool(opposingArchive)
+    .slice()
+    .sort((a, b) => b.benchmarkScore - a.benchmarkScore || b.generation - a.generation);
+  for (const entry of ranked) {
+    if (unique.size >= 3) break;
+    if (opposingRetained && entry.generation === opposingRetained.telemetry.generation) continue;
+    unique.set(entry.genome.id, entry.genome);
+  }
+  return [...unique.values()].slice(0, 3);
+}
+
+function evaluateGeneralistCrossPlay(genome: NeatGenomeData, role: 'chaser' | 'evader'): { meanFitness: number; matches: number } {
+  const opponents = generalistCrossPlayOpponents(role);
+  if (opponents.length === 0) return { meanFitness: 100, matches: 0 };
+  const candidate = new LearningAgent(role, genome);
+  const modes: TrainingStartMode[] = ['visual', 'varied', 'midgame'];
+  let fitnessTotal = 0;
+  let matches = 0;
+  for (let opponentIndex = 0; opponentIndex < opponents.length; opponentIndex++) {
+    const opponentGenome = opponents[opponentIndex];
+    const opponentRole = role === 'chaser' ? 'evader' : 'chaser';
+    const opponent = new LearningAgent(opponentRole, opponentGenome);
+    for (let modeIndex = 0; modeIndex < modes.length; modeIndex++) {
+      const seed = (0x7f4a7c15 ^ Math.imul(opponentIndex + 1, 0x9e3779b1) ^ Math.imul(modeIndex + 1, 0x85ebca6b) ^ (role === 'chaser' ? 0x13579bdf : 0x2468ace0)) >>> 0;
+      const episodeOptions = {
+        trackChaserActions: false,
+        trackEvaderActions: false,
+        viewportSize,
+        upgrades: activeUpgradeState(),
+        startMode: modes[modeIndex],
+        runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
+        runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
+        chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+      };
+      const result = role === 'chaser'
+        ? runTrainingEpisode(candidate, opponent, seed, episodeOptions)
+        : runTrainingEpisode(opponent, candidate, seed, episodeOptions);
+      fitnessTotal += role === 'chaser' ? result.chaserFitness : result.evaderFitness;
+      matches++;
+    }
+  }
+  return { meanFitness: fitnessTotal / Math.max(1, matches), matches };
+}
+
+function evaluateGeneralistCandidate(
+  genome: NeatGenomeData,
+  role: 'chaser' | 'evader',
+  cachedBenchmark?: BenchmarkRoleEvaluation
+): GeneralistCandidateEvaluation {
+  const benchmark = cachedBenchmark || evaluateFixedBenchmark(genome, role);
+  const benchmarkScore = generalistValidationScore(role, benchmark.telemetry);
+  const crossPlay = evaluateGeneralistCrossPlay(genome, role);
+  // Frozen benchmark remains the main generalization criterion, while cross-play prevents two
+  // independently strong policies from being retained if their actual matchup is pathological.
+  const score = crossPlay.matches > 0
+    ? 0.75 * benchmarkScore + 0.25 * crossPlay.meanFitness
+    : benchmarkScore;
+  return {
+    benchmark,
+    crossPlayMeanFitness: crossPlay.meanFitness,
+    crossPlayMatches: crossPlay.matches,
+    score,
+  };
+}
+
 function retainedGeneralistForRole(role: 'chaser' | 'evader'): RetainedGeneralistChampion | null {
   return role === 'chaser' ? retainedChaserGeneralist : retainedEvaderGeneralist;
 }
@@ -717,12 +798,14 @@ function cloneGeneralistTelemetry(value: GeneralistChampionTelemetry | null): Ge
 function revalidateRetainedGeneralist(role: 'chaser' | 'evader'): void {
   const retained = retainedGeneralistForRole(role);
   if (!retained || retained.telemetry.suiteRevision === benchmarkSuiteRevision) return;
-  const evaluation = evaluateFixedBenchmark(retained.genome, role);
+  const evaluation = evaluateGeneralistCandidate(retained.genome, role);
   retained.telemetry = {
     ...retained.telemetry,
     suiteRevision: benchmarkSuiteRevision,
-    score: generalistValidationScore(role, evaluation.telemetry),
-    benchmark: { ...evaluation.telemetry },
+    score: evaluation.score,
+    benchmark: { ...evaluation.benchmark.telemetry },
+    crossPlayMeanFitness: evaluation.crossPlayMeanFitness,
+    crossPlayMatches: evaluation.crossPlayMatches,
   };
 }
 
@@ -745,14 +828,16 @@ function restoreRetainedGeneralist(
   const controller = new LearningAgent(role, storedGenome);
   let telemetry = saved ? cloneGeneralistTelemetry(saved)! : null;
   if (!telemetry || telemetry.suiteRevision !== benchmarkSuiteRevision) {
-    const evaluation = evaluateFixedBenchmark(storedGenome, role);
+    const evaluation = evaluateGeneralistCandidate(storedGenome, role);
     telemetry = {
       role,
       generation: saved?.generation ?? genome.generation,
       selectedAtGeneration: saved?.selectedAtGeneration ?? genome.generation,
       suiteRevision: benchmarkSuiteRevision,
-      score: generalistValidationScore(role, evaluation.telemetry),
-      benchmark: { ...evaluation.telemetry },
+      score: evaluation.score,
+      benchmark: { ...evaluation.benchmark.telemetry },
+      crossPlayMeanFitness: evaluation.crossPlayMeanFitness,
+      crossPlayMatches: evaluation.crossPlayMatches,
     };
   }
   setRetainedGeneralist(role, { genome: storedGenome, controller, telemetry });
@@ -776,21 +861,35 @@ function considerRetainedGeneralistCandidates(
   const unique = new Map<string, NeatGenomeData>();
   for (const candidate of candidates) unique.set(candidate.id, candidate);
 
+  // Re-score the incumbent on the same current cross-play panel as challengers. Its frozen benchmark
+  // result remains stable, but the 25% matchup component evolves as the opposing HOF improves.
+  let incumbentScore = -Infinity;
+  if (incumbent) {
+    const benchmark: BenchmarkRoleEvaluation = {
+      telemetry: { ...incumbent.telemetry.benchmark },
+      descriptor: [],
+    };
+    const current = evaluateGeneralistCandidate(incumbent.genome, role, benchmark);
+    incumbent.telemetry.score = current.score;
+    incumbent.telemetry.crossPlayMeanFitness = current.crossPlayMeanFitness;
+    incumbent.telemetry.crossPlayMatches = current.crossPlayMatches;
+    incumbentScore = current.score;
+  }
+
   let bestGenome: NeatGenomeData | null = null;
-  let bestEvaluation: BenchmarkRoleEvaluation | null = null;
+  let bestEvaluation: GeneralistCandidateEvaluation | null = null;
   let bestScore = -Infinity;
   for (const genome of unique.values()) {
-    const evaluation = evaluateFixedBenchmark(genome, role);
-    const score = generalistValidationScore(role, evaluation.telemetry);
-    if (score > bestScore) {
+    const evaluation = evaluateGeneralistCandidate(genome, role);
+    if (evaluation.score > bestScore) {
       bestGenome = genome;
       bestEvaluation = evaluation;
-      bestScore = score;
+      bestScore = evaluation.score;
     }
   }
 
   if (!bestGenome || !bestEvaluation) return;
-  if (incumbent && bestScore <= incumbent.telemetry.score + NEAT_GENERALIST_REPLACEMENT_MARGIN) return;
+  if (incumbent && bestScore <= incumbentScore + NEAT_GENERALIST_REPLACEMENT_MARGIN) return;
 
   const storedGenome = cloneGenome(bestGenome, `${role}_generalist_g${bestGenome.generation}`);
   storedGenome.fitness = bestGenome.fitness;
@@ -803,7 +902,9 @@ function considerRetainedGeneralistCandidates(
       selectedAtGeneration,
       suiteRevision: benchmarkSuiteRevision,
       score: bestScore,
-      benchmark: { ...bestEvaluation.telemetry },
+      benchmark: { ...bestEvaluation.benchmark.telemetry },
+      crossPlayMeanFitness: bestEvaluation.crossPlayMeanFitness,
+      crossPlayMatches: bestEvaluation.crossPlayMatches,
     },
   };
   setRetainedGeneralist(role, retained);
@@ -1059,9 +1160,9 @@ function buildEvolutionCheckpoint(): EvolutionCheckpoint {
     trainingFitnessConfig: sanitizeTrainingFitnessConfig(trainingFitnessConfig),
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     explorationRewardMode: 'safe-per-runner-right-frontier',
-    gameplayObjectiveVersion: 'pace-pursuit-branches-v2',
-    actionSchema: 'factorized-controls-v1',
-    horizontalControlResolution: 'winner-with-release-hysteresis-v1',
+    gameplayObjectiveVersion: 'pace-pressure-crossplay-v3',
+    actionSchema: 'signed-horizontal-controls-v2',
+    horizontalControlResolution: 'signed-axis-v2',
     chaserElo,
     evaderElo,
     hallOfFame: {
@@ -1115,8 +1216,8 @@ function captureSafeCheckpoint(): void {
 }
 
 function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
-  if (!checkpoint || checkpoint.format !== 'neat-tag-evolution-checkpoint' || checkpoint.version !== 2 || checkpoint.actionSchema !== 'factorized-controls-v1') {
-    throw new Error('This checkpoint predates the factorized movement+jump controller. Start a fresh run or load a checkpoint created by this build.');
+  if (!checkpoint || checkpoint.format !== 'neat-tag-evolution-checkpoint' || checkpoint.version !== 2 || checkpoint.actionSchema !== 'signed-horizontal-controls-v2') {
+    throw new Error('This checkpoint uses an incompatible older controller. Start a fresh run or load a checkpoint created by this build.');
   }
 
   networkArchitecture = sanitizeNetworkArchitectureSuite(checkpoint.networkArchitecture || DEFAULT_NETWORK_ARCHITECTURE_SUITE);
@@ -1132,8 +1233,8 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
   upgradeConfig = sanitizeUpgradeConfig(checkpoint.upgradeConfig);
   const migratedExplorationFitness = !checkpoint.trainingFitnessConfig;
   const migratedExplorationRewardMode = checkpoint.explorationRewardMode !== 'safe-per-runner-right-frontier';
-  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'pace-pursuit-branches-v2';
-  const migratedHorizontalControl = checkpoint.horizontalControlResolution !== 'winner-with-release-hysteresis-v1';
+  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'pace-pressure-crossplay-v3';
+  const migratedHorizontalControl = checkpoint.horizontalControlResolution !== 'signed-axis-v2';
   trainingFitnessConfig = sanitizeTrainingFitnessConfig(checkpoint.trainingFitnessConfig);
   chaserElo = Number.isFinite(checkpoint.chaserElo) ? checkpoint.chaserElo : INITIAL_ELO;
   evaderElo = Number.isFinite(checkpoint.evaderElo) ? checkpoint.evaderElo : INITIAL_ELO;
@@ -1569,6 +1670,7 @@ function recordPopulationBalance(result: EpisodeStats) {
   generationRunnerExplorationBonus += result.runnerExplorationFitnessBonus;
   generationRunnerPaceBonus += result.runnerPaceFitnessBonus;
   generationRunnerPaceShortfallPenalty += result.runnerPaceShortfallPenalty;
+  generationRunnerPressureEscapeBonus += result.runnerPressureEscapeFitnessBonus;
   generationRunnerPaceCompletion += result.runnerPaceCompletion;
   generationRunnerPaceWindowsSatisfied += result.runnerPaceWindowsSatisfied;
   generationRunnerPaceWindowsTotal += result.runnerPaceWindowsTotal;
@@ -1880,6 +1982,7 @@ function resetEvaluationAccumulators() {
   generationRunnerExplorationBonus = 0;
   generationRunnerPaceBonus = 0;
   generationRunnerPaceShortfallPenalty = 0;
+  generationRunnerPressureEscapeBonus = 0;
   generationRunnerPaceCompletion = 0;
   generationRunnerPaceWindowsSatisfied = 0;
   generationRunnerPaceWindowsTotal = 0;
@@ -2193,6 +2296,7 @@ function architectureExperimentSummary(result: ArchitectureExperimentResult) {
       runnerFallRate: balance.runnerFallRate,
       runnerPaceCompletion: balance.runnerPaceCompletion,
       runnerPaceShortfallPenaltyPerEpisode: balance.runnerPaceShortfallPenaltyPerEpisode,
+      runnerPressureEscapeBonusPerEpisode: balance.runnerPressureEscapeBonusPerEpisode,
       chaserDirectionConflictShare: balance.chaserDirectionConflictShare,
       runnerDirectionConflictShare: balance.runnerDirectionConflictShare,
       closeEncountersPerEpisode: balance.closeEncountersPerEpisode,
@@ -2227,7 +2331,7 @@ function completeArchitectureExperimentSuite(): void {
   const completedAt = Date.now();
   const report = {
     format: 'neat-tag-architecture-experiment-suite',
-    version: 2,
+    version: 3,
     generatedAt: completedAt,
     targetGeneration: suite.targetGeneration,
     experiments: suite.results,
@@ -2238,7 +2342,7 @@ function completeArchitectureExperimentSuite(): void {
       sameUpgradeSettingsAcrossRuns: true,
       sharedFrozenBenchmarkOpponentBank: true,
       stationaryCollapseFix: {
-        horizontalControlResolution: 'winner-with-release-hysteresis-v1',
+        horizontalControlResolution: 'signed-axis-v2',
         paceShortfallPenaltyFraction: 2 / 3,
         directionConflictTelemetry: true,
       },
@@ -2342,6 +2446,7 @@ function finishGeneration() {
     runnerPaceWindowsSatisfiedPerEpisode: generationRunnerPaceWindowsSatisfied / Math.max(1, generationPopulationMatches),
     runnerPaceBonusPerEpisode: generationRunnerPaceBonus / Math.max(1, generationPopulationMatches),
     runnerPaceShortfallPenaltyPerEpisode: generationRunnerPaceShortfallPenalty / Math.max(1, generationPopulationMatches),
+    runnerPressureEscapeBonusPerEpisode: generationRunnerPressureEscapeBonus / Math.max(1, generationPopulationMatches),
     chaserDirectionConflictShare: generationDirectionConflictCountChaser / Math.max(1, generationDecisionCountChaser),
     runnerDirectionConflictShare: generationDirectionConflictCountEvader / Math.max(1, generationDecisionCountEvader),
     chaserPursuitBonusPerEpisode: generationChaserPursuitBonus / Math.max(1, generationPopulationMatches),
@@ -2525,19 +2630,20 @@ function buildAnalysisExport() {
     generation: Math.max(lastChaserMetrics?.generation || 0, lastEvaderMetrics?.generation || 0),
     stateVectorSize: STATE_VECTOR_SIZE,
     actionSpace: [...ACTION_SPACE],
-    actionSchema: 'factorized-controls-v1',
-    horizontalControlResolution: 'winner-with-release-hysteresis-v1',
-    gameplayObjectiveVersion: 'pace-pursuit-branches-v2',
+    policyOutputSpace: [...POLICY_OUTPUT_SPACE],
+    actionSchema: 'signed-horizontal-controls-v2',
+    horizontalControlResolution: 'signed-axis-v2',
+    gameplayObjectiveVersion: 'pace-pressure-crossplay-v3',
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     viewportSize: { ...viewportSize },
     fitness: {
       chaser: '100 + 20 * (tags - chaserFalls) + capped runner-visited-platform pursuit shaping',
-      runner: '100 + 20 * (-tags - runnerFalls) + capped pace reward - pace shortfall penalty',
+      runner: '100 + 20 * (-tags - runnerFalls) + capped pace reward - pace shortfall penalty + capped pressure-escape reward',
       config: {
         ...trainingFitnessConfig,
         runnerPaceShortfallPenaltyAtZeroPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow * (2 / 3),
       },
-      paceDefinition: 'Every 2 seconds, SAFE rightward progress across both Runner slots is averaged into a 0..1 completion fraction. Reward saturates at the target, while the unsatisfied fraction carries a modest shortfall penalty so standing still is not a free survival strategy.',
+      paceDefinition: 'Every 2 seconds, SAFE rightward progress across both Runner slots is averaged into a 0..1 completion fraction. Reward saturates at the target, while the unsatisfied fraction carries a modest shortfall penalty so standing still is not a free survival strategy. Clean close-pressure escapes add only a small capped tactical bonus.',
       pursuitDefinition: 'The Chaser earns a small capped reward only for first safe landings on platforms a Runner has already occupied. Tags remain the dominant Chaser reward.',
     },
     upgrades: sanitizeUpgradeConfig(upgradeConfig),

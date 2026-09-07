@@ -31,6 +31,8 @@ import {
   DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW,
   DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM,
   CHASER_PURSUIT_REWARD_CAP_PER_WINDOW,
+  RUNNER_PRESSURE_ESCAPE_REWARD,
+  RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW,
   CLOSE_ENCOUNTER_ENTER_PX,
   CLOSE_ENCOUNTER_EXIT_PX,
   TAG_AFTER_RUNNER_FALL_WINDOW_MS,
@@ -80,6 +82,8 @@ export interface TrainingEpisodeResult {
   runnerPaceFitnessBonus: number;
   /** Penalty for the unsatisfied fraction of each pace window. */
   runnerPaceShortfallPenalty: number;
+  /** Small capped reward for escaping genuine close pressure without a tag or fall. */
+  runnerPressureEscapeFitnessBonus: number;
   runnerPaceCompletion: number;
   runnerPaceWindowsSatisfied: number;
   runnerPaceWindowsTotal: number;
@@ -133,6 +137,7 @@ export interface TrainingEpisodeTraceSample {
   runnerFrontierExpansionPx: number;
   runnerPaceFitnessBonus: number;
   runnerPaceShortfallPenalty: number;
+  runnerPressureEscapeFitnessBonus: number;
   chaserPursuitFitnessBonus: number;
   closeEncounters: number;
   successfulEvades: number;
@@ -718,6 +723,8 @@ export function runTrainingEpisode(
   let nextPaceWindowAtMs = RUNNER_PACE_WINDOW_MS;
   let runnerPaceFitnessBonus = 0;
   let runnerPaceShortfallPenalty = 0;
+  let runnerPressureEscapeFitnessBonus = 0;
+  let pressureEscapeBonusThisWindow = 0;
   let runnerPaceCompletionSum = 0;
   let runnerPaceWindowsSatisfied = 0;
   let runnerPaceWindowsTotal = 0;
@@ -742,6 +749,7 @@ export function runTrainingEpisode(
   let closeEncounterActive = false;
   let closeEncounters = 0;
   let successfulEvades = 0;
+  let runnerFallsAtEncounterStart = 0;
   let nearestRunnerDistanceAccum = 0;
   let nearestRunnerDistanceSamples = 0;
   let timeWithin100Ms = 0;
@@ -767,6 +775,7 @@ export function runTrainingEpisode(
     actionStrength: 0,
     moveLeft: 0,
     moveRight: 0,
+    horizontalDrive: 0,
     jump: 0,
     sprint: 0,
     directionConflict: false,
@@ -974,9 +983,21 @@ export function runTrainingEpisode(
       if (!closeEncounterActive && nearestRunnerDistance <= CLOSE_ENCOUNTER_ENTER_PX) {
         closeEncounterActive = true;
         closeEncounters++;
+        runnerFallsAtEncounterStart = evaderFalls;
       } else if (closeEncounterActive && nearestRunnerDistance >= CLOSE_ENCOUNTER_EXIT_PX) {
         closeEncounterActive = false;
         successfulEvades++;
+        // Reward only a clean escape from real pressure. The 180px -> 380px hysteresis makes one
+        // prolonged chase count once, while the per-window cap prevents oscillation farming. A fall
+        // during the encounter invalidates the tactical bonus even if the respawn opens distance.
+        if (evaderFalls === runnerFallsAtEncounterStart && pressureEscapeBonusThisWindow < RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW) {
+          const reward = Math.min(
+            RUNNER_PRESSURE_ESCAPE_REWARD,
+            RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW - pressureEscapeBonusThisWindow
+          );
+          pressureEscapeBonusThisWindow += reward;
+          runnerPressureEscapeFitnessBonus += reward;
+        }
       }
     }
 
@@ -1016,6 +1037,7 @@ export function runTrainingEpisode(
       runnerPaceWindowsTotal++;
       if (completion >= 0.999) runnerPaceWindowsSatisfied++;
       pursuitBonusThisWindow = 0;
+      pressureEscapeBonusThisWindow = 0;
       nextPaceWindowAtMs += RUNNER_PACE_WINDOW_MS;
     }
 
@@ -1049,6 +1071,7 @@ export function runTrainingEpisode(
         runnerFrontierExpansionPx: runnerSafeRightExpansionByBody.reduce((sum, value) => sum + value, 0) / 2,
         runnerPaceFitnessBonus,
         runnerPaceShortfallPenalty,
+        runnerPressureEscapeFitnessBonus,
         chaserPursuitFitnessBonus,
         closeEncounters,
         successfulEvades,
@@ -1102,7 +1125,7 @@ export function runTrainingEpisode(
     ? nearestRunnerDistanceAccum / nearestRunnerDistanceSamples
     : 0;
   const chaserFitness = FITNESS_BASE + chaserEventScore * FITNESS_PER_EVENT + chaserPursuitFitnessBonus;
-  const evaderFitness = FITNESS_BASE + evaderEventScore * FITNESS_PER_EVENT + runnerPaceFitnessBonus - runnerPaceShortfallPenalty;
+  const evaderFitness = FITNESS_BASE + evaderEventScore * FITNESS_PER_EVENT + runnerPaceFitnessBonus - runnerPaceShortfallPenalty + runnerPressureEscapeFitnessBonus;
 
   return {
     chaserFitness,
@@ -1133,6 +1156,7 @@ export function runTrainingEpisode(
     runnerExplorationFitnessBonus,
     runnerPaceFitnessBonus,
     runnerPaceShortfallPenalty,
+    runnerPressureEscapeFitnessBonus,
     runnerPaceCompletion,
     runnerPaceWindowsSatisfied,
     runnerPaceWindowsTotal,

@@ -1,4 +1,4 @@
-import { ACTION_SPACE, STATE_VECTOR_SIZE } from '../constants';
+import { POLICY_OUTPUT_SPACE, STATE_VECTOR_SIZE } from '../constants';
 
 export type NeatRole = 'chaser' | 'evader' | 'general';
 export type NodeGeneType = 'input' | 'hidden' | 'output';
@@ -212,7 +212,7 @@ export const NETWORK_ARCHITECTURE_PRESET_INFO: Record<Exclude<NetworkArchitectur
   deep: { label: 'Deep 16→12', summary: 'Two feed-forward layers with moderate growth headroom.', use: 'Best feed-forward comparison for memory presets.' },
   wide: { label: 'Wide 24→16', summary: 'Wider feed-forward network with hidden skip links.', use: 'Tests capacity without temporal memory.' },
   memory_lite: { label: 'Memory Lite', summary: '12 hidden nodes + 4 recurrent links, evolving to 16.', use: 'Cheapest recurrent test; good first memory experiment.' },
-  memory_balanced: { label: 'Memory Balanced', summary: '16→12 hidden layers + 8 recurrent links, evolving to 32.', use: 'Recommended general-purpose recurrent preset.' },
+  memory_balanced: { label: 'Memory Balanced', summary: '16→12 hidden layers + 8 recurrent links, evolving to 32.', use: 'Recurrent comparison preset; Deep FF is now the default.' },
   memory_evolve: { label: 'Memory Discovery', summary: 'Starts feed-forward; recurrence may evolve up to 32 links.', use: 'Tests whether evolution chooses memory when it is useful.' },
   memory_fixed: { label: 'Fixed Memory Control', summary: 'Fixed 16→12 topology with exactly 12 recurrent links.', use: 'Clean control for memory benefit without structural growth.' },
   memory_deep: { label: 'Deep Memory', summary: '20→16→12 with 12 recurrent links, evolving to 48.', use: 'High-capacity temporal experiment; slower and harder to evolve.' },
@@ -228,7 +228,7 @@ export const NETWORK_ARCHITECTURE_SUITE_PRESETS: Record<NetworkArchitectureSuite
   },
   balanced_memory: {
     label: 'Balanced memory',
-    summary: 'Recommended: Memory Balanced for both Chaser and Runner.',
+    summary: 'Memory Balanced for both Chaser and Runner; retained as a recurrent comparison.',
     config: { linkedRoles: true, chaser: { ...NETWORK_ARCHITECTURE_PRESETS.memory_balanced, hiddenLayers: [16, 12] }, runner: { ...NETWORK_ARCHITECTURE_PRESETS.memory_balanced, hiddenLayers: [16, 12] } },
   },
   chaser_memory: {
@@ -250,8 +250,8 @@ export const NETWORK_ARCHITECTURE_SUITE_PRESETS: Record<NetworkArchitectureSuite
 
 export const DEFAULT_NETWORK_ARCHITECTURE_SUITE: NetworkArchitectureSuiteConfig = {
   linkedRoles: true,
-  chaser: { ...NETWORK_ARCHITECTURE_PRESETS.minimal, hiddenLayers: [] },
-  runner: { ...NETWORK_ARCHITECTURE_PRESETS.minimal, hiddenLayers: [] },
+  chaser: { ...NETWORK_ARCHITECTURE_PRESETS.deep, hiddenLayers: [16, 12] },
+  runner: { ...NETWORK_ARCHITECTURE_PRESETS.deep, hiddenLayers: [16, 12] },
 };
 
 export function sanitizeNetworkArchitectureConfig(value?: Partial<NetworkArchitectureConfig>): NetworkArchitectureConfig {
@@ -273,7 +273,7 @@ export function sanitizeNetworkArchitectureConfig(value?: Partial<NetworkArchite
   const addRecurrent = Number(value?.addRecurrentConnectionRate);
   const maxHiddenLayers = Math.max(hiddenLayers.length, Number.isFinite(requestedMaxLayers) ? Math.min(8, Math.max(0, requestedMaxLayers)) : Math.max(hiddenLayers.length, 4));
   const maxHiddenNodes = Math.max(initialHiddenNodes, Number.isFinite(requestedMaxNodes) ? Math.min(384, Math.max(0, requestedMaxNodes)) : Math.max(initialHiddenNodes, 96));
-  const initialStatefulNodes = initialHiddenNodes + ACTION_SPACE.length;
+  const initialStatefulNodes = initialHiddenNodes + POLICY_OUTPUT_SPACE.length;
   const initialRecurrentCandidateCount = initialStatefulNodes * initialStatefulNodes;
   const recurrentInitial = Number.isFinite(initialRecurrent) ? Math.min(256, initialRecurrentCandidateCount, Math.max(0, initialRecurrent)) : 0;
   const maxRecurrentConnections = Math.max(recurrentInitial, Number.isFinite(requestedMaxRecurrent) ? Math.min(512, Math.max(0, requestedMaxRecurrent)) : recurrentInitial);
@@ -416,7 +416,7 @@ export class InnovationTracker {
       throw new Error('Invalid NEAT innovation tracker checkpoint');
     }
     this.nextInnovation = Math.max(0, Math.floor(checkpoint.nextInnovation));
-    this.nextNodeId = Math.max(STATE_VECTOR_SIZE + ACTION_SPACE.length, Math.floor(checkpoint.nextNodeId));
+    this.nextNodeId = Math.max(STATE_VECTOR_SIZE + POLICY_OUTPUT_SPACE.length, Math.floor(checkpoint.nextNodeId));
     this.edgeInnovations = new Map(checkpoint.edgeInnovations || []);
     this.splitNodes = new Map(checkpoint.splitNodes || []);
   }
@@ -570,7 +570,7 @@ function recurrentConnectionCount(genome: NeatGenomeData): number {
 export function initialNodeCountForArchitecture(
   architecture: NetworkArchitectureConfig,
   inputCount = STATE_VECTOR_SIZE,
-  outputCount = ACTION_SPACE.length
+  outputCount = POLICY_OUTPUT_SPACE.length
 ): number {
   return inputCount + outputCount + sanitizeNetworkArchitectureConfig(architecture).hiddenLayers.reduce((a, b) => a + b, 0);
 }
@@ -581,7 +581,7 @@ export function createGenomeWithArchitecture(
   tracker: InnovationTracker,
   generation = 1,
   inputCount = STATE_VECTOR_SIZE,
-  outputCount = ACTION_SPACE.length,
+  outputCount = POLICY_OUTPUT_SPACE.length,
   architecture: NetworkArchitectureConfig = NETWORK_ARCHITECTURE_PRESETS.minimal
 ): NeatGenomeData {
   const arch = sanitizeNetworkArchitectureConfig(architecture);
@@ -637,7 +637,7 @@ export function createMinimalGenome(
   tracker: InnovationTracker,
   generation = 1,
   inputCount = STATE_VECTOR_SIZE,
-  outputCount = ACTION_SPACE.length
+  outputCount = POLICY_OUTPUT_SPACE.length
 ): NeatGenomeData {
   return createGenomeWithArchitecture(id, role, tracker, generation, inputCount, outputCount, NETWORK_ARCHITECTURE_PRESETS.minimal);
 }
@@ -842,7 +842,7 @@ export function mutateGenome(genome: NeatGenomeData, tracker: InnovationTracker,
 
 function pruneWeakConnectionMutation(genome: NeatGenomeData): boolean {
   const enabled = genome.connections.filter(conn => conn.enabled);
-  if (enabled.length <= ACTION_SPACE.length) return false;
+  if (enabled.length <= POLICY_OUTPUT_SPACE.length) return false;
 
   // Prefer the weakest quarter by absolute weight. Recurrent edges receive a slight pruning bias
   // because they are more expressive and were the fastest-growing form of complexity in long runs.
@@ -1221,7 +1221,7 @@ export class NeatPopulation {
     this.tracker = new InnovationTracker(initialNodeCountForArchitecture(architecture));
     this.compatibilityThreshold = config.compatibilityThreshold;
     for (let i = 0; i < config.populationSize; i++) {
-      const genome = createGenomeWithArchitecture(`${role}_g1_${i}`, role, this.tracker, 1, STATE_VECTOR_SIZE, ACTION_SPACE.length, architecture);
+      const genome = createGenomeWithArchitecture(`${role}_g1_${i}`, role, this.tracker, 1, STATE_VECTOR_SIZE, POLICY_OUTPUT_SPACE.length, architecture);
       // Initial diversity is weight-level; topology starts minimal as in canonical NEAT.
       this.genomes.push(genome);
     }
@@ -1263,9 +1263,9 @@ export class NeatPopulation {
     for (const genome of checkpoint.genomes) {
       const inputCount = genome.nodes.filter(node => node.type === 'input').length;
       const outputCount = genome.nodes.filter(node => node.type === 'output').length;
-      if (inputCount !== STATE_VECTOR_SIZE || outputCount !== ACTION_SPACE.length) {
+      if (inputCount !== STATE_VECTOR_SIZE || outputCount !== POLICY_OUTPUT_SPACE.length) {
         throw new Error(
-          `Checkpoint ${this.role} genome ${genome.id} is incompatible: expected ${STATE_VECTOR_SIZE} inputs/${ACTION_SPACE.length} outputs`
+          `Checkpoint ${this.role} genome ${genome.id} is incompatible: expected ${STATE_VECTOR_SIZE} inputs/${POLICY_OUTPUT_SPACE.length} outputs`
         );
       }
     }
@@ -1275,7 +1275,7 @@ export class NeatPopulation {
     this.speciesCounter = Math.max(0, Math.floor(checkpoint.speciesCounter));
     this.extinctSpeciesSinceLastEvolution = Math.max(0, Math.floor(checkpoint.extinctSpeciesSinceLastEvolution || 0));
     this.genomes = checkpoint.genomes.map(genome => cloneGenome(genome));
-    this.tracker = new InnovationTracker(STATE_VECTOR_SIZE + ACTION_SPACE.length);
+    this.tracker = new InnovationTracker(STATE_VECTOR_SIZE + POLICY_OUTPUT_SPACE.length);
     this.tracker.restoreCheckpoint(checkpoint.innovationTracker);
     // Observe all restored genomes defensively in case a checkpoint came from a build that did not
     // persist one of the innovation maps completely. Existing innovations retain their ids.
@@ -1310,12 +1310,12 @@ export class NeatPopulation {
     this.extinctSpeciesSinceLastEvolution = 0;
     this.genomes = [];
     for (let i = 0; i < this.config.populationSize; i++) {
-      this.genomes.push(createGenomeWithArchitecture(`${this.role}_g1_${i}`, this.role, this.tracker, 1, STATE_VECTOR_SIZE, ACTION_SPACE.length, architecture));
+      this.genomes.push(createGenomeWithArchitecture(`${this.role}_g1_${i}`, this.role, this.tracker, 1, STATE_VECTOR_SIZE, POLICY_OUTPUT_SPACE.length, architecture));
     }
   }
 
   public seedFromChampion(champion: NeatGenomeData) {
-    this.tracker = new InnovationTracker(STATE_VECTOR_SIZE + ACTION_SPACE.length);
+    this.tracker = new InnovationTracker(STATE_VECTOR_SIZE + POLICY_OUTPUT_SPACE.length);
     this.tracker.observeGenome(champion);
     this.compatibilityThreshold = this.config.compatibilityThreshold;
     this.speciesCounter = 0;

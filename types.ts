@@ -196,6 +196,7 @@ export interface BalanceTelemetry {
   runnerPaceWindowsSatisfiedPerEpisode?: number;
   runnerPaceBonusPerEpisode?: number;
   runnerPaceShortfallPenaltyPerEpisode?: number;
+  runnerPressureEscapeBonusPerEpisode?: number;
   chaserDirectionConflictShare?: number;
   runnerDirectionConflictShare?: number;
   chaserPursuitBonusPerEpisode?: number;
@@ -247,6 +248,9 @@ export interface GeneralistChampionTelemetry {
   /** Generalization score used only for retention/display, never population selection. */
   score: number;
   benchmark: BenchmarkRoleTelemetry;
+  /** Mean role fitness against retained/Hall-of-Fame cross-play panel used for 25% of retention. */
+  crossPlayMeanFitness?: number;
+  crossPlayMatches?: number;
 }
 
 export interface CrossGenerationBenchmarkTelemetry {

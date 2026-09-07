@@ -14,8 +14,8 @@ export const FRICTION = 0.9; // closer to 1 is less friction
 export const MAX_SPEED = 5;
 export const JUMP_STRENGTH = -13;
 
-// Optional manual abilities. The policy has four factorized outputs: left drive, right drive, jump, sprint.
-// Sprint is ignored when the manual Sprint upgrade is disabled.
+// Optional manual abilities. The policy has three factorized outputs: signed horizontal drive, jump, sprint.
+// Horizontal drive is decoded from sigmoid [0,1] to signed [-1,+1]. Sprint is ignored when disabled.
 export const SPRINT_MAX_SPEED = 7.25;
 export const SPRINT_ACCELERATION_MULTIPLIER = 1.35;
 export const SPRINT_ENERGY_COST_PER_SEC = 28;
@@ -42,9 +42,10 @@ export const MAX_PLATFORM_GAP_X = 200;
 export const MIN_PLATFORM_GAP_Y = -120;
 export const MAX_PLATFORM_GAP_Y = 120;
 
-// Learning Agent - factorized policy outputs. These are NOT mutually exclusive actions: an agent can
-// hold horizontal drive while jumping (and sprinting when that manual ability is enabled).
-export const ACTION_SPACE = ["move_left", "move_right", "jump", "sprint"];
+// Runtime action telemetry remains directional so diagnostics can distinguish left from right, while
+// the neural policy itself uses a single signed horizontal output.
+export const ACTION_SPACE = ["move_left", "move_right", "jump", "sprint"] as const;
+export const POLICY_OUTPUT_SPACE = ["horizontal_drive", "jump", "sprint"] as const;
 export const POLICY_CONTROL_ACTIVE_THRESHOLD = 0.10;
 // Jump behaves like a button rather than a held auto-repeat control. A press must cross the high
 // threshold, and another jump is impossible until the output is released below the low threshold.
@@ -109,6 +110,10 @@ export const MAX_RUNNER_PACE_REWARD_PER_WINDOW = 30;
 export const DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM = 2.5;
 export const MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM = 8;
 export const CHASER_PURSUIT_REWARD_CAP_PER_WINDOW = 5;
+// Tactical evasion reward: entering genuine pressure (<=180px) and opening back beyond 380px
+// without a tag/fall earns a small capped bonus. Pace remains the dominant movement requirement.
+export const RUNNER_PRESSURE_ESCAPE_REWARD = 3;
+export const RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW = 6;
 
 // Interaction diagnostics / evade hysteresis.
 export const CLOSE_ENCOUNTER_ENTER_PX = 180;

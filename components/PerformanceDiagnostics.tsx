@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import type { DiagnosticsState } from '../types';
 import type { StoredCheckpointSummary } from '../services/checkpointStore';
 import { NETWORK_ARCHITECTURE_PRESETS, NETWORK_ARCHITECTURE_PRESET_INFO, NETWORK_ARCHITECTURE_SUITE_PRESETS, sanitizeNetworkArchitectureSuite, type NeatGenerationMetrics, type NeatGenomeData, type NetworkArchitectureConfig, type NetworkArchitecturePreset, type NetworkArchitectureSuiteConfig, type NetworkArchitectureSuitePreset } from '../learning/neat';
-import { ACTION_SPACE, STATE_VECTOR_SIZE } from '../constants';
+import { ACTION_SPACE, POLICY_OUTPUT_SPACE, STATE_VECTOR_SIZE } from '../constants';
 import { STATE_VECTOR_LABELS } from '../learning/state';
 import {
   Activity,
@@ -158,8 +158,7 @@ const LineChart: React.FC<{
 };
 
 const ACTION_OUTPUT_LABELS: Record<string, string> = {
-  move_left: 'Left movement drive',
-  move_right: 'Right movement drive',
+  horizontal_drive: 'Signed horizontal drive (left ↔ right)',
   jump: 'Jump control',
   sprint: 'Sprint control',
 };
@@ -207,7 +206,7 @@ const NetworkGraph: React.FC<{ genome?: NeatGenomeData | null }> = ({ genome }) 
     }
     if (node.type === 'output') {
       const index = layout.outputIndexById.get(node.id) ?? 0;
-      const action = ACTION_SPACE[index] || `output_${index}`;
+      const action = POLICY_OUTPUT_SPACE[index] || `output_${index}`;
       return `Output ${index} · ${ACTION_OUTPUT_LABELS[action] || action}`;
     }
     return `Hidden node ${node.id} · depth ${(node.depth ?? 0.5).toFixed(3)}`;
@@ -282,12 +281,12 @@ const FitnessSummary: React.FC<{ title: string; metrics?: NeatGenerationMetrics 
 );
 
 const architectureEstimate = (config: NetworkArchitectureConfig) => {
-  const layers = [STATE_VECTOR_SIZE, ...config.hiddenLayers, ACTION_SPACE.length];
+  const layers = [STATE_VECTOR_SIZE, ...config.hiddenLayers, POLICY_OUTPUT_SPACE.length];
   const hiddenNodes = config.hiddenLayers.reduce((a, b) => a + b, 0);
-  const nodes = STATE_VECTOR_SIZE + ACTION_SPACE.length + hiddenNodes;
+  const nodes = STATE_VECTOR_SIZE + POLICY_OUTPUT_SPACE.length + hiddenNodes;
   let candidates = 0;
   for (let i = 0; i < layers.length - 1; i++) candidates += layers[i] * layers[i + 1];
-  if (config.hiddenLayers.length > 0 && config.inputOutputSkip) candidates += STATE_VECTOR_SIZE * ACTION_SPACE.length;
+  if (config.hiddenLayers.length > 0 && config.inputOutputSkip) candidates += STATE_VECTOR_SIZE * POLICY_OUTPUT_SPACE.length;
   if (config.hiddenLayerSkips && config.hiddenLayers.length > 1) {
     for (let i = 0; i < config.hiddenLayers.length - 1; i++) {
       for (let j = i + 2; j < config.hiddenLayers.length; j++) candidates += config.hiddenLayers[i] * config.hiddenLayers[j];
@@ -296,7 +295,7 @@ const architectureEstimate = (config: NetworkArchitectureConfig) => {
   return {
     nodes,
     hiddenNodes,
-    connections: Math.max(ACTION_SPACE.length, Math.round(candidates * config.connectionDensity)) + config.initialRecurrentConnections,
+    connections: Math.max(POLICY_OUTPUT_SPACE.length, Math.round(candidates * config.connectionDensity)) + config.initialRecurrentConnections,
   };
 };
 
@@ -572,8 +571,8 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
-              <MetricCard label="Retained Chaser" value={retainedChaser ? `g${retainedChaser.generation}` : '—'} hint={retainedChaser ? `generalist ${retainedChaser.score.toFixed(1)} · benchmark ${retainedChaser.benchmark.meanFitness.toFixed(1)}` : 'best validated generalist so far'} />
-              <MetricCard label="Retained Runner" value={retainedRunner ? `g${retainedRunner.generation}` : '—'} hint={retainedRunner ? `generalist ${retainedRunner.score.toFixed(1)} · ${((retainedRunner.benchmark.paceCompletion ?? 0) * 100).toFixed(0)}% pace` : 'best validated generalist so far'} />
+              <MetricCard label="Retained Chaser" value={retainedChaser ? `g${retainedChaser.generation}` : '—'} hint={retainedChaser ? `generalist ${retainedChaser.score.toFixed(1)} · benchmark ${retainedChaser.benchmark.meanFitness.toFixed(1)} · cross-play ${(retainedChaser.crossPlayMeanFitness ?? 0).toFixed(1)}` : 'best validated generalist so far'} />
+              <MetricCard label="Retained Runner" value={retainedRunner ? `g${retainedRunner.generation}` : '—'} hint={retainedRunner ? `generalist ${retainedRunner.score.toFixed(1)} · ${((retainedRunner.benchmark.paceCompletion ?? 0) * 100).toFixed(0)}% pace · cross-play ${(retainedRunner.crossPlayMeanFitness ?? 0).toFixed(1)}` : 'best validated generalist so far'} />
               <MetricCard label="Runner retained fitness" value={retainedRunner ? retainedRunner.benchmark.meanFitness.toFixed(1) : '—'} hint="frozen benchmark; low-pace camping is penalized in retention score" />
               <MetricCard label="Retention margin" value="+1.5" hint="challenger must clearly beat incumbent; population selection itself is unchanged" />
             </div>
@@ -589,6 +588,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               <MetricCard label="Runner pace completion" value={balance?.runnerPaceCompletion != null ? `${(balance.runnerPaceCompletion * 100).toFixed(1)}%` : '—'} hint={`${diagnostics.trainingFitnessConfig?.runnerPaceTargetPxPerWindow ?? 0}px target every 2s`} />
               <MetricCard label="Runner pace bonus / ep" value={balance?.runnerPaceBonusPerEpisode != null ? `+${balance.runnerPaceBonusPerEpisode.toFixed(2)}` : '—'} hint={`capped at +${diagnostics.trainingFitnessConfig?.runnerPaceRewardPerWindow ?? 0} per window`} />
               <MetricCard label="Pace shortfall / ep" value={balance?.runnerPaceShortfallPenaltyPerEpisode != null ? `-${balance.runnerPaceShortfallPenaltyPerEpisode.toFixed(2)}` : '—'} hint="unsatisfied pace-window fraction; prevents free stationary survival" />
+              <MetricCard label="Pressure escape + / ep" value={balance?.runnerPressureEscapeBonusPerEpisode != null ? `+${balance.runnerPressureEscapeBonusPerEpisode.toFixed(2)}` : '—'} hint="small capped reward for opening a <=180px encounter beyond 380px without tag/fall" />
               <MetricCard label="Chaser pursuit bonus / ep" value={balance?.chaserPursuitBonusPerEpisode != null ? `+${balance.chaserPursuitBonusPerEpisode.toFixed(2)}` : '—'} hint="runner-visited platforms; capped +5 / 2s" />
               <MetricCard label="Safe right / episode" value={balance?.runnerFrontierExpansionViewportsPerEpisode != null ? `${balance.runnerFrontierExpansionViewportsPerEpisode.toFixed(2)} view` : '—'} hint="diagnostic distance only; no longer linear fitness" />
             </div>
@@ -618,7 +618,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                 ]}
                 emptyLabel="Complete at least two generations to compare champions on the permanent benchmark suite."
               />
-              <p className="mt-2 text-xs text-gray-500">Each generation champion is tested against the same frozen run-start reference bank, permanent seeds, and visual/varied/mid-game scenario mix. These matches never alter breeding fitness or Elo. A separate retained-generalist layer uses the frozen suite only to decide which already-evolved policy is kept for the visible game/checkpoint, preventing transient co-evolutionary champions from replacing stronger generalists. The suite revision changes when a new run/import is seeded, enabled physics abilities change, or pace/pursuit shaping is retuned.</p>
+              <p className="mt-2 text-xs text-gray-500">Each generation champion is tested against the same frozen run-start reference bank, permanent seeds, and visual/varied/mid-game scenario mix. These matches never alter breeding fitness or Elo. A retained-generalist layer uses 75% frozen-suite validation plus 25% cross-play against the retained opponent and strong Hall-of-Fame policies to decide which already-evolved policy is kept for the visible game/checkpoint, preventing transient co-evolutionary champions from replacing stronger generalists. The suite revision changes when a new run/import is seeded, enabled physics abilities change, or pace/pursuit shaping is retuned.</p>
             </div>
 
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
@@ -674,7 +674,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             </div>
 
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4 text-sm text-gray-400 leading-relaxed">
-              <strong className="text-violet-200">Training architecture:</strong> persistent NEAT species now carry lineage age and progress across generations, with conservative stagnation pruning and protected young/top lineages. The compact 25-input policy now has factorized left-drive, right-drive, jump and sprint outputs, so horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities. Every genome is evaluated against common opponent panels plus Hall of Fame champions. Recent champions are retained alongside a strength-aware behaviorally diverse historical archive, while a separate fixed benchmark tracks cross-generation progress and now gates only visible/generalist champion retention, never population breeding. Runner shaping is now a capped 2-second pace requirement rather than an unbounded distance reward, and Chaser shaping gives a small capped signal for safely following Runner-used terrain. Jump requires a release before it can fire again, and later procedural terrain can branch into upper/lower routes that reconnect. The worker pool preloads genomes and batches episodes for lower messaging overhead.
+              <strong className="text-violet-200">Training architecture:</strong> persistent NEAT species now carry lineage age and progress across generations, with conservative stagnation pruning and protected young/top lineages. The compact 25-input policy now has a signed horizontal-drive output plus independent jump and sprint outputs, so horizontal movement and jumping can happen simultaneously. Sprint and controlled jump remain manual abilities. Every genome is evaluated against common opponent panels plus Hall of Fame champions. Recent champions are retained alongside a strength-aware behaviorally diverse historical archive, while a separate fixed benchmark tracks cross-generation progress and now gates only visible/generalist champion retention, never population breeding. Runner shaping is a capped 2-second pace requirement plus a small capped clean pressure-escape bonus, and Chaser shaping gives a small capped signal for safely following Runner-used terrain. Jump requires a release before it can fire again, and later procedural terrain can branch into upper/lower routes that reconnect. The worker pool preloads genomes and batches episodes for lower messaging overhead.
             </div>
           </div>
         )}
@@ -738,7 +738,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                     const selected = selectedSuitePreset === id;
                     return (
                       <button key={id} type="button" aria-pressed={selected} onClick={() => setArchitectureDraft(sanitizeNetworkArchitectureSuite(recipe.config))} className={`rounded-lg border px-3 py-2 text-left transition-colors ${selected ? 'border-violet-400 bg-violet-500/20 ring-1 ring-violet-400/35' : 'border-gray-800 bg-black/20 hover:border-gray-700'}`}>
-                        <div className={`flex flex-wrap items-center gap-1.5 text-[11px] font-semibold ${selected ? 'text-violet-100' : 'text-gray-200'}`}><span>{recipe.label}</span>{selected && <span className="rounded-full bg-violet-400 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-black">selected</span>}{id === 'balanced_memory' && <span className="rounded-full border border-fuchsia-500/35 px-1.5 py-0.5 text-[8px] uppercase tracking-wide text-fuchsia-300">recommended</span>}</div>
+                        <div className={`flex flex-wrap items-center gap-1.5 text-[11px] font-semibold ${selected ? 'text-violet-100' : 'text-gray-200'}`}><span>{recipe.label}</span>{selected && <span className="rounded-full bg-violet-400 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-black">selected</span>}{id === 'ff_control' && <span className="rounded-full border border-fuchsia-500/35 px-1.5 py-0.5 text-[8px] uppercase tracking-wide text-fuchsia-300">recommended</span>}</div>
                         <div className={`mt-1 text-[9px] leading-relaxed ${selected ? 'text-violet-200/70' : 'text-gray-600'}`}>{recipe.summary}</div>
                       </button>
                     );
