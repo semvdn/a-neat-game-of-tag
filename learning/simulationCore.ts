@@ -87,14 +87,31 @@ export interface ChaseEscapeEvaluation {
   groupSpanX: number;
   groupSpanY: number;
   maxChaserRunnerDistancePx: number;
-  /** Reference-view zoom needed to keep the full chase group inside the safe camera frame. */
+  /** Best (nearest/easiest) Chaser-to-Runner pair zoom. Escape requires every Runner pair to fail. */
   requiredReferenceZoom: number;
 }
 
+function pairFrameRequirement(a: AgentState, b: AgentState): { spanX: number; spanY: number; zoom: number } {
+  const minX = Math.min(a.position.x, b.position.x);
+  const maxX = Math.max(a.position.x + AGENT_WIDTH, b.position.x + AGENT_WIDTH);
+  const minY = Math.min(a.position.y, b.position.y);
+  const maxY = Math.max(a.position.y + AGENT_HEIGHT, b.position.y + AGENT_HEIGHT);
+  const spanX = Math.max(AGENT_WIDTH, maxX - minX);
+  const spanY = Math.max(AGENT_HEIGHT, maxY - minY);
+  const safeReferenceWidth = Math.max(1, WORLD_REF_WIDTH - CAMERA_FRAME_PADDING_REFERENCE_PX * 2);
+  const safeReferenceHeight = Math.max(1, WORLD_REF_HEIGHT - CAMERA_FRAME_PADDING_REFERENCE_PX * 2);
+  return {
+    spanX,
+    spanY,
+    zoom: Math.min(safeReferenceWidth / spanX, safeReferenceHeight / spanY),
+  };
+}
+
 /**
- * Detect when the active Chaser has lost the Runner group beyond the minimum useful camera frame.
- * This deliberately uses the invariant 1200x800 world reference rather than DOM dimensions, so
- * the exact same separation is an escape in workers, benchmarks and the champion view.
+ * Detect when the active Chaser has lost every Runner beyond the minimum useful camera frame.
+ * With multiple Runners, their separation from one another must never create a Chaser failure: as
+ * long as the Chaser can still share a useful camera frame with at least one Runner, the chase is
+ * alive. The invariant 1200x800 reference keeps worker/training and champion-view outcomes equal.
  */
 export function evaluateChaseEscape(agents: AgentState[]): ChaseEscapeEvaluation {
   const chaser = agents.find(agent => agent.status === AgentStatus.It) || null;
@@ -111,48 +128,98 @@ export function evaluateChaseEscape(agents: AgentState[]): ChaseEscapeEvaluation
     };
   }
 
-  const chaseGroup = [chaser, ...runners];
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minY = Infinity;
-  let maxY = -Infinity;
-  for (const agent of chaseGroup) {
-    minX = Math.min(minX, agent.position.x);
-    maxX = Math.max(maxX, agent.position.x + AGENT_WIDTH);
-    minY = Math.min(minY, agent.position.y);
-    maxY = Math.max(maxY, agent.position.y + AGENT_HEIGHT);
-  }
-
-  const groupSpanX = Math.max(AGENT_WIDTH, maxX - minX);
-  const groupSpanY = Math.max(AGENT_HEIGHT, maxY - minY);
-  const safeReferenceWidth = Math.max(1, WORLD_REF_WIDTH - CAMERA_FRAME_PADDING_REFERENCE_PX * 2);
-  const safeReferenceHeight = Math.max(1, WORLD_REF_HEIGHT - CAMERA_FRAME_PADDING_REFERENCE_PX * 2);
-  const requiredReferenceZoom = Math.min(
-    safeReferenceWidth / groupSpanX,
-    safeReferenceHeight / groupSpanY
-  );
-
+  let groupMinX = chaser.position.x;
+  let groupMaxX = chaser.position.x + AGENT_WIDTH;
+  let groupMinY = chaser.position.y;
+  let groupMaxY = chaser.position.y + AGENT_HEIGHT;
   const cx = chaser.position.x + AGENT_WIDTH / 2;
   const cy = chaser.position.y + AGENT_HEIGHT / 2;
   let maxChaserRunnerDistancePx = 0;
+  let bestPairZoom = 0;
+  let everyRunnerOutOfFrame = true;
+
   for (const runner of runners) {
+    groupMinX = Math.min(groupMinX, runner.position.x);
+    groupMaxX = Math.max(groupMaxX, runner.position.x + AGENT_WIDTH);
+    groupMinY = Math.min(groupMinY, runner.position.y);
+    groupMaxY = Math.max(groupMaxY, runner.position.y + AGENT_HEIGHT);
+
     const rx = runner.position.x + AGENT_WIDTH / 2;
     const ry = runner.position.y + AGENT_HEIGHT / 2;
     maxChaserRunnerDistancePx = Math.max(maxChaserRunnerDistancePx, Math.hypot(rx - cx, ry - cy));
+
+    const pair = pairFrameRequirement(chaser, runner);
+    bestPairZoom = Math.max(bestPairZoom, pair.zoom);
+    const pairEscaped =
+      pair.spanX > CHASE_ESCAPE_MAX_GROUP_SPAN_X ||
+      pair.spanY > CHASE_ESCAPE_MAX_GROUP_SPAN_Y ||
+      pair.zoom < CAMERA_MIN_USEFUL_AUTO_ZOOM;
+    if (!pairEscaped) everyRunnerOutOfFrame = false;
   }
 
   return {
-    escaped:
-      groupSpanX > CHASE_ESCAPE_MAX_GROUP_SPAN_X ||
-      groupSpanY > CHASE_ESCAPE_MAX_GROUP_SPAN_Y ||
-      requiredReferenceZoom < CAMERA_MIN_USEFUL_AUTO_ZOOM,
+    escaped: everyRunnerOutOfFrame,
     chaserId: chaser.id,
     runnerCount: runners.length,
-    groupSpanX,
-    groupSpanY,
+    groupSpanX: Math.max(AGENT_WIDTH, groupMaxX - groupMinX),
+    groupSpanY: Math.max(AGENT_HEIGHT, groupMaxY - groupMinY),
     maxChaserRunnerDistancePx,
-    requiredReferenceZoom,
+    requiredReferenceZoom: bestPairZoom,
   };
+}
+
+export interface VisualChaserEscapeRecovery {
+  chaserId: number;
+  position: { x: number; y: number };
+  platformId: number;
+  activeRoutePath: string | null;
+}
+
+/**
+ * Pick a conservative visual-only recovery after an escape. The Chaser is placed on a legal
+ * platform roughly 220-360px behind the trailing Runner, inherits that Runner's active route, and
+ * is kept clear of immediate tag contact. Training never calls this helper: escape remains terminal
+ * and fully penalized there.
+ */
+export function getVisualChaserEscapeRecovery(
+  agents: AgentState[],
+  platforms: PlatformState[]
+): VisualChaserEscapeRecovery | null {
+  const chaser = agents.find(agent => agent.status === AgentStatus.It) || null;
+  const runners = chaser ? agents.filter(agent => agent.id !== chaser.id && agent.status !== AgentStatus.It) : [];
+  if (!chaser || runners.length === 0 || platforms.length === 0) return null;
+
+  const target = runners.reduce((best, runner) => runner.position.x < best.position.x ? runner : best, runners[0]);
+  const offsets = [360, 300, 240];
+  let fallback: VisualChaserEscapeRecovery | null = null;
+
+  for (const offset of offsets) {
+    const desiredX = target.position.x - offset;
+    const staged: AgentState = {
+      ...chaser,
+      activeRoutePath: target.activeRoutePath || null,
+      lastPlatformId: null,
+      positionAtLastTakeoff: { x: desiredX, y: target.position.y },
+    };
+    const respawn = getFairRespawn(staged, platforms, agents);
+    const selectedPlatform = platforms.find(platform => platform.id === respawn.platformId);
+    applyPlatformRoute(staged, selectedPlatform);
+    const recovery: VisualChaserEscapeRecovery = {
+      chaserId: chaser.id,
+      position: respawn.position,
+      platformId: respawn.platformId,
+      activeRoutePath: staged.activeRoutePath || null,
+    };
+    fallback = recovery;
+
+    const hypothetical = agents.map(agent => agent.id === chaser.id
+      ? { ...agent, position: respawn.position, activeRoutePath: recovery.activeRoutePath }
+      : agent
+    );
+    if (!evaluateChaseEscape(hypothetical).escaped) return recovery;
+  }
+
+  return fallback;
 }
 
 /**
@@ -509,13 +576,145 @@ function resolvedTerrainRuntime(value?: TerrainRuntimeConfig): TerrainRuntimeCon
   return value || DEFAULT_TERRAIN_RUNTIME;
 }
 
+interface PlatformEnvelope {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/** Conservative swept bounds: if two envelopes do not intersect, the platforms can never overlap
+ * anywhere in their configured oscillation. */
+function platformEnvelope(platform: PlatformState): PlatformEnvelope {
+  let left = platform.position.x;
+  let right = platform.position.x + platform.width;
+  let top = platform.position.y;
+  let bottom = platform.position.y + platform.height;
+  if (platform.motion) {
+    if (platform.motion.axis === 'x') {
+      left = Math.min(left, platform.motion.min);
+      right = Math.max(right, platform.motion.max + platform.width);
+    } else {
+      top = Math.min(top, platform.motion.min);
+      bottom = Math.max(bottom, platform.motion.max + platform.height);
+    }
+  }
+  return { left, right, top, bottom };
+}
+
+function envelopesOverlap(a: PlatformEnvelope, b: PlatformEnvelope): boolean {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+function overlapsAnyPlatform(candidate: PlatformState, existing: PlatformState[]): boolean {
+  const envelope = platformEnvelope(candidate);
+  return existing.some(platform => envelopesOverlap(envelope, platformEnvelope(platform)));
+}
+
+/** Diagnostics/test helper. Moving-platform sweep envelopes are included, so an empty result means
+ * generated platforms cannot overlap now or later while oscillating. */
+export function findPlatformOverlapPairs(platforms: PlatformState[]): Array<[number, number]> {
+  const overlaps: Array<[number, number]> = [];
+  for (let i = 0; i < platforms.length; i++) {
+    const a = platformEnvelope(platforms[i]);
+    for (let j = i + 1; j < platforms.length; j++) {
+      if (envelopesOverlap(a, platformEnvelope(platforms[j]))) overlaps.push([platforms[i].id, platforms[j].id]);
+    }
+  }
+  return overlaps;
+}
+
+function placeTrunkPlatformWithoutOverlap(
+  platform: PlatformState,
+  existing: PlatformState[],
+  toLeft: boolean
+): PlatformState {
+  // Trunk geometry has no fixed slot, so the safest correction is to increase the horizontal gap.
+  // This preserves the intended Y profile rather than unexpectedly creating a large jump.
+  for (let guard = 0; guard < 32; guard++) {
+    const envelope = platformEnvelope(platform);
+    const conflicts = existing.filter(other => envelopesOverlap(envelope, platformEnvelope(other)));
+    if (conflicts.length === 0) return platform;
+    if (toLeft) {
+      const leftEdge = Math.min(...conflicts.map(other => platformEnvelope(other).left));
+      platform.position.x = leftEdge - MIN_PLATFORM_GAP_X - platform.width;
+    } else {
+      const rightEdge = Math.max(...conflicts.map(other => platformEnvelope(other).right));
+      platform.position.x = rightEdge + MIN_PLATFORM_GAP_X;
+    }
+  }
+  return platform;
+}
+
+function placeBranchPlatformWithoutOverlap(
+  platform: PlatformState,
+  existing: PlatformState[],
+  viewportHeight: number,
+  slotStart: number,
+  slotEnd: number,
+  preferredY: number
+): PlatformState {
+  const minY = 250;
+  const maxY = viewportHeight - 120;
+  const minX = slotStart + 6;
+  const maxX = Math.max(minX, slotEnd - platform.width - 6);
+  const preferredX = Math.max(minX, Math.min(maxX, platform.position.x));
+
+  // Search nearest-to-designed placement first, then exhaust the usable lane grid. Max recursive
+  // depth is four (16 leaf routes), which fits comfortably in the 250..680 vertical band at 20px
+  // platform height without overlap.
+  const yCandidates: number[] = [Math.max(minY, Math.min(maxY, preferredY))];
+  for (let delta = PLATFORM_HEIGHT + 2; delta <= maxY - minY + PLATFORM_HEIGHT; delta += PLATFORM_HEIGHT + 2) {
+    yCandidates.push(Math.max(minY, Math.min(maxY, preferredY - delta)));
+    yCandidates.push(Math.max(minY, Math.min(maxY, preferredY + delta)));
+  }
+  for (let y = minY; y <= maxY; y += PLATFORM_HEIGHT + 2) yCandidates.push(y);
+
+  const xCandidates: number[] = [preferredX, minX, maxX];
+  for (let x = minX; x <= maxX; x += 18) xCandidates.push(x);
+
+  const seen = new Set<string>();
+  for (const x of xCandidates) {
+    for (const y of yCandidates) {
+      const key = `${Math.round(x * 10)}:${Math.round(y * 10)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      platform.position.x = x;
+      platform.position.y = y;
+      if (!overlapsAnyPlatform(platform, existing)) return platform;
+    }
+  }
+
+  // Extremely dense recursive geometry can exhaust a slot. Narrowing the platform is preferable to
+  // ever emitting an overlapping rectangle; route reachability remains intact above 80px width.
+  for (let width = Math.min(platform.width, 110); width >= 80; width -= 10) {
+    platform.width = width;
+    const localMaxX = Math.max(minX, slotEnd - width - 6);
+    for (let x = minX; x <= localMaxX; x += 12) {
+      for (let y = minY; y <= maxY; y += PLATFORM_HEIGHT + 1) {
+        platform.position.x = x;
+        platform.position.y = y;
+        if (!overlapsAnyPlatform(platform, existing)) return platform;
+      }
+    }
+  }
+
+  // This should be unreachable with the configured depth/viewport limits. Keep a deterministic
+  // non-overlapping emergency placement rather than silently violating the generator invariant.
+  const rightmostEnvelope = existing.reduce((right, other) => Math.max(right, platformEnvelope(other).right), slotEnd);
+  platform.position.x = rightmostEnvelope + MIN_PLATFORM_GAP_X;
+  platform.position.y = Math.max(minY, Math.min(maxY, preferredY));
+  return platform;
+}
+
 function maybeMakeMoving(
   platform: PlatformState,
   viewportHeight: number,
   rng: () => number,
   terrain: TerrainRuntimeConfig,
   inBranch: boolean,
-  force = false
+  force = false,
+  existingPlatforms: PlatformState[] = []
 ): PlatformState {
   if (!terrain.movingPlatformsEnabled || terrain.movingPlatformMaxSpeed <= 0) return platform;
   if (inBranch && !terrain.movingPlatformsInBranches) return platform;
@@ -524,30 +723,57 @@ function maybeMakeMoving(
   const maxSpeed = Math.max(0, terrain.movingPlatformMaxSpeed);
   const minSpeed = Math.min(24, maxSpeed);
   const speed = minSpeed + rng() * Math.max(0, maxSpeed - minSpeed);
-  let axis: 'x' | 'y' = rng() < 0.6 ? 'x' : 'y';
-  let range = axis === 'x' ? 35 + rng() * 85 : 28 + rng() * 62;
+  const preferredAxis: 'x' | 'y' = rng() < 0.6 ? 'x' : 'y';
+  const axisOrder: Array<'x' | 'y'> = preferredAxis === 'x' ? ['x', 'y'] : ['y', 'x'];
+  const baseRangeX = 35 + rng() * 85;
+  const baseRangeY = 28 + rng() * 62;
+  const directions: Array<-1 | 1> = rng() < 0.5 ? [-1, 1] : [1, -1];
 
-  if (axis === 'y') {
-    const minAllowed = 230;
-    const maxAllowed = viewportHeight - 105;
-    const min = Math.max(minAllowed, platform.position.y - range);
-    const max = Math.min(maxAllowed, platform.position.y + range);
-    if (max - min < 35) {
-      axis = 'x';
-      range = 35 + rng() * 85;
-    } else {
-      platform.motion = { axis, min, max, speed, direction: rng() < 0.5 ? -1 : 1 };
-      return platform;
+  const tryMotion = (axis: 'x' | 'y', min: number, max: number, direction: -1 | 1): PlatformState | null => {
+    if (max - min < 10) return null;
+    const moving: PlatformState = { ...platform, motion: { axis, min, max, speed, direction } };
+    return overlapsAnyPlatform(moving, existingPlatforms) ? null : moving;
+  };
+
+  for (const axis of axisOrder) {
+    const baseRange = axis === 'x' ? baseRangeX : baseRangeY;
+    for (const scale of [1, 0.7, 0.45, 0.25]) {
+      const range = Math.max(10, baseRange * scale);
+      if (axis === 'x') {
+        // Try symmetric travel first, then one-sided travel. One-sided motion is especially useful
+        // in dense recursive branches because it preserves movement without crossing a neighbor.
+        for (const [min, max] of [
+          [platform.position.x - range, platform.position.x + range],
+          [platform.position.x, platform.position.x + range],
+          [platform.position.x - range, platform.position.x],
+        ] as Array<[number, number]>) {
+          for (const direction of directions) {
+            const candidate = tryMotion('x', min, max, direction);
+            if (candidate) return candidate;
+          }
+        }
+      } else {
+        const minAllowed = 230;
+        const maxAllowed = viewportHeight - 105;
+        for (const [rawMin, rawMax] of [
+          [platform.position.y - range, platform.position.y + range],
+          [platform.position.y, platform.position.y + range],
+          [platform.position.y - range, platform.position.y],
+        ] as Array<[number, number]>) {
+          const min = Math.max(minAllowed, rawMin);
+          const max = Math.min(maxAllowed, rawMax);
+          for (const direction of directions) {
+            const candidate = tryMotion('y', min, max, direction);
+            if (candidate) return candidate;
+          }
+        }
+      }
     }
   }
 
-  platform.motion = {
-    axis: 'x',
-    min: platform.position.x - range,
-    max: platform.position.x + range,
-    speed,
-    direction: rng() < 0.5 ? -1 : 1,
-  };
+  // Safe stationary terrain is better than a moving platform whose sweep can collide. In a
+  // guarantee-moving training episode the next generated platform will keep trying until a safe
+  // moving candidate is created.
   return platform;
 }
 
@@ -559,7 +785,8 @@ function generatePlatform(
   rng: () => number,
   toLeft = false,
   terrain: TerrainRuntimeConfig = DEFAULT_TERRAIN_RUNTIME,
-  forceMoving = false
+  forceMoving = false,
+  existingPlatforms: PlatformState[] = []
 ): PlatformState {
   let gapX = MIN_PLATFORM_GAP_X + rng() * (MAX_PLATFORM_GAP_X - MIN_PLATFORM_GAP_X);
   const gapY = (rng() - 0.5) * MAX_PLATFORM_GAP_Y * 1.5;
@@ -571,7 +798,7 @@ function generatePlatform(
   else if (verticalDifference > 80) gapX = Math.max(gapX, 140);
 
   const newWidth = rng() * (PLATFORM_MAX_WIDTH - PLATFORM_MIN_WIDTH) + PLATFORM_MIN_WIDTH;
-  return maybeMakeMoving({
+  const stationary = placeTrunkPlatformWithoutOverlap({
     id,
     width: newWidth,
     height: PLATFORM_HEIGHT,
@@ -580,7 +807,8 @@ function generatePlatform(
       x: toLeft ? baseX - newWidth - gapX : baseX + gapX,
       y: clampedY,
     },
-  }, viewportHeight, rng, terrain, false, forceMoving);
+  }, existingPlatforms, toLeft);
+  return maybeMakeMoving(stationary, viewportHeight, rng, terrain, false, forceMoving, existingPlatforms);
 }
 
 function clampPlatformY(y: number, viewportHeight: number): number {
@@ -653,7 +881,7 @@ function addRoutePlatforms(
     const width = Math.max(115, Math.min(preferredWidth + (rng() - 0.5) * 35, slotWidth - 28));
     const x = slotStart + Math.max(14, (slotWidth - width) * 0.5);
     const y = clampPlatformY(laneY + (rng() - 0.5) * 34, viewportHeight);
-    const platform = maybeMakeMoving({
+    const stationary = placeBranchPlatformWithoutOverlap({
       id: nextPlatformId++,
       width,
       height: PLATFORM_HEIGHT,
@@ -663,7 +891,16 @@ function addRoutePlatforms(
       branchDepth: depth,
       routePath,
       rootBranchGroupId: rootGroupId,
-    }, viewportHeight, rng, terrain, true, forceFirstMoving && i === 0);
+    }, platforms, viewportHeight, slotStart, slotEnd, y);
+    const platform = maybeMakeMoving(
+      stationary,
+      viewportHeight,
+      rng,
+      terrain,
+      true,
+      forceFirstMoving && i === 0,
+      platforms
+    );
     platforms.push(platform);
     last = platform;
   }
@@ -751,7 +988,7 @@ function buildBranchTree(
   // Merge platforms stay stationary even when branch moving-platform integration is enabled. This
   // keeps the rejoin point a reliable route-unlock checkpoint while the route itself can move.
   const mergeY = clampPlatformY((upperLast.position.y + lowerLast.position.y) / 2 + (rng() - 0.5) * 24, viewportHeight);
-  const merge: PlatformState = {
+  const merge = placeBranchPlatformWithoutOverlap({
     id: nextPlatformId++,
     width: mergeWidth,
     height: PLATFORM_HEIGHT,
@@ -761,7 +998,7 @@ function buildBranchTree(
     branchDepth: depth,
     mergeToRoutePath: parentRoutePath,
     rootBranchGroupId: rootGroupId,
-  };
+  }, platforms, viewportHeight, mergeLeftX, mergeRightX, mergeY);
   platforms.push(merge);
   return { merge, nextPlatformId };
 }
@@ -800,13 +1037,13 @@ function appendForwardSegment(
   // moving platforms are disallowed inside branches, emit one guaranteed moving trunk platform
   // before a forced branch rather than letting the feature percentage become merely probabilistic.
   if (needsGuaranteedMoving && shouldBranch && !terrain.movingPlatformsInBranches) {
-    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng, false, terrain, true);
+    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng, false, terrain, true, platforms);
     platforms.push(p);
     return { rightmost: p, nextPlatformId };
   }
 
   if (!shouldBranch) {
-    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng, false, terrain, needsGuaranteedMoving);
+    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng, false, terrain, needsGuaranteedMoving, platforms);
     platforms.push(p);
     return { rightmost: p, nextPlatformId };
   }
@@ -950,7 +1187,7 @@ export function maintainPlatformsForCameraInPlace(
     let leftmostPlatform = platforms.reduce((best, platform) =>
       platform.position.x < best.position.x ? platform : best, platforms[0]);
     while (leftmostPlatform.position.x > leftGenerationEdge) {
-      const newPlatform = generatePlatform(leftmostPlatform.position.x, leftmostPlatform.position.y, viewportSize.height, nextPlatformId++, rng, true, terrain);
+      const newPlatform = generatePlatform(leftmostPlatform.position.x, leftmostPlatform.position.y, viewportSize.height, nextPlatformId++, rng, true, terrain, false, platforms);
       platforms.unshift(newPlatform);
       leftmostPlatform = newPlatform;
     }

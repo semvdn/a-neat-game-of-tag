@@ -1,8 +1,8 @@
-Add camera-envelope escape failure for lost chases
+Prevent platform overlaps and recover escaped visual chasers
 
-- terminate a training chase when the full agent group exceeds the minimum useful 50% camera envelope
-- count escape as one fall-equivalent Chaser failure without double-charging a same-frame Chaser fall
-- reset continuous champion play immediately when the same deterministic escape boundary is crossed
-- share the camera framing constants between rendering and headless training so the rule is browser-independent
-- add escape rate, benchmark/showcase failures, probe details, and analysis-export telemetry
-- prevent dynamic framing from shrinking below the gameplay escape threshold
+- enforce a hard non-overlap invariant across normal, recursive branch, merge, and moving platforms
+- validate moving platforms against their complete oscillation sweep envelope, shrinking/switching motion when needed
+- make Chaser escape require losing every Runner rather than being triggered by Runner-Runner separation
+- teleport an escaped visual Chaser onto a safe platform behind the trailing Runner without resetting the world
+- inherit the target Runner route and apply a brief tag re-arm delay after visual recovery
+- restore and preserve the full Git history in packaged handoffs

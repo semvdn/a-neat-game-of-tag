@@ -62,8 +62,9 @@ export const WORLD_REF_HEIGHT = 800;
 
 // Presentation-camera / chase-containment contract. The champion camera may auto-zoom down to
 // 50% of the invariant reference view; requiring a smaller scale would make the agents too small
-// to follow meaningfully. Headless training uses this same reference envelope, so an escape is a
-// gameplay outcome rather than a browser-size-dependent rendering artifact.
+// to follow meaningfully. Headless training uses this same reference envelope. A Chaser escape is
+// triggered only when every Chaser-to-Runner pair exceeds it, so Runner-Runner separation alone
+// cannot create a browser-size-dependent Chaser failure.
 export const CAMERA_FRAME_PADDING_REFERENCE_PX = 72;
 export const CAMERA_MIN_USEFUL_AUTO_ZOOM = 0.5;
 export const CHASE_ESCAPE_MAX_GROUP_SPAN_X =

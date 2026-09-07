@@ -25,6 +25,7 @@ import {
   updateChaseCameraX,
   stepMovingPlatformsInPlace,
   evaluateChaseEscape,
+  getVisualChaserEscapeRecovery,
 } from './learning/simulationCore';
 import type {
   GameState,
@@ -63,6 +64,7 @@ import {
   DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM,
   MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM,
   POLICY_CONTROL_ACTIVE_THRESHOLD,
+  NEW_CHASER_TAG_DELAY_MS,
 } from './constants';
 import { Activity, Play, Pause, RotateCcw, MonitorPlay, Cpu, Minus, Plus } from 'lucide-react';
 import { DEFAULT_TERRAIN_VARIETY_CONFIG, continuousTerrainRuntime, sanitizeTerrainVarietyConfig } from './learning/terrainConfig';
@@ -1183,53 +1185,35 @@ export const App: React.FC = () => {
           return { ...physics.agent, trajectory: newTrajectory };
         });
 
-        // 4. Escape detection. The exact same invariant camera envelope is used in headless
-        // training. Once the group would need to be rendered below 50% reference zoom, the
-        // Runners have escaped and this visible chase starts over instead of shrinking into an
-        // unreadable overview. This is presentation reset only; evolutionary fitness is worker-owned.
+        // 4. Escape detection. Training still treats this as a terminal Chaser failure. In the
+        // champion view we keep the world/route alive and teleport only the failed Chaser onto a
+        // legal platform roughly 220-360px behind the trailing Runner. The Chaser inherits that
+        // Runner's route lock so recursive sibling geometry cannot strand it after recovery.
         const chaseEscape = evaluateChaseEscape(newState.agents);
         if (chaseEscape.escaped) {
-          chaserAgent.current?.resetState();
-          evaderAgent.current?.resetState();
-          platformIdCounter.current = 10;
-          const groundY = viewportSize.height - 100;
-          const starts = [100, 400, 700];
-          newState.agents = newState.agents.map((agent, index) => {
-            const isChaser = index === 0;
-            const x = starts[index] ?? starts[starts.length - 1];
-            return {
-              ...agent,
-              position: { x, y: 500 },
-              velocity: { x: 0, y: 0 },
-              acceleration: { x: 0, y: 0 },
-              status: isChaser ? AgentStatus.It : AgentStatus.Normal,
-              role: isChaser ? 'chaser' as const : 'evader' as const,
-              elo: isChaser ? chaserElo.current : evaderElo.current,
-              isOnGround: false,
-              cooldownTimer: 0,
-              lastAction: 'idle',
-              energy: MAX_ENERGY,
-              maxEnergy: MAX_ENERGY,
-              trajectory: [{ x, y: 500, timestamp: 0 }],
-              lastPlatformId: 0,
-              activeRoutePath: null,
-              scale: { x: 1, y: 1 },
-              energyAtLastTakeoff: MAX_ENERGY,
-              positionAtLastTakeoff: { x, y: 500 },
-              survivalTime: 0,
-              timeSinceBecameIt: 0,
-              modelId: isChaser
-                ? `champion_chaser_g${installedChampionGenerationRef.current.chaser}`
-                : `champion_evader_g${installedChampionGenerationRef.current.evader}`,
-            };
-          });
-          newState.platforms = [{ id: 0, position: { x: 0, y: groundY }, width: viewportSize.width, height: PLATFORM_HEIGHT }];
-          newState.cameraPosition = { x: 0, y: 0 };
-          newState.gameTime = 0;
-          newState.tagEffects = [];
-          newState.avgSurvivalTime = 0;
-          newState.avgTimeToTag = 0;
-          return newState;
+          const recovery = getVisualChaserEscapeRecovery(newState.agents, newState.platforms);
+          if (recovery) {
+            chaserAgent.current?.resetState();
+            newState.agents = newState.agents.map(agent => {
+              if (agent.id !== recovery.chaserId) return agent;
+              return {
+                ...agent,
+                position: { ...recovery.position },
+                velocity: { x: 0, y: 0 },
+                acceleration: { x: 0, y: 0 },
+                isOnGround: true,
+                cooldownTimer: Math.max(agent.cooldownTimer || 0, NEW_CHASER_TAG_DELAY_MS),
+                lastAction: 'idle',
+                trajectory: [{ x: recovery.position.x, y: recovery.position.y, timestamp: newState.gameTime }],
+                lastPlatformId: recovery.platformId,
+                activeRoutePath: recovery.activeRoutePath,
+                positionAtLastTakeoff: { ...recovery.position },
+                energyAtLastTakeoff: agent.energy,
+                timeSinceBecameIt: 0,
+                jumpArmed: true,
+              };
+            });
+          }
         }
 
         // 5. Tag Detection & role swap through the shared visual-game rule.
