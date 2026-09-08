@@ -146,6 +146,65 @@ const LineChart: React.FC<{
   );
 };
 
+const TopologyEvolutionChart: React.FC<{
+  title: string;
+  description: string;
+  history: NeatGenerationMetrics[];
+  championValue: (metric: NeatGenerationMetrics) => number | undefined;
+  averageValue: (metric: NeatGenerationMetrics) => number | undefined;
+  digits?: number;
+}> = ({ title, description, history, championValue, averageValue, digits = 1 }) => {
+  const rows = history
+    .map(metric => ({ generation: metric.generation, champion: championValue(metric), average: averageValue(metric) }))
+    .filter(row => Number.isFinite(row.champion) || Number.isFinite(row.average));
+
+  if (rows.length < 2) return (
+    <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
+      <h3 className="font-semibold text-white">{title}</h3>
+      <p className="mt-1 text-[11px] leading-relaxed text-gray-500">{description}</p>
+      <div className="mt-4 h-44 flex items-center justify-center text-sm text-gray-500 border border-dashed border-gray-800 rounded-xl">Complete at least two generations to show model evolution.</div>
+    </div>
+  );
+
+  const width = 620, height = 220, left = 42, right = 16, top = 16, bottom = 34;
+  const generations = rows.map(row => row.generation);
+  const minGeneration = Math.min(...generations), maxGeneration = Math.max(...generations);
+  const generationRange = Math.max(1, maxGeneration - minGeneration);
+  const finiteValues = rows.flatMap(row => [row.champion, row.average]).filter((value): value is number => Number.isFinite(value));
+  const maxValue = Math.max(1, ...finiteValues);
+  const yMax = maxValue <= 5 ? Math.ceil(maxValue * 4) / 4 : Math.ceil(maxValue);
+  const x = (generation: number) => left + ((generation - minGeneration) / generationRange) * (width - left - right);
+  const y = (value: number) => top + (1 - value / yMax) * (height - top - bottom);
+  const points = (key: 'champion' | 'average') => rows.filter(row => Number.isFinite(row[key])).map(row => `${x(row.generation)},${y(Number(row[key]))}`).join(' ');
+  const firstChampion = rows.find(row => Number.isFinite(row.champion))?.champion;
+  const lastChampion = [...rows].reverse().find(row => Number.isFinite(row.champion))?.champion;
+  const lastAverage = [...rows].reverse().find(row => Number.isFinite(row.average))?.average;
+  const delta = Number.isFinite(firstChampion) && Number.isFinite(lastChampion) ? Number(lastChampion) - Number(firstChampion) : undefined;
+  const fmtTopology = (value: number | undefined) => Number.isFinite(value) ? Number(value).toFixed(digits) : '—';
+  const deltaLabel = Number.isFinite(delta) ? `${Number(delta) >= 0 ? '+' : ''}${Number(delta).toFixed(digits)}` : '—';
+  const midGeneration = Math.round((minGeneration + maxGeneration) / 2);
+
+  return (
+    <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0"><h3 className="font-semibold text-white">{title}</h3><p className="mt-1 text-[11px] leading-relaxed text-gray-500">{description}</p></div>
+        <div className="shrink-0 text-right text-[10px] text-gray-500">
+          <div><span className="text-violet-200 font-mono">{fmtTopology(lastChampion)}</span> champion</div>
+          <div><span className="text-cyan-200 font-mono">{fmtTopology(lastAverage)}</span> population mean</div>
+          <div><span className="text-gray-300 font-mono">{deltaLabel}</span> champion Δ</div>
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="mt-3 w-full rounded-xl border border-gray-800 bg-black/30">
+        {[0, .25, .5, .75, 1].map(frac => { const tickValue = yMax * (1 - frac); const tickY = top + frac * (height - top - bottom); return <g key={frac}><line x1={left} x2={width-right} y1={tickY} y2={tickY} stroke="currentColor" className="text-gray-800" strokeWidth="1" /><text x={left-7} y={tickY+3} textAnchor="end" fill="currentColor" className="text-gray-600 text-[9px]">{tickValue.toFixed(digits)}</text></g>; })}
+        <polyline points={points('average')} fill="none" stroke="currentColor" className="text-cyan-400/70" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+        <polyline points={points('champion')} fill="none" stroke="currentColor" className="text-violet-300" strokeWidth="2.6" vectorEffect="non-scaling-stroke" />
+        <text x={left} y={height-10} textAnchor="middle" fill="currentColor" className="text-gray-600 text-[9px]">g{minGeneration}</text><text x={x(midGeneration)} y={height-10} textAnchor="middle" fill="currentColor" className="text-gray-600 text-[9px]">g{midGeneration}</text><text x={width-right} y={height-10} textAnchor="middle" fill="currentColor" className="text-gray-600 text-[9px]">g{maxGeneration}</text>
+      </svg>
+      <div className="mt-2 flex flex-wrap gap-4 text-[11px]"><span className="text-violet-300">● Champion</span><span className="text-cyan-300">● Population mean</span><span className="ml-auto text-gray-600">generation →</span></div>
+    </div>
+  );
+};
+
 const ACTION_OUTPUT_LABELS: Record<string, string> = {
   horizontal_drive: 'Signed horizontal drive (left ↔ right)',
   jump: 'Jump control',
@@ -594,15 +653,6 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                 { label: 'Runner mean', values: evaderHistory.map(m => m.averageFitness) },
               ]} />
             </div>
-            <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-              <h3 className="font-semibold text-white mb-3">Topology complexity</h3>
-              <LineChart series={[
-                { label: 'Chaser avg nodes', values: chaserHistory.map(m => m.averageNodes) },
-                { label: 'Runner avg nodes', values: evaderHistory.map(m => m.averageNodes) },
-                { label: 'Chaser avg links', values: chaserHistory.map(m => m.averageConnections) },
-                { label: 'Runner avg links', values: evaderHistory.map(m => m.averageConnections) },
-              ]} />
-            </div>
             <div className="grid md:grid-cols-2 gap-4">
               <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4"><h3 className="font-semibold text-white mb-3">Species count</h3><LineChart series={[{ label: 'Chaser active', values: chaserHistory.map(m => m.speciesCount) }, { label: 'Runner active', values: evaderHistory.map(m => m.speciesCount) }, { label: 'Chaser reproducing', values: chaserHistory.map(m => m.reproductiveSpeciesCount ?? m.speciesCount) }, { label: 'Runner reproducing', values: evaderHistory.map(m => m.reproductiveSpeciesCount ?? m.speciesCount) }]} /></div>
               <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4"><h3 className="font-semibold text-white mb-3">Species longevity</h3><LineChart series={[{ label: 'Chaser oldest age', values: chaserHistory.map(m => m.oldestSpeciesAge ?? 0) }, { label: 'Runner oldest age', values: evaderHistory.map(m => m.oldestSpeciesAge ?? 0) }, { label: 'Chaser stagnant', values: chaserHistory.map(m => m.stagnantSpeciesCount ?? 0) }, { label: 'Runner stagnant', values: evaderHistory.map(m => m.stagnantSpeciesCount ?? 0) }]} /></div>
@@ -611,18 +661,25 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
         )}
 
         {tab === 'network' && (
-          <div className="max-w-6xl mx-auto grid lg:grid-cols-[360px_1fr] gap-5">
-            <div className="space-y-3">
-              <div className="flex rounded-lg border border-gray-800 overflow-hidden">
-                <button onClick={() => setRole('chaser')} className={`flex-1 py-2 text-xs font-semibold ${role === 'chaser' ? 'bg-red-500/20 text-red-200' : 'bg-gray-950 text-gray-500'}`}>Chaser champion</button>
-                <button onClick={() => setRole('evader')} className={`flex-1 py-2 text-xs font-semibold ${role === 'evader' ? 'bg-cyan-500/20 text-cyan-200' : 'bg-gray-950 text-gray-500'}`}>Runner champion</button>
+          <div className="max-w-7xl mx-auto space-y-5">
+            <div className="grid lg:grid-cols-[360px_1fr] gap-5">
+              <div className="space-y-3">
+                <div className="flex rounded-lg border border-gray-800 overflow-hidden">
+                  <button onClick={() => setRole('chaser')} className={`flex-1 py-2 text-xs font-semibold ${role === 'chaser' ? 'bg-red-500/20 text-red-200' : 'bg-gray-950 text-gray-500'}`}>Chaser champion</button>
+                  <button onClick={() => setRole('evader')} className={`flex-1 py-2 text-xs font-semibold ${role === 'evader' ? 'bg-cyan-500/20 text-cyan-200' : 'bg-gray-950 text-gray-500'}`}>Runner champion</button>
+                </div>
+                <FitnessSummary title={`${role === 'chaser' ? 'Chaser' : 'Runner'} champion`} metrics={selectedMetrics} />
+                <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4 text-xs text-gray-400 leading-relaxed">Green/red links are feed-forward weights; recurrent links are one-step delayed memory edges. The Architecture tab controls starting size plus independent evolution switches and hard caps for layers, nodes and recurrent connections.</div>
               </div>
-              <FitnessSummary title={`${role === 'chaser' ? 'Chaser' : 'Runner'} champion`} metrics={selectedMetrics} />
-              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4 text-xs text-gray-400 leading-relaxed">
-                Green/red links are feed-forward weights; recurrent links are one-step delayed memory edges. The Architecture tab controls starting size plus independent evolution switches and hard caps for layers, nodes and recurrent connections.
-              </div>
+              <NetworkGraph genome={selectedGenome} />
             </div>
-            <NetworkGraph genome={selectedGenome} />
+            <div className="flex flex-wrap items-end justify-between gap-3 border-t border-gray-900 pt-5"><div><h3 className="font-semibold text-white">{role === 'chaser' ? 'Chaser' : 'Runner'} model evolution</h3><p className="mt-1 text-xs text-gray-500">Champion structure versus the population mean across completed generations. These views separate capacity, depth, connectivity and recurrent memory so structural changes are easier to interpret than a single complexity score.</p></div><span className="rounded-full border border-gray-800 bg-black/25 px-2.5 py-1 text-[10px] text-gray-500">role follows the champion selector above</span></div>
+            <div className="grid lg:grid-cols-2 gap-4">
+              <TopologyEvolutionChart title="Hidden nodes" description="How much internal representational capacity evolved beyond the fixed input/output layer." history={role === 'chaser' ? chaserHistory : evaderHistory} championValue={metric => metric.championHiddenNodes} averageValue={metric => metric.averageHiddenNodes} digits={1} />
+              <TopologyEvolutionChart title="Hidden layers" description="Changes in feed-forward depth; useful for spotting when the model starts composing more stages of processing." history={role === 'chaser' ? chaserHistory : evaderHistory} championValue={metric => metric.championHiddenLayers} averageValue={metric => metric.averageHiddenLayers} digits={1} />
+              <TopologyEvolutionChart title="Enabled connections" description="Growth or pruning in the active wiring of the network, shown independently from node count." history={role === 'chaser' ? chaserHistory : evaderHistory} championValue={metric => metric.championConnections} averageValue={metric => metric.averageConnections} digits={1} />
+              <TopologyEvolutionChart title="Recurrent memory links" description="One-step delayed recurrent connections, showing when memory capacity appears and whether it spreads through the population." history={role === 'chaser' ? chaserHistory : evaderHistory} championValue={metric => metric.championRecurrentConnections} averageValue={metric => metric.averageRecurrentConnections} digits={1} />
+            </div>
           </div>
         )}
 
