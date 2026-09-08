@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { stepAgentPhysics, stepAgentPhysicsInPlace, stepMovingPlatformsInPlace } from '../learning/simulationCore.ts';
-import { AGENT_HEIGHT, MAX_ENERGY } from '../constants.ts';
+import { AGENT_HEIGHT, FALL_BOUNDARY, MAX_ENERGY } from '../constants.ts';
 import { AgentStatus } from '../types.ts';
 
 export function verifyLandings() {
@@ -45,6 +45,34 @@ export function verifyLandings() {
   moving.motion = { axis: 'y', min: 300, max: 450, speed: 1200, direction: -1 };
   stepMovingPlatformsInPlace([moving], [], 16.67);
   assert.equal(step(body(140, 400, 1), [moving]).isOnGround, true, 'A rising surface cannot tunnel through descending feet');
+
+  // A fall can legitimately respawn onto the last grounded moving platform. Once respawned, the
+  // body must remain attached through both upward/downward travel and motion reversals instead of
+  // being treated as a fresh swept landing every frame. This is the regression for the visual bug
+  // where bodies could fall through vertically oscillating checkpoints immediately after respawn.
+  for (const initialDirection of [-1, 1]) {
+    const respawnPlatform = platform(12, 360, 100, 180);
+    respawnPlatform.motion = { axis: 'y', min: 250, max: 430, speed: 180, direction: initialDirection };
+    let rider = body(140, FALL_BOUNDARY + AGENT_HEIGHT + 50, 10);
+    rider.lastPlatformId = respawnPlatform.id;
+    rider.positionAtLastTakeoff = { x: 140, y: respawnPlatform.position.y - AGENT_HEIGHT };
+    rider = step(rider, [respawnPlatform]);
+    assert.equal(rider.isOnGround, true, 'Fall recovery must mark the respawned body grounded');
+    assert.equal(rider.lastPlatformId, respawnPlatform.id, 'Fall recovery must preserve the selected moving checkpoint');
+    assert.equal(rider.position.y + AGENT_HEIGHT, respawnPlatform.position.y, 'Respawn feet must start on the current moving-platform top');
+
+    // Emulate the tiny fractional correction/rounding offset that exposed the original one-way
+    // collision seam. The moving-platform carry step must re-establish exact floor contact.
+    rider.position.y += 0.25;
+
+    for (let frame = 0; frame < 180; frame++) {
+      stepMovingPlatformsInPlace([respawnPlatform], [rider], 16.67);
+      rider = step(rider, [respawnPlatform]);
+      assert.equal(rider.isOnGround, true, `Respawned rider detached from vertical platform at frame ${frame}`);
+      assert(Math.abs((rider.position.y + AGENT_HEIGHT) - respawnPlatform.position.y) <= 1e-6,
+        `Respawned rider/platform gap opened at frame ${frame}`);
+    }
+  }
   const unseen = platform(9, 400, 10000);
   assert.equal(step(body(10040, 398, 20), [unseen]).lastPlatformId, 9, 'Landing is independent of viewport and policy platform slots');
   assert.equal(step(body(140, 405, -10), [platform(2, 400)]).isOnGround, false, 'Rising through a one-way platform stays allowed');
@@ -57,5 +85,5 @@ export function verifyLandings() {
       assert.equal(result.position.y + AGENT_HEIGHT, 400);
     }
   }
-  console.log('Landing regressions passed: edge crossing, first surface, routes, upward pass-through, 720 descent cases, visual/training parity');
+  console.log('Landing regressions passed: edge crossing, first surface, routes, moving-platform respawn support, upward pass-through, 720 descent cases, visual/training parity');
 }

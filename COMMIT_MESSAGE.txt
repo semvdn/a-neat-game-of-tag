@@ -1,8 +1,7 @@
-Add hand-authored hooded pixel agents
+Fix respawns on vertical moving platforms
 
-- replace the rounded rectangle bodies with one shared hooded pixel sprite set
-- recolor the same sprite geometry blue, red, and yellow for the three agents
-- use bespoke idle, run, sprint, jump, fall, and tag/recoil frames
-- drive animation from simulation time and existing grounded/velocity/sprint/cooldown state
-- add pixel sprint/fall accents and a deterministic square-particle tag impact
-- keep collision, policy state, and training behavior unchanged
+- keep grounded platform support authoritative across the physics step
+- snap vertical moving-platform riders exactly to the current platform top
+- eliminate fractional contact drift that could invalidate one-way floor support after respawn
+- preserve normal walk-off and jump behavior
+- add regression coverage for fall respawns across repeated vertical platform reversals

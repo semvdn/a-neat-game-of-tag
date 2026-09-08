@@ -353,33 +353,62 @@ export function stepAgentPhysicsInPlace(
   // Horizontal camera bounds are presentation-only. World-space motion is never clamped to the viewport.
   let grounded = false;
   let landedPlatformId = agent.lastPlatformId;
+
+  // Preserve an existing floor contact explicitly before doing swept landing detection. Moving
+  // platforms are advanced first and carry grounded riders with them. A freshly respawned body is
+  // also marked grounded on its selected checkpoint. In both cases gravity should not create a new
+  // one-frame landing problem: if the body still overlaps the same platform after horizontal motion,
+  // keep its feet pinned to the current platform top. This is especially important for vertical
+  // platforms, where treating the respawn as a brand-new swept landing can occasionally let the
+  // platform/body pair separate by a frame and send the body through the surface. Walking off and
+  // jumping are unaffected because those cases deliberately do not retain support.
+  let retainedSupport: PlatformState | undefined;
+  if (!jumped && agent.isOnGround && agent.supportingAgentId == null && agent.lastPlatformId != null) {
+    const candidate = platforms.find(platform => platform.id === agent.lastPlatformId);
+    if (candidate) {
+      const feetWereOnTop = Math.abs((agent.position.y + AGENT_HEIGHT) - candidate.position.y) <= 1;
+      const stillOverlaps =
+        positionX + AGENT_WIDTH > candidate.position.x &&
+        positionX < candidate.position.x + candidate.width;
+      if (feetWereOnTop && stillOverlaps) {
+        retainedSupport = candidate;
+        positionY = candidate.position.y - AGENT_HEIGHT;
+        velocityY = 0;
+        grounded = true;
+        landedPlatformId = candidate.id;
+      }
+    }
+  }
+
   const prevBottom = agent.position.y + AGENT_HEIGHT;
   const newBottom = positionY + AGENT_HEIGHT;
   let landing: PlatformState | undefined;
   let landingTime = Infinity;
-  for (let i = 0; i < platforms.length; i++) {
-    const platform = platforms[i];
-    const carried = agent.isOnGround && agent.supportingAgentId == null && agent.lastPlatformId === platform.id;
-    const previous = carried ? platform.position : platform.previousPosition || platform.position;
-    const platformDx = platform.position.x - previous.x;
-    const platformDy = platform.position.y - previous.y;
-    const relativeY = velocityY - platformDy;
-    if (relativeY < 0 || prevBottom > previous.y + 0.001 || newBottom < platform.position.y) continue;
-    // Test horizontal overlap when the feet cross the top, not only at the end of the frame.
-    // Lower targets produce faster descents; the body can cross a corner and leave its horizontal
-    // span within one physics step. Only floating-point tolerance is allowed at a resting top.
-    const contactTime = relativeY > 0 ? Math.max(0, (previous.y - prevBottom) / relativeY) : 0;
-    const contactX = agent.position.x + velocityX * contactTime;
-    const platformX = previous.x + platformDx * contactTime;
-    const aligned =
-      contactX + AGENT_WIDTH > platformX &&
-      contactX < platformX + platform.width;
-    // A body already at the top must be able to walk off. Rewinding a t=0 edge exit to its
-    // starting point every frame would turn the edge into an invisible horizontal wall.
-    if (contactTime === 0 && (positionX + AGENT_WIDTH <= platform.position.x || positionX >= platform.position.x + platform.width)) continue;
-    if (aligned && (contactTime < landingTime || (contactTime === landingTime && platform.id < (landing?.id ?? Infinity)))) {
-      landing = platform;
-      landingTime = contactTime;
+  if (!retainedSupport) {
+    for (let i = 0; i < platforms.length; i++) {
+      const platform = platforms[i];
+      const carried = agent.isOnGround && agent.supportingAgentId == null && agent.lastPlatformId === platform.id;
+      const previous = carried ? platform.position : platform.previousPosition || platform.position;
+      const platformDx = platform.position.x - previous.x;
+      const platformDy = platform.position.y - previous.y;
+      const relativeY = velocityY - platformDy;
+      if (relativeY < 0 || prevBottom > previous.y + 0.001 || newBottom < platform.position.y) continue;
+      // Test horizontal overlap when the feet cross the top, not only at the end of the frame.
+      // Lower targets produce faster descents; the body can cross a corner and leave its horizontal
+      // span within one physics step. Only floating-point tolerance is allowed at a resting top.
+      const contactTime = relativeY > 0 ? Math.max(0, (previous.y - prevBottom) / relativeY) : 0;
+      const contactX = agent.position.x + velocityX * contactTime;
+      const platformX = previous.x + platformDx * contactTime;
+      const aligned =
+        contactX + AGENT_WIDTH > platformX &&
+        contactX < platformX + platform.width;
+      // A body already at the top must be able to walk off. Rewinding a t=0 edge exit to its
+      // starting point every frame would turn the edge into an invisible horizontal wall.
+      if (contactTime === 0 && (positionX + AGENT_WIDTH <= platform.position.x || positionX >= platform.position.x + platform.width)) continue;
+      if (aligned && (contactTime < landingTime || (contactTime === landingTime && platform.id < (landing?.id ?? Infinity)))) {
+        landing = platform;
+        landingTime = contactTime;
+      }
     }
   }
   if (landing) {
@@ -1589,10 +1618,18 @@ export function stepMovingPlatformsInPlace(
     for (let j = 0; j < agents.length; j++) {
       const agent = agents[j];
       if (!agent.isOnGround || agent.supportingAgentId != null || agent.lastPlatformId !== platform.id) continue;
-      agent.position.x += dx;
-      agent.position.y += dy;
-      agent.positionAtLastTakeoff.x += dx;
-      agent.positionAtLastTakeoff.y += dy;
+      // Keep the platform-normal coordinate exact. Incremental += dy is vulnerable to tiny
+      // floating-point/contact-correction drift; on a vertical platform that drift can put the
+      // feet microscopically below the one-way top and make the next landing test reject support.
+      // Horizontal motion must preserve the rider's local X offset, while vertical motion can snap
+      // directly to the known top because this body is already the platform's grounded rider.
+      if (motion.axis === 'y') {
+        agent.position.y = platform.position.y - AGENT_HEIGHT;
+        agent.positionAtLastTakeoff.y = agent.position.y;
+      } else {
+        agent.position.x += dx;
+        agent.positionAtLastTakeoff.x += dx;
+      }
       for (const rider of agents) {
         if (rider.status === AgentStatus.It || agent.status === AgentStatus.It || rider.supportingAgentId !== agent.id) continue;
         rider.position.x += dx;
