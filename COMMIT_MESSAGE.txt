@@ -1,9 +1,8 @@
-Refine natural terrain generation and remove experiment runner
+Add hand-authored hooded pixel agents
 
-- remove the temporary architecture/pursuit experiment runner and its UI/worker lifecycle
-- enforce platform safety clearance using complete moving-platform sweep envelopes
-- keep recursive branches inside inherited vertical corridors and stop recursion when space is insufficient
-- make recursive branching asymmetric and probabilistic for more natural-looking route structures
-- add stationary staging/commitment ledges and cap route/merge climbs for reliable reachability
-- refine trunk height variation, branch spacing, merge placement, and moving-platform motion ranges
-- update terrain documentation, agent guidance, diagnostics wording, and gameplay-objective versioning
+- replace the rounded rectangle bodies with one shared hooded pixel sprite set
+- recolor the same sprite geometry blue, red, and yellow for the three agents
+- use bespoke idle, run, sprint, jump, fall, and tag/recoil frames
+- drive animation from simulation time and existing grounded/velocity/sprint/cooldown state
+- add pixel sprint/fall accents and a deterministic square-particle tag impact
+- keep collision, policy state, and training behavior unchanged

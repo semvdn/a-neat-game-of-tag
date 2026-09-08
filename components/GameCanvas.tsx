@@ -281,7 +281,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       agents.forEach(agent => drawAgentSenses(ctx, agent, gameState, cameraScale));
     }
 
-    agents.forEach(agent => drawAgent(ctx, agent));
+    agents.forEach(agent => drawAgent(ctx, agent, gameState.gameTime));
     tagEffects.forEach(effect => drawTagEffect(ctx, effect));
 
     ctx.restore();

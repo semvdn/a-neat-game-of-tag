@@ -6,7 +6,7 @@ export const FALL_BOUNDARY = 2000; // Y-coord to trigger respawn
 // Agent properties
 export const AGENT_WIDTH = 40;
 export const AGENT_HEIGHT = 60;
-export const AGENT_COLORS = ['#ef4444', '#3b82f6', '#22c55e']; // red, blue, green
+export const AGENT_COLORS = ['#2367c9', '#d83b32', '#e8bd31']; // blue, red, yellow
 
 // Physics properties (Base Abilities)
 export const AGENT_ACCELERATION = 0.5;
