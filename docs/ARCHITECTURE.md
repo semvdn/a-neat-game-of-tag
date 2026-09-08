@@ -38,3 +38,13 @@ git diff --check
 ```
 
 The build can succeed while external CSS is unavailable at runtime. Check the browser as well. For simulation/terrain edits, add focused invariant checks beyond the episode lab. Commit intended changes explicitly; preserve unrelated working-tree files.
+
+## Visual biome field (phase one)
+
+The visible infinite world has a deterministic, stateless biome field driven only by world X and `GameState.worldSeed`. It is deliberately presentation-only: biome RNG is namespaced away from terrain RNG, the 23-input policy interface contains no biome identity, and active biome terrain profiles are neutral.
+
+Macro-regions are 12,000 world pixels with 2,000-pixel smooth transitions. Lowlands remains the gentle starting region; the other visual biomes are deterministically shuffled per world seed. Backgrounds use banded pixel skies plus far/mid/near parallax layers generated from small descriptor chunks under a 96-chunk LRU cap. Moving platforms capture a visual-biome stamp when first exposed to the visible world so their material does not change as they oscillate.
+
+Current visual biomes: Lowlands, Spires, Foundry, Ruins, Desert, Snowy Mountains, Temperate Forest, City, Rural Village, and Swamp.
+
+`world/biomes.ts` also contains `PLANNED_TERRAIN_BIOME_PROFILES`. Those are design targets only and are not consumed by terrain generation in this phase. `TERRAIN_BIOME_PROFILES` remains all-ones, and the forward generator's biome hook is therefore an identity transform.

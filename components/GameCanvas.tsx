@@ -3,6 +3,8 @@ import type { GameState, PlatformState } from '../types';
 import { drawPlatform, drawAgent, drawAgentTrail, drawTagEffect, drawAgentSenses } from './drawing';
 import { AGENT_HEIGHT, AGENT_WIDTH, WORLD_REF_WIDTH, WORLD_REF_HEIGHT, CAMERA_FRAME_PADDING_REFERENCE_PX, CAMERA_MIN_USEFUL_AUTO_ZOOM } from '../constants';
 import { cameraRelevantAgents } from '../learning/cameraFraming';
+import { biomeLabel, DEFAULT_BIOME_WORLD_SEED, getBiomeAtX } from '../world/biomes';
+import { BiomeBackgroundCache, drawBiomeBackground, drawBiomeForeground } from './biomeBackground';
 
 interface GameCanvasProps {
   gameState: GameState;
@@ -92,6 +94,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const presentationCameraYRef = useRef<number | null>(null);
   const presentationCameraScaleRef = useRef<number | null>(null);
   const lastPresentationFrameTimeRef = useRef<number | null>(null);
+  const biomeBackgroundCacheRef = useRef<BiomeBackgroundCache | null>(null);
+  if (!biomeBackgroundCacheRef.current) biomeBackgroundCacheRef.current = new BiomeBackgroundCache();
   const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 });
   const { agents, platforms, cameraPosition, tagEffects } = gameState;
 
@@ -137,8 +141,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // during an active resize the parent background and canvas background are identical.
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssWidth, cssHeight);
-    ctx.fillStyle = '#1a202c';
-    ctx.fillRect(0, 0, cssWidth, cssHeight);
+    ctx.imageSmoothingEnabled = false;
 
     const fitScale = Math.max(
       0.0001,
@@ -266,6 +269,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     presentationCameraXRef.current = cameraCenterX;
     presentationCameraYRef.current = cameraCenterY;
 
+    const visualWorldSeed = gameState.worldSeed ?? DEFAULT_BIOME_WORLD_SEED;
+    drawBiomeBackground(ctx, biomeBackgroundCacheRef.current, { cameraCenterX, cameraCenterY, cameraScale, cssWidth, cssHeight, worldSeed: visualWorldSeed });
+
     ctx.save();
     ctx.translate(cssWidth / 2, cssHeight / 2);
     ctx.scale(cameraScale, cameraScale);
@@ -286,13 +292,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     ctx.restore();
 
+    drawBiomeForeground(ctx, biomeBackgroundCacheRef.current, { cameraCenterX, cameraCenterY, cameraScale, cssWidth, cssHeight, worldSeed: visualWorldSeed });
+
     if (showSenses) {
       // Screen-space legend: it stays readable and stationary while the world camera moves.
       const legendX = 10;
       const legendY = 10;
-      const legendW = Math.min(cssWidth - 20, 535);
+      const legendW = Math.min(cssWidth - 20, 680);
       ctx.fillStyle = 'rgba(3, 7, 18, 0.82)';
-      ctx.fillRect(legendX, legendY, Math.max(0, legendW), 44);
+      ctx.fillRect(legendX, legendY, Math.max(0, legendW), 61);
       ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
       ctx.textBaseline = 'top';
       ctx.fillStyle = '#d1d5db';
@@ -307,6 +315,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         legendX + 7,
         legendY + 24
       );
+      const debugBiome = getBiomeAtX(cameraCenterX, visualWorldSeed);
+      ctx.fillStyle = '#7dd3fc';
+      ctx.fillText(
+        `VISUAL BIOME · ${biomeLabel(debugBiome)} · region ${debugBiome.regionIndex} · cached chunks ${biomeBackgroundCacheRef.current.size}`,
+        legendX + 7,
+        legendY + 41
+      );
     }
 
     // Kept for the existing API. Capture is intentionally opt-in elsewhere; do not create
@@ -317,7 +332,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     <canvas
       ref={canvasRef}
       className="absolute inset-0 block h-full w-full"
-      style={{ background: '#1a202c' }}
+      style={{ background: '#111827' }}
     />
   );
 };

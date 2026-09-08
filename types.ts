@@ -2,6 +2,23 @@
 import type { LearningAgent } from './learning/agent';
 import type { NeatGenerationMetrics, NeatGenomeData, NetworkArchitectureSuiteConfig } from './learning/neat';
 
+export type BiomeId = 'lowlands' | 'spires' | 'foundry' | 'ruins' | 'desert' | 'snowy-mountains' | 'temperate-forest' | 'city' | 'rural-village' | 'swamp';
+
+export interface BiomeSample {
+  primary: BiomeId;
+  secondary: BiomeId | null;
+  blend: number;
+  regionIndex: number;
+  regionT: number;
+}
+
+export interface BiomeVisualStamp {
+  primary: BiomeId;
+  secondary: BiomeId | null;
+  blend: number;
+  regionIndex: number;
+}
+
 export interface Vector2D {
   x: number;
   y: number;
@@ -197,6 +214,8 @@ export interface PlatformState {
   rootBranchGroupId?: number;
   /** Optional deterministic oscillating platform motion. */
   motion?: PlatformMotionState;
+  /** Visual-only biome captured when this platform enters the visible world. Never a policy input. */
+  visualBiome?: BiomeVisualStamp;
 }
 
 export interface TagEffect {
@@ -207,6 +226,8 @@ export interface TagEffect {
 
 export interface GameState {
   agents: AgentState[];
+  /** Presentation-world seed. Training mechanics do not consume this during visual-biome phase one. */
+  worldSeed?: number;
   platforms: PlatformState[];
   cameraPosition: Vector2D;
   gameTime: number;

@@ -5,6 +5,7 @@ import { AgentStatus } from '../types';
 import { AGENT_WIDTH, AGENT_HEIGHT } from '../constants';
 import { canAgentUsePlatform } from '../learning/terrainRoutes';
 import { drawPixelAgent } from './agentSprite';
+import { getBiomeAtX, mixHex, paletteForBiomeSample } from '../world/biomes';
 
 export const drawTagEffect = (ctx: CanvasRenderingContext2D, effect: TagEffect) => {
     const progress = 1 - (effect.life / effect.initialLife);
@@ -285,18 +286,57 @@ export const drawAgentSenses = (
 };
 
 export const drawPlatform = (ctx: CanvasRenderingContext2D, platform: PlatformState) => {
-  // Branch routes are subtly differentiated so route choices are readable without turning the
-  // environment into a UI overlay. The merge returns to the normal visual language.
-  if (platform.structureType === 'branch-upper') ctx.fillStyle = '#52667a';
-  else if (platform.structureType === 'branch-lower') ctx.fillStyle = '#465b68';
-  else if (platform.structureType === 'merge') ctx.fillStyle = '#56616d';
-  else ctx.fillStyle = '#4a5568';
-  ctx.fillRect(platform.position.x, platform.position.y, platform.width, platform.height);
-  ctx.fillStyle = '#2d3748'; // gray-800
-  ctx.fillRect(platform.position.x, platform.position.y + platform.height - 4, platform.width, 4);
+  const sample = platform.visualBiome || getBiomeAtX(platform.position.x + platform.width * 0.5);
+  const palette = paletteForBiomeSample(sample);
+  const biome = sample.secondary && sample.blend >= 0.5 ? sample.secondary : sample.primary;
+
+  let face = palette.platformFace;
+  if (platform.structureType === 'branch-upper') face = mixHex(face, palette.haze, 0.18);
+  else if (platform.structureType === 'branch-lower') face = mixHex(face, palette.platformShadow, 0.12);
+  else if (platform.structureType === 'merge') face = mixHex(face, palette.platformTop, 0.12);
+
+  const x = Math.round(platform.position.x), y = Math.round(platform.position.y);
+  const w = Math.round(platform.width), h = Math.round(platform.height);
+  ctx.fillStyle = face; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = palette.platformTop; ctx.fillRect(x, y, w, Math.min(5, h));
+  ctx.fillStyle = palette.platformShadow; ctx.fillRect(x, y + Math.max(0, h - 4), w, 4);
+
+  // Biome material details are decorative only and stay inside the collision rectangle.
+  if (biome === 'desert') {
+    ctx.fillStyle = mixHex(face, palette.detail, .28);
+    for (let xx = x + 18; xx < x + w - 12; xx += 42) ctx.fillRect(xx, y + 9, 18, 2);
+  } else if (biome === 'snowy-mountains') {
+    ctx.fillStyle = mixHex(palette.platformTop, '#f3f8fa', .55);
+    ctx.fillRect(x, y, w, Math.min(7, h));
+    ctx.fillStyle = mixHex(face, palette.detail, .18);
+    for (let xx = x + 22; xx < x + w - 8; xx += 48) ctx.fillRect(xx, y + 9, 3, Math.max(2, h - 14));
+  } else if (biome === 'temperate-forest') {
+    ctx.fillStyle = mixHex(palette.platformTop, palette.detail, .32);
+    for (let xx = x + 8; xx < x + w - 5; xx += 23) ctx.fillRect(xx, y - 2, 3, 5);
+  } else if (biome === 'city') {
+    ctx.fillStyle = mixHex(face, palette.detail, .2);
+    for (let xx = x + 28; xx < x + w - 10; xx += 38) ctx.fillRect(xx, y + 6, 2, Math.max(3, h - 11));
+    ctx.fillStyle = mixHex(palette.platformTop, '#d7c46a', .35);
+    for (let xx = x + 16; xx < x + w - 12; xx += 52) ctx.fillRect(xx, y + 2, 22, 2);
+  } else if (biome === 'rural-village') {
+    ctx.fillStyle = mixHex(face, palette.detail, .22);
+    for (let xx = x + 14; xx < x + w - 10; xx += 36) { ctx.fillRect(xx, y + 8, 2, Math.max(2, h - 13)); ctx.fillRect(xx + 3, y + 11, 18, 2); }
+  } else if (biome === 'swamp') {
+    ctx.fillStyle = mixHex(palette.platformTop, palette.detail, .34);
+    for (let xx = x + 9; xx < x + w - 6; xx += 27) { ctx.fillRect(xx, y + 2, 8, 3); if ((xx / 27) % 2 > .4) ctx.fillRect(xx + 3, y + 5, 2, 5); }
+  } else if (biome === 'foundry') {
+    ctx.fillStyle = mixHex(face, palette.detail, .35);
+    for (let xx = x + 16; xx < x + w - 8; xx += 34) ctx.fillRect(xx, y + Math.max(7, h * .5), 3, 3);
+  } else if (biome === 'ruins' || biome === 'spires') {
+    ctx.fillStyle = mixHex(face, palette.detail, .22);
+    for (let xx = x + 20; xx < x + w - 9; xx += 42) { ctx.fillRect(xx, y + 8, 3, 8); ctx.fillRect(xx + 3, y + 14, 7, 2); }
+  } else {
+    ctx.fillStyle = mixHex(face, palette.detail, .22);
+    for (let xx = x + 18; xx < x + w - 8; xx += 40) ctx.fillRect(xx, y + 8, 3, Math.max(2, h - 13));
+  }
+
   if (platform.motion) {
-    // Thin center glyph makes moving terrain readable without adding a large UI overlay.
-    ctx.strokeStyle = '#67e8f9';
+    ctx.strokeStyle = palette.motionAccent;
     ctx.lineWidth = 2;
     ctx.beginPath();
     if (platform.motion.axis === 'x') {

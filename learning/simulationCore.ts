@@ -4,6 +4,7 @@ import { getFairRespawn } from './respawn';
 import { applyPlatformRoute, canAgentsPhysicallyInteract } from './terrainRoutes';
 import { cameraRelevantAgents } from './cameraFraming';
 import { hasRunnerOnHead } from './bodyContacts';
+import { terrainRuntimeForBiomeX } from '../world/biomes';
 import {
   AGENT_ACCELERATION,
   AGENT_HEIGHT,
@@ -1505,6 +1506,7 @@ function appendForwardSegment(
 ): { rightmost: PlatformState; nextPlatformId: number } {
   const terrain = resolvedTerrainRuntime(terrainValue);
   const baseRight = rightmostPlatform.position.x + rightmostPlatform.width;
+  const terrainAtX = terrainRuntimeForBiomeX(terrain, baseRight);
   let latestBranchX = -Infinity;
   let visibleEarlyBranchCount = 0;
   for (let i = platforms.length - 1; i >= 0; i--) {
@@ -1519,7 +1521,7 @@ function appendForwardSegment(
   const forceSecondEarlyBranch = terrain.branchingEnabled && terrain.guaranteeBranchExposure && visibleEarlyBranchCount === 1 && baseRight >= 1750 && baseRight <= 2600;
   const forceRecurringBranch = terrain.branchingEnabled && terrain.guaranteeBranchExposure && baseRight > 2600 && (!Number.isFinite(latestBranchX) || baseRight - latestBranchX >= 1500);
   const shouldBranch = terrain.branchingEnabled && (
-    forceFirstEarlyBranch || forceSecondEarlyBranch || forceRecurringBranch || rng() < branchChanceAtX(baseRight, branchMinX, terrain)
+    forceFirstEarlyBranch || forceSecondEarlyBranch || forceRecurringBranch || rng() < branchChanceAtX(baseRight, branchMinX, terrainAtX)
   );
   const hasMovingPlatform = terrain.guaranteeMovingExposure && platforms.some(platform => !!platform.motion);
   const needsGuaranteedMoving = terrain.movingPlatformsEnabled && terrain.guaranteeMovingExposure && !hasMovingPlatform;
@@ -1527,14 +1529,14 @@ function appendForwardSegment(
   // A training episode selected for moving terrain must actually expose both policies to it. If
   // moving platforms are disallowed inside branches, emit one guaranteed moving trunk platform
   // before a forced branch rather than letting the feature percentage become merely probabilistic.
-  if (needsGuaranteedMoving && shouldBranch && !terrain.movingPlatformsInBranches) {
-    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng, false, terrain, true, platforms);
+  if (needsGuaranteedMoving && shouldBranch && !terrainAtX.movingPlatformsInBranches) {
+    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng, false, terrainAtX, true, platforms);
     platforms.push(p);
     return { rightmost: p, nextPlatformId };
   }
 
   if (!shouldBranch) {
-    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng, false, terrain, needsGuaranteedMoving, platforms);
+    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng, false, terrainAtX, needsGuaranteedMoving, platforms);
     platforms.push(p);
     return { rightmost: p, nextPlatformId };
   }
@@ -1544,7 +1546,7 @@ function appendForwardSegment(
   // fork into a timing accident. Insert one ordinary stationary transition when necessary.
   let branchEntry = rightmostPlatform;
   if (rightmostPlatform.motion) {
-    const stationaryTerrain: TerrainRuntimeConfig = { ...terrain, movingPlatformsEnabled: false };
+    const stationaryTerrain: TerrainRuntimeConfig = { ...terrainAtX, movingPlatformsEnabled: false };
     branchEntry = generatePlatform(
       baseRight,
       rightmostPlatform.position.y,
@@ -1566,11 +1568,11 @@ function appendForwardSegment(
     viewportHeight,
     nextPlatformId,
     rng,
-    terrain,
+    terrainAtX,
     1,
     null,
     rootGroupId,
-    needsGuaranteedMoving && terrain.movingPlatformsInBranches
+    needsGuaranteedMoving && terrainAtX.movingPlatformsInBranches
   );
   return { rightmost: built.merge, nextPlatformId: built.nextPlatformId };
 }

@@ -60,6 +60,7 @@ import {
 } from './constants';
 import { Activity, Play, Pause, RotateCcw, MonitorPlay, Cpu, Minus, Plus } from 'lucide-react';
 import { DEFAULT_TERRAIN_VARIETY_CONFIG, continuousTerrainRuntime, sanitizeTerrainVarietyConfig } from './learning/terrainConfig';
+import { DEFAULT_BIOME_WORLD_SEED, stampPlatformVisualBiome } from './world/biomes';
 
 // Champion trails are visual telemetry only. They are sampled by distance but aged by
 // simulation time, so a stationary agent's old path still fades away.
@@ -312,7 +313,7 @@ export const App: React.FC = () => {
     evaderElo.current = INITIAL_ELO;
 
     const initialPlatforms: PlatformState[] = [
-      { id: 0, position: { x: 0, y: viewportSize.height - 100 }, width: viewportSize.width, height: PLATFORM_HEIGHT },
+      stampPlatformVisualBiome({ id: 0, position: { x: 0, y: viewportSize.height - 100 }, width: viewportSize.width, height: PLATFORM_HEIGHT }, DEFAULT_BIOME_WORLD_SEED),
     ];
 
     const initialAgents: AgentState[] = [
@@ -395,6 +396,7 @@ export const App: React.FC = () => {
 
     const newGameState: GameState = {
       agents: initialAgents,
+      worldSeed: DEFAULT_BIOME_WORLD_SEED,
       platforms: initialPlatforms,
       cameraPosition: { x: 0, y: 0 },
       gameTime: 0,
@@ -1062,7 +1064,9 @@ export const App: React.FC = () => {
           activePursuitDesign?.branchStructureMinX,
           continuousTerrainRuntime(terrainVarietyConfig)
         );
-        newState.platforms = platformUpdate.platforms;
+        newState.platforms = platformUpdate.platforms.map(platform =>
+          stampPlatformVisualBiome(platform, newState.worldSeed ?? DEFAULT_BIOME_WORLD_SEED)
+        );
         platformIdCounter.current = platformUpdate.nextPlatformId;
 
         // 9. Tag Visual Effects
@@ -1184,7 +1188,7 @@ export const App: React.FC = () => {
       return {
         ...prev,
         agents,
-        platforms: [{ id: 0, position: { x: 0, y: groundY }, width: viewportSize.width, height: PLATFORM_HEIGHT }],
+        platforms: [stampPlatformVisualBiome({ id: 0, position: { x: 0, y: groundY }, width: viewportSize.width, height: PLATFORM_HEIGHT }, prev.worldSeed ?? DEFAULT_BIOME_WORLD_SEED)],
         cameraPosition: { x: 0, y: 0 },
         gameTime: 0,
         tagEffects: [],
