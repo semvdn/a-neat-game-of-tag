@@ -1,3 +1,5 @@
+import { GROUP_COHESION, measureGroupCohesion } from './groupCohesion';
+import { resolveRunnerContacts } from './bodyContacts';
 import { EncounterTracker } from './encounters';
 import type { LearningAgent } from './agent';
 import { writeAgentStateVector } from './state';
@@ -47,6 +49,7 @@ const VISUAL_PLATFORM_ID_START = 10;
 
 export interface TrainingEpisodeResult {
   chaserFitness: number;
+  groupCohesion: { meanRunnerDistancePx: number; meanGroupDiameterPx: number; runnerPenalty: number; chaserPenalty: number };
   evaderFitness: number;
   /** True when at least one physical contact tag occurred during the scored match. */
   tagged: boolean;
@@ -141,6 +144,7 @@ export interface TrainingEpisodeTraceAgent {
   directionConflict: boolean;
   jumpReady: boolean;
   grounded: boolean;
+  supportingAgentId?: number | null;
   platformId: number | null;
   platformStructure?: PlatformState['structureType'];
 }
@@ -473,6 +477,8 @@ function stepScriptedMidgameWorld(
       MIDGAME_WARMUP_UPGRADES
     ).agent;
   });
+
+  resolveRunnerContacts(gameState.agents, agentsBeforePhysics, gameState.platforms);
 
   // Tags and falls during the pre-roll are genuine game transitions, but deliberately do not
   // contribute to evolutionary fitness; they only determine the state from which scoring begins.
@@ -837,6 +843,9 @@ export function runTrainingEpisode(
   const encounterTracker = new EncounterTracker();
   let closeEncounters = 0;
   let successfulEvades = 0;
+  let cohesionWindowCost = 0, cohesionWindowSamples = 0;
+  let cohesionRunnerDistance = 0, cohesionDiameter = 0, cohesionSamples = 0;
+  let runnerCohesionPenalty = 0, chaserCohesionPenalty = 0;
   let nearestRunnerDistanceAccum = 0;
   let nearestRunnerDistanceSamples = 0;
   let initialNearestRunnerDistancePx = Infinity;
@@ -960,12 +969,19 @@ export function runTrainingEpisode(
       }
     }
 
-    // Preserve all pre-step body positions before mutating any body. This is the only state
-    // fair respawn needs from the old Array.map snapshot, and the buffers are reused every tick.
+    // Preserve pre-step contact and checkpoint state before mutating any body. Reuse the buffers
+    // each tick so body contacts and fair respawn match the immutable visual step.
     for (let i = 0; i < gameState.agents.length; i++) {
       const source = gameState.agents[i];
       const snapshot = prePhysicsAgents[i];
       snapshot.id = source.id;
+      snapshot.status = source.status;
+      snapshot.lastPlatformId = source.lastPlatformId;
+      snapshot.positionAtLastTakeoff.x = source.positionAtLastTakeoff.x;
+      snapshot.positionAtLastTakeoff.y = source.positionAtLastTakeoff.y;
+      snapshot.energyAtLastTakeoff = source.energyAtLastTakeoff;
+      snapshot.velocity.x = source.velocity.x;
+      snapshot.velocity.y = source.velocity.y;
       snapshot.position.x = source.position.x;
       snapshot.position.y = source.position.y;
     }
@@ -973,7 +989,7 @@ export function runTrainingEpisode(
     for (let i = 0; i < gameState.agents.length; i++) {
       const agent = gameState.agents[i];
       const decision = decisions[i];
-      const physics = stepAgentPhysicsInPlace(
+      stepAgentPhysicsInPlace(
         agent,
         prePhysicsAgents,
         gameState.platforms,
@@ -984,7 +1000,11 @@ export function runTrainingEpisode(
         upgrades,
         physicsResults[i]
       );
-
+    }
+    resolveRunnerContacts(gameState.agents, prePhysicsAgents, gameState.platforms);
+    for (let i = 0; i < gameState.agents.length; i++) {
+      const agent = gameState.agents[i];
+      const physics = physicsResults[i];
       if (physics.jumped) {
         if (physics.roleAtStep === 'chaser') chaserJumps++;
         else evaderJumps++;
@@ -998,7 +1018,7 @@ export function runTrainingEpisode(
         }
       }
 
-      const landedOnNewPlatform = !physics.fell && agent.isOnGround && agent.lastPlatformId != null && agent.lastPlatformId !== previousPlatformIds[i];
+      const landedOnNewPlatform = !physics.fell && agent.isOnGround && agent.supportingAgentId == null && agent.lastPlatformId != null && agent.lastPlatformId !== previousPlatformIds[i];
       if (landedOnNewPlatform) {
         const platform = gameState.platforms.find(p => p.id === agent.lastPlatformId);
         const isBranch = platform?.structureType === 'branch-upper' || platform?.structureType === 'branch-lower';
@@ -1043,14 +1063,14 @@ export function runTrainingEpisode(
           runnerSafeRightX[i] = Math.max(runnerSafeRightX[i], centerX);
           runnerFrontierLeftX = Math.min(runnerFrontierLeftX, centerX);
           runnerFrontierRightX = Math.max(runnerFrontierRightX, centerX);
-        } else if (agent.isOnGround && centerX > runnerSafeRightX[i]) {
+        } else if (agent.isOnGround && agent.supportingAgentId == null && centerX > runnerSafeRightX[i]) {
           // Grounded running banks continuously; an airborne traverse banks only on the first frame
           // of a successful landing. Airborne progress that ends in a fall never reaches this branch.
           const expansion = centerX - runnerSafeRightX[i];
           runnerSafeRightX[i] = centerX;
           runnerSafeRightExpansionByBody[i] += expansion;
         }
-        if (agent.isOnGround && agent.lastPlatformId != null) runnerVisitedPlatformIds.add(agent.lastPlatformId);
+        if (agent.isOnGround && agent.supportingAgentId == null && agent.lastPlatformId != null) runnerVisitedPlatformIds.add(agent.lastPlatformId);
       }
       previousPlatformIds[i] = agent.lastPlatformId;
     }
@@ -1059,6 +1079,15 @@ export function runTrainingEpisode(
     // chase group visible would require shrinking below the minimum useful reference zoom, the
     // Runners have escaped. End this scored chase immediately so the Chaser cannot recover fitness
     // by farming later tags after losing contact with the level.
+    const cohesion = measureGroupCohesion(gameState.agents);
+    cohesionRunnerDistance += cohesion.runnerDistance;
+    cohesionDiameter += cohesion.groupDiameter;
+    cohesionSamples++;
+    cohesionWindowCost += cohesion.runnerCost;
+    cohesionWindowSamples++;
+    const cohesionStep = GROUP_COHESION.penaltyCap * DT / NEAT_EPISODE_MAX_MS;
+    runnerCohesionPenalty = Math.min(GROUP_COHESION.penaltyCap, runnerCohesionPenalty + cohesion.runnerCost * cohesionStep);
+    chaserCohesionPenalty = Math.min(GROUP_COHESION.penaltyCap, chaserCohesionPenalty + cohesion.chaserCost * cohesionStep);
     const escapeEvaluation = evaluateChaseEscape(gameState.agents);
     if (escapeEvaluation.escaped) {
       chaserEscapes++;
@@ -1155,7 +1184,10 @@ export function runTrainingEpisode(
       }
       const averageRunnerProgress = safeProgressThisWindow / 2;
       const completion = Math.min(1, averageRunnerProgress / runnerPaceTargetPx);
-      runnerPaceFitnessBonus += completion * runnerPaceRewardPerWindow;
+      // Pay for safe progress while the group is together, not for racing out of the chase.
+      runnerPaceFitnessBonus += completion * runnerPaceRewardPerWindow * (1 - cohesionWindowCost / Math.max(1, cohesionWindowSamples));
+      cohesionWindowCost = 0;
+      cohesionWindowSamples = 0;
       // The pace target is a requirement, not merely an optional bonus. With bonus-only shaping a
       // stationary Runner can sit on the +100 fitness baseline, avoid falls, and outperform agents
       // that actually attempt the level. Missing a window therefore carries a modest shortfall cost
@@ -1231,6 +1263,7 @@ export function runTrainingEpisode(
           directionConflict: decisions[gameState.agents.indexOf(agent)]?.directionConflict || false,
           jumpReady: agent.jumpArmed !== false,
           grounded: agent.isOnGround,
+          supportingAgentId: agent.supportingAgentId,
           platformId: agent.lastPlatformId,
           platformStructure: gameState.platforms.find(p => p.id === agent.lastPlatformId)?.structureType,
         })),
@@ -1257,11 +1290,12 @@ export function runTrainingEpisode(
   const meanNearestRunnerDistancePx = nearestRunnerDistanceSamples > 0
     ? nearestRunnerDistanceAccum / nearestRunnerDistanceSamples
     : 0;
-  const chaserFitness = FITNESS_BASE + chaserEventScore * FITNESS_PER_EVENT + chaserPursuitFitnessBonus + chaserProximityFitnessBonus;
-  const evaderFitness = FITNESS_BASE + evaderEventScore * FITNESS_PER_EVENT + runnerPaceFitnessBonus - runnerPaceShortfallPenalty + runnerPressureEscapeFitnessBonus;
+  const chaserFitness = FITNESS_BASE + chaserEventScore * FITNESS_PER_EVENT + chaserPursuitFitnessBonus + chaserProximityFitnessBonus - chaserCohesionPenalty;
+  const evaderFitness = FITNESS_BASE + evaderEventScore * FITNESS_PER_EVENT + runnerPaceFitnessBonus - runnerPaceShortfallPenalty + runnerPressureEscapeFitnessBonus - runnerCohesionPenalty;
 
   return {
     chaserFitness,
+    groupCohesion: { meanRunnerDistancePx: cohesionRunnerDistance / Math.max(1, cohesionSamples), meanGroupDiameterPx: cohesionDiameter / Math.max(1, cohesionSamples), runnerPenalty: runnerCohesionPenalty, chaserPenalty: chaserCohesionPenalty },
     evaderFitness,
     tagged: tags > 0,
     tags,

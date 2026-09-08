@@ -10,9 +10,9 @@ description: Use when editing platform generation, recursive branches, route com
 1. Static platforms must satisfy both non-overlap and the configured horizontal/vertical **safety clearance**.
 2. Moving platforms must satisfy those same rules for their **full swept motion envelopes**, not merely their starting rectangles or sampled animation frames.
 3. Every offered fork choice must be reachable from a stable incoming/staging platform under normal movement/jump physics.
-4. The first branch landing is the commitment point. Once committed, sibling-route platforms are non-collidable and sibling-route agents are non-taggable until the matching merge.
-5. An uncommitted trunk agent may enter only a first-level child, never skip directly to a nested descendant.
-6. Nested forks inherit their parent route lock; child merges unlock only that child split, while the outer branch remains committed until its own merge.
+4. Every generated platform is physically landable, including sibling routes and unsensed platforms. Route metadata must never turn geometry intangible.
+5. Branch geometry should offer readable first-level choices; a physically possible jump to a nested route remains legal.
+6. Landings update descriptive route metadata, and merges restore the parent route label. Labels do not restrict collision or tagging.
 7. Vertical branch corridors are hard inherited territory, not placement hints. A nested child must remain inside its parent route corridor; stop recursion early if there is not enough vertical budget for a clean child fork.
 8. Commitment platforms, route endpoints and merges should be stationary and visually legible. Use moving platforms on internal route ledges, and keep branch motion horizontal unless deliberately redesigning route identity.
 9. Sensing, pursuit distance, tag eligibility, and fair respawn must use the same route-accessibility semantics.
@@ -37,4 +37,4 @@ For terrain changes, exercise high-density settings such as:
 - maximum moving speed;
 - several incoming platform heights and many deterministic seeds.
 
-Check static and swept overlap/clearance pairs, first-fork gap and upward/downward reachability, direct-route climb/gap limits, merge reachability, minimum fully-diverged route separation, nested route lock/unlock behavior, and rolling generation after old platforms are culled. Also animate moving platforms for many real frames and assert that no instantaneous rectangle collisions appear anywhere in their cycles.
+Check static and swept overlap/clearance pairs, first-fork gap and upward/downward reachability, direct-route climb/gap limits, merge reachability, minimum fully-diverged route separation, route metadata updates and universal landings, and rolling generation after old platforms are culled. Also animate moving platforms for many real frames and assert that no instantaneous rectangle collisions appear anywhere in their cycles.

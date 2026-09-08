@@ -1,8 +1,9 @@
 import type { ActiveUpgradeState, AgentState, PlatformState, TerrainRuntimeConfig } from '../types';
 import { AgentStatus } from '../types';
 import { getFairRespawn } from './respawn';
-import { applyPlatformRoute, canAgentUsePlatform, canAgentsPhysicallyInteract } from './terrainRoutes';
+import { applyPlatformRoute, canAgentsPhysicallyInteract } from './terrainRoutes';
 import { cameraRelevantAgents } from './cameraFraming';
+import { hasRunnerOnHead } from './bodyContacts';
 import {
   AGENT_ACCELERATION,
   AGENT_HEIGHT,
@@ -328,7 +329,7 @@ export function stepAgentPhysicsInPlace(
   let jumpVelocity = 0;
   let jumpArmed = agent.jumpArmed !== false;
   if (jumpControl <= JUMP_RELEASE_THRESHOLD) jumpArmed = true;
-  if (jumpArmed && jumpControl >= JUMP_PRESS_THRESHOLD && agent.isOnGround) {
+  if (jumpArmed && jumpControl >= JUMP_PRESS_THRESHOLD && agent.isOnGround && !hasRunnerOnHead(agent, allAgentsBeforePhysics)) {
     jumpPower = controlledJumpEnabledForRole
       ? CONTROLLED_JUMP_MIN_POWER_RATIO + (1 - CONTROLLED_JUMP_MIN_POWER_RATIO) * jumpControl
       : 1;
@@ -358,16 +359,21 @@ export function stepAgentPhysicsInPlace(
   let landingTime = Infinity;
   for (let i = 0; i < platforms.length; i++) {
     const platform = platforms[i];
-    if (!canAgentUsePlatform(agent, platform)) continue;
-    if (velocityY < 0 || prevBottom > platform.position.y + 8 || newBottom < platform.position.y) continue;
+    const carried = agent.isOnGround && agent.supportingAgentId == null && agent.lastPlatformId === platform.id;
+    const previous = carried ? platform.position : platform.previousPosition || platform.position;
+    const platformDx = platform.position.x - previous.x;
+    const platformDy = platform.position.y - previous.y;
+    const relativeY = velocityY - platformDy;
+    if (relativeY < 0 || prevBottom > previous.y + 0.001 || newBottom < platform.position.y) continue;
     // Test horizontal overlap when the feet cross the top, not only at the end of the frame.
     // Lower targets produce faster descents; the body can cross a corner and leave its horizontal
-    // span within one physics step. Keep the existing small contact tolerance for resting bodies.
-    const contactTime = velocityY > 0 ? Math.max(0, (platform.position.y - prevBottom) / velocityY) : 0;
+    // span within one physics step. Only floating-point tolerance is allowed at a resting top.
+    const contactTime = relativeY > 0 ? Math.max(0, (previous.y - prevBottom) / relativeY) : 0;
     const contactX = agent.position.x + velocityX * contactTime;
+    const platformX = previous.x + platformDx * contactTime;
     const aligned =
-      contactX + AGENT_WIDTH > platform.position.x &&
-      contactX < platform.position.x + platform.width;
+      contactX + AGENT_WIDTH > platformX &&
+      contactX < platformX + platform.width;
     // A body already at the top must be able to walk off. Rewinding a t=0 edge exit to its
     // starting point every frame would turn the edge into an invisible horizontal wall.
     if (contactTime === 0 && (positionX + AGENT_WIDTH <= platform.position.x || positionX >= platform.position.x + platform.width)) continue;
@@ -380,7 +386,8 @@ export function stepAgentPhysicsInPlace(
     // If this was a grazing edge contact, finish at the impact point rather than declaring a
     // grounded body beyond the ledge. Normal landings retain their full horizontal movement.
     if (positionX + AGENT_WIDTH <= landing.position.x || positionX >= landing.position.x + landing.width) {
-      positionX = agent.position.x + velocityX * landingTime;
+      const dx = landing.position.x - (landing.previousPosition?.x ?? landing.position.x);
+      positionX = agent.position.x + velocityX * landingTime + dx * (1 - landingTime);
     }
     positionY = landing.position.y - AGENT_HEIGHT;
     velocityY = 0;
@@ -428,6 +435,7 @@ export function stepAgentPhysicsInPlace(
   agent.velocity.y = velocityY;
   agent.acceleration.x = accelerationX;
   agent.isOnGround = grounded;
+  agent.supportingAgentId = null;
   agent.energy = energy;
   agent.status = status;
   agent.cooldownTimer = cooldownTimer;
@@ -531,6 +539,15 @@ export function resolveTagSwap(agents: AgentState[]): TagTransition | null {
   itAgent.survivalTime = 0;
   itAgent.timeSinceBecameIt = 0;
   itAgent.modelId = 'current_evader';
+
+  for (const body of agents) {
+    if (body.supportingAgentId == null) continue;
+    const support = agents.find(a => a.id === body.supportingAgentId);
+    if (body.status === AgentStatus.It || support?.status === AgentStatus.It) {
+      body.supportingAgentId = null;
+      body.isOnGround = false;
+    }
+  }
 
   return transition;
 }
@@ -1214,7 +1231,7 @@ function extendRouteTowardX(
 
 /** Build an asymmetric branch tree. Each fork has a naturally sized local runway; recursive child
  * forks determine their own length and shorter siblings receive connective ledges afterward. This
- * avoids giant empty gaps while preserving route locks and explicit merge checkpoints. */
+ * avoids giant empty gaps while preserving route labels and explicit merge checkpoints. */
 function buildBranchTree(
   platforms: PlatformState[],
   entryPlatform: PlatformState,
@@ -1541,6 +1558,7 @@ export function stepMovingPlatformsInPlace(
   if (dt <= 0) return;
   for (let i = 0; i < platforms.length; i++) {
     const platform = platforms[i];
+    platform.previousPosition = { ...platform.position };
     const motion = platform.motion;
     if (!allowBranchMotion && platform.rootBranchGroupId != null) continue;
     if (!motion || motion.speed <= 0 || motion.max <= motion.min) continue;
@@ -1570,11 +1588,16 @@ export function stepMovingPlatformsInPlace(
     if (dx === 0 && dy === 0) continue;
     for (let j = 0; j < agents.length; j++) {
       const agent = agents[j];
-      if (!agent.isOnGround || agent.lastPlatformId !== platform.id) continue;
+      if (!agent.isOnGround || agent.supportingAgentId != null || agent.lastPlatformId !== platform.id) continue;
       agent.position.x += dx;
       agent.position.y += dy;
       agent.positionAtLastTakeoff.x += dx;
       agent.positionAtLastTakeoff.y += dy;
+      for (const rider of agents) {
+        if (rider.status === AgentStatus.It || agent.status === AgentStatus.It || rider.supportingAgentId !== agent.id) continue;
+        rider.position.x += dx;
+        rider.position.y += dy;
+      }
     }
   }
 }

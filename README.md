@@ -34,13 +34,15 @@ Read [the evaluation guide](docs/EVALUATION.md) before interpreting results. The
 - Policies sense **23 world-relative inputs** and emit **3 outputs**: signed horizontal drive, jump, and sprint. Camera position and display dimensions are presentation concerns.
 - Compared candidates receive common seeded terrain, starts, and opponent panels. Breeding, held-out validation, champion retention, and display curation remain separate decisions.
 - Tags and personal failures are the competitive outcomes. Pace, pursuit, and pressure shaping are capped; failed movement and respawn teleports must not become progress rewards.
-- Moving platforms must remain safe across their complete swept motion; sibling routes are mutually exclusive after commitment until their merge.
+- Moving platforms must remain safe across their complete swept motion; all generated surfaces remain solid regardless of sensing or route history.
+- Runners obstruct and can stand on each other; a loaded Runner cannot jump. Chasers remain non-solid. World-space separation penalties encourage a compact group without rewarding contact or camping.
 - The camera excludes clearly falling bodies and holds its framing when all relevant participants are falling.
 
-Current checkpoints use `world-relative-senses-v3` and `signed-horizontal-controls-v2`. Older 25-input or four-output policies are incompatible. Current revision `swept-landings-v11` corrects landing collisions after the v10 evade-accounting fix without changing the controller schema; current-schema older checkpoints use the existing score-migration path.
+Current checkpoints use `world-relative-senses-v3` and `signed-horizontal-controls-v2`. Older 25-input or four-output policies are incompatible. Current revision `solid-group-v12` adds solid Runner contacts, universal surfaces, moving-surface sweeps and bounded group-cohesion fitness without changing the controller schema; current-schema older checkpoints use the existing score-migration path.
 
 ## Documentation
 
+- [Solid Runner contacts, universal landings and group-cohesion training](docs/SOLID_GROUP.md)
 - [Artwork direction and exhibition operation](docs/ARTWORK.md)
 - [Gameplay laboratory and experiment protocol](docs/EVALUATION.md)
 - [Reproducible production-worker training experiments](docs/TRAINING_EXPERIMENTS.md)

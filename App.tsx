@@ -1,3 +1,4 @@
+import { resolveRunnerContacts } from './learning/bodyContacts';
 import { useExhibitionMode } from './hooks/useExhibitionMode';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GameCanvas } from './components/GameCanvas';
@@ -956,6 +957,7 @@ export const App: React.FC = () => {
         }
 
         const agentsBeforePhysics = newState.agents;
+        const fallenBodyIds = new Set<number>();
         newState.agents = agentsBeforePhysics.map(agent => {
           const actionDecision = agentActions[agent.id];
           const physics = stepAgentPhysics(
@@ -977,21 +979,26 @@ export const App: React.FC = () => {
 
           if (physics.jumped && !exhibition) playDynamicJumpSound(physics.jumpVelocity);
           if (physics.fell) {
+            fallenBodyIds.add(agent.id);
             visualFallsRef.current++;
             if (!exhibition) playFallSound();
           }
 
-          const newTrajectory = physics.fell
-            ? [{ x: physics.agent.position.x, y: physics.agent.position.y, timestamp: newState.gameTime }]
-            : updateTrail(agent.trajectory, physics.agent.position, newState.gameTime);
-
-          return { ...physics.agent, trajectory: newTrajectory };
+          return physics.agent;
         });
+
+        resolveRunnerContacts(newState.agents, agentsBeforePhysics, newState.platforms);
+        newState.agents = newState.agents.map(agent => ({
+          ...agent,
+          trajectory: fallenBodyIds.has(agent.id)
+            ? [{ ...agent.position, timestamp: newState.gameTime }]
+            : updateTrail(agent.trajectory, agent.position, newState.gameTime),
+        }));
 
         // 4. Escape detection. Training still treats this as a terminal Chaser failure. In the
         // champion view we keep the world/route alive and teleport only the failed Chaser onto a
-        // legal platform roughly 220-360px behind the trailing Runner. The Chaser inherits that
-        // Runner's route lock so recursive sibling geometry cannot strand it after recovery.
+        // safe platform roughly 220-360px behind the trailing Runner, retaining route labels for
+        // diagnostics. Every generated surface remains physically available after recovery.
         const chaseEscape = evaluateChaseEscape(newState.agents);
         if (chaseEscape.escaped) {
           const recovery = getVisualChaserEscapeRecovery(newState.agents, newState.platforms);

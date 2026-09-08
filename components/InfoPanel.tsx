@@ -328,13 +328,13 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
           </summary>
           <fieldset className="space-y-3 border-0 border-t border-violet-500/15 p-3">
             <p className="text-[9px] leading-relaxed text-gray-600">
-              Branches are route-locked: the first landing commits an agent to that sibling route until its matching merge. Nested forks remain inside the parent corridor.
+              All platforms are solid from above, including other branches. Nested forks remain inside their parent corridor; landings record the chosen route.
             </p>
 
             <div className="space-y-2 rounded-md border border-gray-800 bg-black/20 p-2.5">
               <div className="text-[9px] font-bold uppercase tracking-wider text-cyan-300">Training distribution</div>
               <div className="flex items-center justify-between gap-2">
-                <div><div className="text-[10px] text-gray-300">Branching episodes</div><div className="text-[9px] text-gray-600">Include exclusive route trees</div></div>
+                <div><div className="text-[10px] text-gray-300">Branching episodes</div><div className="text-[9px] text-gray-600">Include branching route trees</div></div>
                 <ToggleSwitch id="training-branches" label="Enable branching terrain during training" checked={terrainVarietyConfig.trainingBranchingEnabled} onChange={() => onUpdateTerrainVarietyConfig({ trainingBranchingEnabled: !terrainVarietyConfig.trainingBranchingEnabled })} />
               </div>
               {terrainVarietyConfig.trainingBranchingEnabled && (

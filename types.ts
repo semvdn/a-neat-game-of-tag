@@ -140,6 +140,8 @@ export interface AgentState {
   status: AgentStatus;
   color: string;
   isOnGround: boolean;
+  /** A Runner supporting this body; cleared every contact step and on role changes. */
+  supportingAgentId?: number | null;
   cooldownTimer: number; // in milliseconds
   lastAction: string;
   energy: number;
@@ -155,7 +157,7 @@ export interface AgentState {
   timeSinceBecameIt: number; // in milliseconds
   modelId: string;
   modelPerformance?: number;
-  /** Active mutually-exclusive route. Cleared or reduced only by the matching merge platform. */
+  /** Descriptive route of the last landed platform; never makes another surface intangible. */
   activeRoutePath?: string | null;
   elo?: number;
   role?: 'chaser' | 'evader';
@@ -176,6 +178,8 @@ export interface PlatformMotionState {
 export interface PlatformState {
   id: number;
   position: Vector2D;
+  /** Previous motion-step position for continuous landing tests; not a policy input. */
+  previousPosition?: Vector2D;
   width: number;
   height: number;
   structureType?: 'normal' | 'branch-upper' | 'branch-lower' | 'merge';
@@ -292,6 +296,8 @@ export interface BalanceTelemetry {
   chaserBranchLandingsPerEpisode?: number;
   closeEncountersPerEpisode?: number;
   successfulEvadesPerEpisode?: number;
+  meanRunnerSeparationPx?: number;
+  meanGroupDiameterPx?: number;
   meanNearestRunnerDistancePx?: number;
   timeWithin100Pct?: number;
   timeWithin200Pct?: number;
@@ -455,6 +461,8 @@ export interface DiagnosticsState {
 }
 
 export interface TrainingGenerationAnalysisRecord {
+  gameplayObjectiveVersion?: string;
+  groupCohesionConfig?: Record<string, number>;
   generation: number;
   recordedAt: number;
   simulatedTimeMs: number;
@@ -481,4 +489,3 @@ export interface TrainingGenerationAnalysisRecord {
   eliteSeeding?: EliteSeedingTelemetry;
   showcasePair?: ShowcasePairTelemetry | null;
 }
-

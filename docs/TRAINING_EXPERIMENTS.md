@@ -1,5 +1,7 @@
 # Reproducible evolutionary experiments
 
+The current `solid-group-v12` source also supports `cohesion-penalty` (disable pace qualification) and `cohesion-off` (disable both proximity incentives), preserving solid Runner bodies and universal surfaces. See [the solid-group experiment](SOLID_GROUP.md). These conditions do not apply to the historical revision below.
+
 Read the [measured selection, pace, and architecture results](experiments/2026-09-08-training.md) before changing defaults.
 
 `evaluate` measures fixed policies. `experiment:train` actually evolves both populations using the production training worker, including its opponent league, speciation, held-out validation, retention, and archive. It does not implement a second evolutionary loop.

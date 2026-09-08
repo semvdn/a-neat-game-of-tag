@@ -60,10 +60,12 @@ Falls still do not end an episode. The shared fair-respawn routine restores the 
 
 ### Sparse event fitness + capped gameplay pace
 
+Revision v12 adds a world-distance separation penalty capped at 6 points per role per episode and qualifies the positive pace bonus by mean group cohesion during that window. Pace shortfall still uses actual safe progress. See [solid-group rules](SOLID_GROUP.md) for distance bands, contacts and landing semantics.
+
 The competitive objective stays sparse, but movement shaping is designed to avoid both known trivial optima: camping and maximum-speed endless running.
 
-- **Chaser fitness:** `100 + 20 × (contactTags - chaserFalls - nonDuplicatedEscapeFailures) + cappedPursuitTraversal + cappedProximityProgress`
-- **Runner fitness:** `100 + 20 × (-contactTags - runnerFalls) + cappedPaceReward - paceShortfallPenalty + cappedCleanPressureEscape`
+- **Chaser fitness:** `100 + 20 × (contactTags - chaserFalls - nonDuplicatedEscapeFailures) + cappedPursuitTraversal + cappedProximityProgress - cappedGroupSeparation`
+- **Runner fitness:** `100 + 20 × (-contactTags - runnerFalls) + cappedPaceReward - paceShortfallPenalty + cappedCleanPressureEscape - cappedGroupSeparation`
 - **Runner pace window:** 2 seconds
 - **Default pace target:** 260 px of SAFE rightward progress per window, averaged across the two Runner slots
 - **Default pace reward:** up to +15 per window; progress beyond the target earns **zero extra fitness**
@@ -114,9 +116,9 @@ Every candidate in a role sees the same opponent identities and scenario seeds f
 
 ## Recursive route terrain and moving platforms
 
-The procedural terrain generator builds **true route trees** rather than a one-platform upper/lower detour. Every branch begins from a stable staging ledge and two reachable commitment platforms. Choosing either commitment platform locks the agent to that sibling route until its matching merge. Nested forks inherit a **hard vertical corridor** from their parent route, so descendants cannot leak into sibling territory merely because a crowded placement would be convenient. If an inherited corridor does not have enough room for another clean split, recursion stops early even when the configured maximum depth is higher. This makes maximum depth a ceiling, not an instruction to generate cramped or impossible geometry.
+The procedural terrain generator builds **true route trees** rather than a one-platform upper/lower detour. Every branch begins from a stable staging ledge and two reachable commitment platforms. Landings record the chosen route for diagnostics; they never disable another surface. Nested forks inherit a **hard vertical corridor** from their parent route, so descendants cannot leak into sibling territory merely because a crowded placement would be convenient. If an inherited corridor does not have enough room for another clean split, recursion stops early even when the configured maximum depth is higher. This makes maximum depth a ceiling, not an instruction to generate cramped or impossible geometry.
 
-Route geometry is intentionally asymmetric. Recursion is probabilistic, one side may continue while the other receives ordinary transit ledges, and route lengths are generated from bounded platform pitches rather than stretching a small number of ledges across a large recursive span. Consecutive route climbs are kept comfortably inside the normal jump envelope, first-fork and merge transitions stay conservative, and explicit merge checkpoints slide forward to the actual resolved route endpoints. Landing on one side of a split still makes sibling-route platforms non-collidable and sibling-route agents non-taggable until the appropriate merge; sensing, pursuit distance and fair respawn use the same route-accessibility rules.
+Route geometry is intentionally asymmetric. Recursion is probabilistic, one side may continue while the other receives ordinary transit ledges, and route lengths are generated from bounded platform pitches rather than stretching a small number of ledges across a large recursive span. Consecutive route climbs are kept comfortably inside the normal jump envelope, first-fork and merge transitions stay conservative, and explicit merge checkpoints slide forward to the actual resolved route endpoints. Every generated surface is landable, including nested sibling routes and platforms outside the policy sensing slots or camera view. Physical distance governs pursuit and tagging; route labels no longer block interaction.
 
 Ordinary trunk terrain uses a reflected random-walk profile instead of independent height noise. Most runs are gentle, with occasional climbs and descents, wider breathing room on flat sections and shorter reaches for uphill jumps. This produces recognizable runs and elevation changes without long rows of identical platforms or white-noise staircases.
 

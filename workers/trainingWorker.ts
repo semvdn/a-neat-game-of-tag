@@ -1,3 +1,4 @@
+import { GROUP_COHESION } from '../learning/groupCohesion';
 import { BASELINE_PURSUIT_DESIGN } from '../learning/pursuitConfig';
 import { LearningAgent, type AgentWeights } from '../learning/agent';
 import { NeatPopulation, DEFAULT_NEAT_CONFIG, DEFAULT_NETWORK_ARCHITECTURE_SUITE, NETWORK_ARCHITECTURE_PRESETS, NETWORK_ARCHITECTURE_SUITE_PRESETS, sanitizeNetworkArchitectureSuite, cloneGenome, type NeatGenerationMetrics, type NeatGenomeData, type NeatPopulationCheckpoint, type NetworkArchitectureSuiteConfig } from '../learning/neat';
@@ -257,7 +258,7 @@ interface EvolutionCheckpoint {
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   /** Fitness semantics marker for compatibility with checkpoints created before right-only exploration. */
   explorationRewardMode?: 'safe-per-runner-right-frontier';
-  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5' | 'hybrid-soft-pursuit-v6' | 'hybrid-soft-pursuit-terrain-v7' | 'hybrid-soft-pursuit-terrain-escape-v8' | 'hybrid-soft-pursuit-terrain-natural-v9' | 'clean-encounters-v10' | 'swept-landings-v11';
+  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5' | 'hybrid-soft-pursuit-v6' | 'hybrid-soft-pursuit-terrain-v7' | 'hybrid-soft-pursuit-terrain-escape-v8' | 'hybrid-soft-pursuit-terrain-natural-v9' | 'clean-encounters-v10' | 'swept-landings-v11' | 'solid-group-v12';
   actionSchema?: 'signed-horizontal-controls-v2';
   stateSchema?: 'world-relative-senses-v3';
   horizontalControlResolution?: 'signed-axis-v2';
@@ -431,6 +432,7 @@ let generationRunnerBranchLandings = 0;
 let generationChaserBranchLandings = 0;
 let generationCloseEncounters = 0;
 let generationSuccessfulEvades = 0;
+let generationMeanRunnerSeparation = 0, generationMeanGroupDiameter = 0;
 let generationMeanNearestRunnerDistance = 0;
 let generationTimeWithin100Pct = 0;
 let generationTimeWithin200Pct = 0;
@@ -480,6 +482,7 @@ function mulberry32(seed: number) {
 
 
 interface EpisodeStats {
+  groupCohesion: { meanRunnerDistancePx: number; meanGroupDiameterPx: number; runnerPenalty: number; chaserPenalty: number };
   chaserFitness: number;
   evaderFitness: number;
   tagged: boolean;
@@ -1485,6 +1488,8 @@ function recordGenerationAnalysis(generation: number): void {
   const record: TrainingGenerationAnalysisRecord = {
     generation,
     recordedAt: Date.now(),
+    gameplayObjectiveVersion: 'solid-group-v12',
+    groupCohesionConfig: { ...GROUP_COHESION },
     simulatedTimeMs: totalSimulatedTime,
     completedEpisodes,
     chaserMetrics: lastChaserMetrics ? { ...lastChaserMetrics } : null,
@@ -1539,7 +1544,7 @@ function buildEvolutionCheckpoint(analysisHistoryLimit = 0): EvolutionCheckpoint
     terrainVarietyConfig: sanitizeTerrainVarietyConfig(terrainVarietyConfig),
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     explorationRewardMode: 'safe-per-runner-right-frontier',
-    gameplayObjectiveVersion: 'swept-landings-v11',
+    gameplayObjectiveVersion: 'solid-group-v12',
     actionSchema: 'signed-horizontal-controls-v2',
     stateSchema: 'world-relative-senses-v3',
     horizontalControlResolution: 'signed-axis-v2',
@@ -1626,7 +1631,7 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
   upgradeConfig = sanitizeUpgradeConfig(checkpoint.upgradeConfig);
   const migratedExplorationFitness = !checkpoint.trainingFitnessConfig;
   const migratedExplorationRewardMode = checkpoint.explorationRewardMode !== 'safe-per-runner-right-frontier';
-  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'swept-landings-v11';
+  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'solid-group-v12';
   const migratedHorizontalControl = checkpoint.horizontalControlResolution !== 'signed-axis-v2';
   trainingFitnessConfig = sanitizeTrainingFitnessConfig(checkpoint.trainingFitnessConfig);
   terrainVarietyConfig = sanitizeTerrainVarietyConfig(checkpoint.terrainVarietyConfig);
@@ -2112,6 +2117,8 @@ function recordPopulationBalance(result: EpisodeStats) {
   generationChaserBranchLandings += result.chaserBranchLandings;
   generationCloseEncounters += result.closeEncounters;
   generationSuccessfulEvades += result.successfulEvades;
+  generationMeanRunnerSeparation += result.groupCohesion.meanRunnerDistancePx;
+  generationMeanGroupDiameter += result.groupCohesion.meanGroupDiameterPx;
   generationMeanNearestRunnerDistance += result.meanNearestRunnerDistancePx;
   generationTimeWithin100Pct += result.timeWithin100Ms / Math.max(1, result.elapsedMs);
   generationTimeWithin200Pct += result.timeWithin200Ms / Math.max(1, result.elapsedMs);
@@ -2434,6 +2441,8 @@ function resetEvaluationAccumulators() {
   generationChaserBranchLandings = 0;
   generationCloseEncounters = 0;
   generationSuccessfulEvades = 0;
+  generationMeanRunnerSeparation = 0;
+  generationMeanGroupDiameter = 0;
   generationMeanNearestRunnerDistance = 0;
   generationTimeWithin100Pct = 0;
   generationTimeWithin200Pct = 0;
@@ -2678,6 +2687,8 @@ function finishGeneration() {
     chaserBranchLandingsPerEpisode: generationChaserBranchLandings / Math.max(1, generationPopulationMatches),
     closeEncountersPerEpisode: generationCloseEncounters / Math.max(1, generationPopulationMatches),
     successfulEvadesPerEpisode: generationSuccessfulEvades / Math.max(1, generationPopulationMatches),
+    meanRunnerSeparationPx: generationMeanRunnerSeparation / Math.max(1, generationPopulationMatches),
+    meanGroupDiameterPx: generationMeanGroupDiameter / Math.max(1, generationPopulationMatches),
     meanNearestRunnerDistancePx: generationMeanNearestRunnerDistance / Math.max(1, generationPopulationMatches),
     timeWithin100Pct: generationTimeWithin100Pct / Math.max(1, generationPopulationMatches),
     timeWithin200Pct: generationTimeWithin200Pct / Math.max(1, generationPopulationMatches),
@@ -2854,6 +2865,7 @@ function buildAnalysisProbeSet(
         chaserBranchLandings: result.chaserBranchLandings,
         closeEncounters: result.closeEncounters,
         successfulEvades: result.successfulEvades,
+        groupCohesion: result.groupCohesion,
         meanNearestRunnerDistancePx: result.meanNearestRunnerDistancePx,
         initialNearestRunnerDistancePx: result.initialNearestRunnerDistancePx,
         minNearestRunnerDistancePx: result.minNearestRunnerDistancePx,
@@ -2880,6 +2892,8 @@ function compactAnalysisHistoryRecord(record: TrainingGenerationAnalysisRecord) 
   return {
     generation: record.generation,
     recordedAt: record.recordedAt,
+    gameplayObjectiveVersion: record.gameplayObjectiveVersion,
+    groupCohesionConfig: record.groupCohesionConfig,
     simulatedTimeMs: record.simulatedTimeMs,
     completedEpisodes: record.completedEpisodes,
     chaserMetrics: record.chaserMetrics ? { ...record.chaserMetrics } : null,
@@ -2934,7 +2948,7 @@ function buildAnalysisExport(historyStride = 1) {
     policyOutputSpace: [...POLICY_OUTPUT_SPACE],
     actionSchema: 'signed-horizontal-controls-v2',
     horizontalControlResolution: 'signed-axis-v2',
-    gameplayObjectiveVersion: 'swept-landings-v11',
+    gameplayObjectiveVersion: 'solid-group-v12',
     stateSchema: 'world-relative-senses-v3',
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     pursuitDesign: activePursuitDesign ? { ...activePursuitDesign } : null,
@@ -2943,13 +2957,14 @@ function buildAnalysisExport(historyStride = 1) {
     historicalOpponentPanel: '50/20/15/15 league: current + strong recent + strongest historical + diverse historical',
     viewportSize: { ...viewportSize },
     fitness: {
-      chaser: '100 + 20 * (tags - chaserFalls - escapeFailures) + capped runner-visited-platform pursuit shaping + optional capped new-best-proximity bootstrap',
-      runner: '100 + 20 * (-tags - runnerFalls) + capped pace reward - pace shortfall penalty + capped pressure-escape reward',
+      chaser: '100 + 20 * (tags - chaserFalls - escapeFailures) + capped runner-visited-platform pursuit shaping + optional capped new-best-proximity bootstrap - capped group-separation penalty',
+      runner: '100 + 20 * (-tags - runnerFalls) + capped pace reward - pace shortfall penalty + capped pressure-escape reward - capped group-separation penalty',
       config: {
         ...trainingFitnessConfig,
         runnerPaceShortfallPenaltyAtZeroPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow * (2 / 3),
       },
-      paceDefinition: 'Every 2 seconds, SAFE rightward progress across both Runner slots is averaged into a 0..1 completion fraction. Reward saturates at the target, while the unsatisfied fraction carries a modest shortfall penalty so standing still is not a free survival strategy. Clean close-pressure escapes add only a small capped tactical bonus.',
+      groupCohesion: { ...GROUP_COHESION, definition: 'Time-integrated world-distance excess, capped per role per episode. Runner cost is the maximum of teammate and farthest-threat separation; Chaser cost uses its farthest Runner. No reward for touching or standing still.' },
+      paceDefinition: 'The positive pace bonus is multiplied by mean group cohesion in the same window, so far-separated progress earns less without adding a new reward. Every 2 seconds, SAFE rightward progress across both Runner slots is averaged into a 0..1 completion fraction. Reward saturates at the target, while the unsatisfied fraction carries a modest shortfall penalty so standing still is not a free survival strategy. Clean close-pressure escapes add only a small capped tactical bonus.',
       pursuitDefinition: 'The Chaser earns small capped signals for following Runner-used terrain and, only in the full pursuit condition, for reaching genuinely new best proximity within a chase segment. Repeating the same distance does not pay again; tags remain +20 and dominant.',
       escapeDefinition: 'If the Chaser is outside the minimum useful 50% camera envelope of every Runner in the invariant 1200x800 reference frame, the Runners have escaped. The episode ends immediately and the Chaser receives one -20 failure event, equal to a Chaser fall; the Runner receives no artificial +20 event bonus.',
     },

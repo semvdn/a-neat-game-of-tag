@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { stepAgentPhysics, stepAgentPhysicsInPlace } from '../learning/simulationCore.ts';
+import { stepAgentPhysics, stepAgentPhysicsInPlace, stepMovingPlatformsInPlace } from '../learning/simulationCore.ts';
 import { AGENT_HEIGHT, MAX_ENERGY } from '../constants.ts';
 import { AgentStatus } from '../types.ts';
 
@@ -38,7 +38,15 @@ export function verifyLandings() {
   }
   const locked = body(140, 398, 20);
   locked.activeRoutePath = 'g1U';
-  assert.equal(step(locked, [{ ...platform(2, 400), routePath: 'g1L' }]).isOnGround, false, 'Sibling route stays inaccessible');
+  const sibling = step(locked, [{ ...platform(2, 400), routePath: 'g1L/g2U' }]);
+  assert.equal(sibling.isOnGround, true, 'Every surface catches a descending body, including nested sibling routes');
+  assert.equal(sibling.activeRoutePath, 'g1L/g2U');
+  const moving = platform(2, 410);
+  moving.motion = { axis: 'y', min: 300, max: 450, speed: 1200, direction: -1 };
+  stepMovingPlatformsInPlace([moving], [], 16.67);
+  assert.equal(step(body(140, 400, 1), [moving]).isOnGround, true, 'A rising surface cannot tunnel through descending feet');
+  const unseen = platform(9, 400, 10000);
+  assert.equal(step(body(10040, 398, 20), [unseen]).lastPlatformId, 9, 'Landing is independent of viewport and policy platform slots');
   assert.equal(step(body(140, 405, -10), [platform(2, 400)]).isOnGround, false, 'Rising through a one-way platform stays allowed');
   assert.equal(step(body(90, 415, 20), [platform(2, 400)]).isOnGround, false, 'Do not snap onto a top already passed');
   assert.equal(step(body(56, 398, 20), [platform(2, 400)]).isOnGround, false, 'Arriving horizontally after crossing the top is a side miss');

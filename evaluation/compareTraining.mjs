@@ -48,6 +48,7 @@ for (const run of runs) for (let i = 0; i < generations.length; i++) {
     for (const opponent of opponents) for (const startMode of modes) for (let s = 0; s < evaluationSeeds; s++) {
       const result = runTrainingEpisode(role === 'chaser' ? candidate : opponent.chaser, role === 'runner' ? candidate : opponent.runner, (0xb700001 + s * 104729) >>> 0, { ...options, startMode });
       results.push({ startMode, opponent: opponent.id, metrics: {
+        runnerSeparation: result.groupCohesion.meanRunnerDistancePx, groupDiameter: result.groupCohesion.meanGroupDiameterPx,
         cleanTags: result.tags - result.tagsSoonAfterRunnerFall,
         ownFalls: role === 'chaser' ? result.chaserFalls : result.evaderFalls,
         escapes: result.chaserEscapes, pace: result.runnerPaceCompletion,

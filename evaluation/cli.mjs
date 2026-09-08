@@ -9,7 +9,9 @@ import { DEFAULT_TERRAIN_VARIETY_CONFIG } from '../learning/terrainConfig.ts';
 import { fixture } from './fixtures.ts';
 import { verifyEncounterAccounting } from './regressions.mjs';
 import { verifyLandings } from './landingRegressions.mjs';
-import { SPRINT_MAX_SPEED, SPRINT_ENERGY_COST_PER_SEC } from '../constants.ts';
+import { verifyBodyContacts } from './bodyRegressions.mjs';
+import { SPRINT_MAX_SPEED, SPRINT_ENERGY_COST_PER_SEC, DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW } from '../constants.ts';
+import { GROUP_COHESION } from '../learning/groupCohesion.ts';
 
 const args = process.argv.slice(2);
 const option = (key, fallback) => args.includes(key) ? args[args.indexOf(key) + 1] : fallback;
@@ -25,6 +27,7 @@ for (let i = 0; i < args.length; i++) {
 const seeds = Number(option('--seeds', 8));
 if (args.includes('--verify')) verifyEncounterAccounting();
 if (args.includes('--verify')) verifyLandings();
+if (args.includes('--verify')) verifyBodyContacts();
 assert(Number.isInteger(seeds) && seeds >= 1 && seeds <= 1000, '--seeds must be 1..1000');
 const modes = ['visual', 'varied', 'pressure_close', 'pressure_normal', 'pressure_long', 'midgame'];
 const conditions = args.includes('--conditions') ? JSON.parse(await readFile(option('--conditions'), 'utf8')) : [
@@ -78,6 +81,7 @@ if (args.includes('--checkpoint')) {
 const metrics = r => ({
   cleanTags: r.tags - r.tagsSoonAfterRunnerFall, tags: r.tags, evades: r.successfulEvades,
   chaserFalls: r.chaserFalls, runnerFalls: r.evaderFalls, escapes: r.chaserEscapes,
+  runnerSeparation: r.groupCohesion.meanRunnerDistancePx, groupDiameter: r.groupCohesion.meanGroupDiameterPx,
   pace: r.runnerPaceCompletion, distance: r.meanNearestRunnerDistancePx,
   near200: r.timeWithin200Ms / Math.max(1, r.elapsedMs),
   runnerLandings: r.runnerPlatformLandings, chaserLandings: r.chaserPlatformLandings,
@@ -102,6 +106,8 @@ for (const condition of conditions) {
       finally { Math.random = random; }
     };
     const result = run();
+    assert(result.groupCohesion.runnerPenalty >= 0 && result.groupCohesion.runnerPenalty <= GROUP_COHESION.penaltyCap && result.groupCohesion.chaserPenalty >= 0 && result.groupCohesion.chaserPenalty <= GROUP_COHESION.penaltyCap, 'Separation penalties must stay within the episode cap');
+    assert(result.runnerPaceFitnessBonus >= 0 && result.runnerPaceFitnessBonus <= result.runnerPaceWindowsTotal * (options.runnerPaceRewardPerWindow ?? DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW) + 1e-6, 'Cohesion must not manufacture extra pace reward');
     if (args.includes('--verify')) assert.deepEqual(run(), result, `Nondeterministic: ${condition.name}/${pair.name}/${startMode}/${seed}`);
     const values = metrics(result);
     assert(Object.values(values).every(Number.isFinite), 'Non-finite episode metric');
@@ -126,7 +132,7 @@ const summary = conditions.map(c => {
 });
 const report = { format: 'neat-tag-gameplay-lab-v1', source, revision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
   workingTreeDirty: !!execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim(),
-  gameplayObjectiveVersion: 'swept-landings-v11', stateSchema: 'world-relative-senses-v3', actionSchema: 'signed-horizontal-controls-v2',
+  gameplayObjectiveVersion: 'solid-group-v12', stateSchema: 'world-relative-senses-v3', actionSchema: 'signed-horizontal-controls-v2',
   conditions, baseOptions, seeds, modes, verified: args.includes('--verify'), seconds: (performance.now() - started) / 1000,
   limitations: 'Fixed-policy mechanics comparison, not a training experiment or an aesthetic ranking. Report per-start results and inspect traces; do not promote defaults from a single aggregate.', summary, rows };
 const out = option('--out', 'evaluations/report.json');

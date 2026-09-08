@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 // Isolated instrumentation of the real worker, not an alternative evolutionary algorithm.
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  console.log('node scripts/train-experiment.mjs [--ref commit] [--condition baseline|separate-validation|pace3|compact|separate-pace8|compact-chaser] [--seed 101] [--generations 12] [--out new-directory] [--verify]');
+  console.log('node scripts/train-experiment.mjs [--ref commit] [--condition baseline|separate-validation|pace3|compact|separate-pace8|compact-chaser|cohesion-off|cohesion-penalty|cohesion-pace] [--seed 101] [--generations 12] [--out new-directory] [--verify]');
   process.exit(0);
 }
 const allowed = new Set(['--ref', '--condition', '--seed', '--generations', '--out', '--verify']);
@@ -24,7 +24,7 @@ const generations = Number(get('--generations', 12));
 const sourceRef = get('--ref', null);
 const revision = execFileSync('git', ['rev-parse', '--verify', `${sourceRef || 'HEAD'}^{commit}`], { encoding: 'utf8' }).trim();
 const out = resolve(get('--out', `evaluations/training/${condition}-${seed}`));
-if (!['baseline', 'separate-validation', 'pace3', 'compact', 'separate-pace8', 'compact-chaser'].includes(condition)) throw new Error('Unknown condition');
+if (!['baseline', 'separate-validation', 'pace3', 'compact', 'separate-pace8', 'compact-chaser', 'cohesion-off', 'cohesion-penalty', 'cohesion-pace'].includes(condition)) throw new Error('Unknown condition');
 if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff || !Number.isInteger(generations) || generations < 1) throw new Error('Invalid seed or generations');
 await mkdir(out, { recursive: true });
 if ((await readdir(out)).some(name => /^generation-\d+\.json$/.test(name))) throw new Error('Output contains checkpoints; choose a fresh --out directory');
@@ -37,6 +37,23 @@ const result = await build({
       let source = sourceRef
         ? execFileSync('git', ['show', `${revision}:${repoPath}`], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 })
         : await readFile(path, 'utf8');
+      if (repoPath === 'learning/trainingEpisode.ts' && ['cohesion-off', 'cohesion-penalty'].includes(condition)) {
+        const changesToEpisode = [
+          ['  let cohesionRunnerDistance = 0, cohesionDiameter = 0, cohesionSamples = 0;', '  let cohesionWindowCost = 0, cohesionWindowSamples = 0;\n  let cohesionRunnerDistance = 0, cohesionDiameter = 0, cohesionSamples = 0;'],
+          ['    cohesionSamples++;', '    cohesionSamples++;\n    cohesionWindowCost += cohesion.runnerCost;\n    cohesionWindowSamples++;'],
+          ['      runnerPaceFitnessBonus += completion * runnerPaceRewardPerWindow;', '      runnerPaceFitnessBonus += completion * runnerPaceRewardPerWindow * (1 - cohesionWindowCost / Math.max(1, cohesionWindowSamples));\n      cohesionWindowCost = 0;\n      cohesionWindowSamples = 0;'],
+        ];
+        for (const [to, from] of changesToEpisode) {
+          if (source.split(from).length !== 2) throw new Error('Source changed: cohesion pace gate');
+          source = source.replace(from, to);
+        }
+        changes.push('Disable pace qualification by group cohesion; retain the original pace reward');
+      }
+      if (repoPath === 'learning/groupCohesion.ts' && condition === 'cohesion-off') {
+        if (source.split('penaltyCap: 6').length !== 2) throw new Error('Source changed: cohesion cap');
+        source = source.replace('penaltyCap: 6', 'penaltyCap: 0');
+        changes.push('Disable only cohesion fitness penalty, retaining solid bodies and universal surfaces');
+      }
       if (repoPath !== 'workers/trainingWorker.ts') return { contents: source, loader: 'ts' };
       const replace = (from, to, label) => {
         if (source.split(from).length !== 2) throw new Error(`Source changed: ${label}`);

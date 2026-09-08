@@ -11,9 +11,9 @@ Read `README.md` before substantial changes. For recurring task-specific workflo
 1. **Training/visual parity.** Gameplay physics, tagging, falling, respawn, route accessibility, moving platforms, and escape semantics should live in shared code (`learning/simulationCore.ts`, `learning/trainingEpisode.ts`, terrain helpers) whenever possible. Do not quietly create a training-only or visual-only rule.
 2. **Camera is presentation-only.** Policy state is 23 world-relative inputs and 3 outputs. Do not add camera position/zoom back into policy sensing. If the state or output schema changes, update compatibility/version checks, diagnostics labels, README, checkpoints, and analysis exports together.
 3. **Deterministic evaluation.** Candidate genomes compared in the same panel must receive the same seeded starts/terrain/opponents. Avoid `Math.random()` inside headless evaluation paths unless it is explicitly replaced by the seeded RNG there.
-4. **Terrain must be fair and readable.** Platforms must satisfy both non-overlap and safety-clearance rules across the full swept motion envelope of every moving platform. Fork choices must be reachable from stable commitment ledges, nested geometry must remain inside hard inherited vertical corridors, recursion must stop when a corridor cannot safely support another split, branch routes must remain mutually exclusive after commitment, and explicit merges must restore accessibility correctly.
+4. **Terrain must be fair and readable.** Platforms must satisfy both non-overlap and safety-clearance rules across the full swept motion envelope of every moving platform. Fork choices must be reachable from stable commitment ledges, nested geometry must remain inside hard inherited vertical corridors, recursion must stop when a corridor cannot safely support another split, branch geometry must remain readable, and every generated platform must remain physically landable regardless of route history or sensing.
 5. **Competitive events dominate fitness.** Tags, falls, and Chaser escape failures are the core outcomes. Shaping must remain capped and substantially smaller. Avoid reward stacking, proxy exploits, or adding a positive reward to the opponent for a personal fall unless intentionally redesigned and tested.
-6. **Route-aware pursuit.** Tagging, pursuit distance, sensing, and respawn must respect route accessibility. Never reward a Chaser for being physically close to a Runner on an inaccessible sibling route.
+6. **Physical access.** Route paths describe terrain; they do not disable landings, tags, sensing, or respawn. Only Runners are solid to one another; Chasers must remain non-blocking. Camera coordinates must never enter cohesion fitness.
 7. **Telemetry should answer decisions, not expose every field.** Keep the default UI compact. Preserve detailed data in analysis exports or specialist diagnostics instead of adding every metric to the main panel.
 8. **Do not follow falling agents with the presentation camera.** The camera should frame active chase participants and hold stable when all relevant bodies are falling.
 
@@ -22,7 +22,7 @@ Read `README.md` before substantial changes. For recurring task-specific workflo
 - `App.tsx` — visible champion simulation, UI state, worker orchestration.
 - `learning/simulationCore.ts` — shared gameplay rules and rolling terrain behavior.
 - `learning/trainingEpisode.ts` — scored headless episode execution.
-- `learning/terrainRoutes.ts` / `learning/terrainConfig.ts` — route locking and terrain configuration.
+- `learning/terrainRoutes.ts` / `learning/terrainConfig.ts` — route metadata and terrain configuration.
 - `learning/state.ts` — authoritative 23-input policy state schema.
 - `learning/agent.ts` — policy wrapper and action decoding.
 - `learning/neat.ts` — NEAT networks, mutation, speciation, architecture configuration.
