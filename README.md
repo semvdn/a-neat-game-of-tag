@@ -43,6 +43,7 @@ Current checkpoints use `world-relative-senses-v3` and `signed-horizontal-contro
 
 - [Artwork direction and exhibition operation](docs/ARTWORK.md)
 - [Gameplay laboratory and experiment protocol](docs/EVALUATION.md)
+- [Reproducible production-worker training experiments](docs/TRAINING_EXPERIMENTS.md)
 - [Architecture and contributor workflow](docs/ARCHITECTURE.md)
 - [Detailed simulation, training, and checkpoint reference](docs/SIMULATION.md)
 - [Agent instructions](AGENTS.md) and [task-specific skills](skills/README.md)

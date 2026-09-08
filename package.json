@@ -8,7 +8,9 @@
     "build": "vite build",
     "lint": "tsc --noEmit",
     "preview": "vite preview",
-    "evaluate": "node scripts/lab.mjs"
+    "evaluate": "node scripts/lab.mjs",
+    "experiment:train": "node scripts/train-experiment.mjs",
+    "experiment:compare": "node scripts/compare-training.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.27.0",

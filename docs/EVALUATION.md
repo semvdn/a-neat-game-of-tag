@@ -32,9 +32,11 @@ Paired differences include a **standard error across seed clusters**: each seed'
 
 ## Experiment protocol
 
+For actual co-evolution runs, use [the production-worker experiment harness](TRAINING_EXPERIMENTS.md). The fixed-policy lab above does not retrain candidates.
+
 1. Save trained checkpoints from several independent runs and from early, middle, and late generations. Keep the ordinary training baseline as a control.
 2. Compare one change at a time on identical checkpoint pairs and seeds. Inspect per-start failures and traces rather than only overall means.
-3. For changes to rewards or selection, retrain from multiple fresh populations in the app. Fixed-policy evaluation can show how scoring changed; it cannot show what evolution will learn.
+3. For changes to rewards or selection, retrain from multiple fresh populations in the app or worker experiment harness. Fixed-policy evaluation can show how scoring changed; it cannot show what evolution will learn.
 4. Validate against unused opponents and seeds. Track retained performance, species health, and topology growth through analysis exports.
 5. Watch continuous exhibition playback. Reject gains based on fall loops, camping, unreachable sibling pursuit, or a repetitive single trick.
 

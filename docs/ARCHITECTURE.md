@@ -12,9 +12,11 @@
 | Visible world | `App.tsx` | Continuous shared-physics stepping and champion installation |
 | Presentation | `components/GameCanvas.tsx`, `components/drawing.ts` | Observational camera and drawing |
 | Exhibition lifecycle | `hooks/useExhibitionMode.ts` | Presentation mode, fullscreen shortcut, fading exit controls |
-| Offline evaluation | `evaluation/`, `scripts/lab.mjs` | Fixed-policy comparisons and reproducibility checks |
+| Offline evaluation | `evaluation/`, `scripts/lab.mjs`, `scripts/*training.mjs`, `scripts/train-experiment.mjs` | Fixed-policy comparisons, actual worker evolution and reproducibility checks |
 
 The episode runner accepts the two controller operations it actually needs: action decoding and state reset. This lets diagnostic fixtures use the real simulation without inheriting genome construction or faking an entire agent class. Production controllers retain their existing API and policy schema.
+
+Held-out validation ranks candidates for retained-champion selection without modifying breeding fitness. The common-panel winner produced by `NeatPopulation.evolve()` remains the generation benchmark/archive champion. The old artificial fitness promotion and permanently disabled alternative retention gates have been removed. Historical flag names remain as descriptive export metadata for analysis compatibility, not selectable runtime paths.
 
 `EncounterTracker` owns pressure hysteresis. Enter within the configured near threshold; exit beyond the far threshold or onto inaccessible routes. A tag or any registered fall interrupts the encounter without an evade. New pressure after recovery can start a new encounter. Episode code applies the existing window and episode reward caps once, removing duplicated distance/route accounting.
 

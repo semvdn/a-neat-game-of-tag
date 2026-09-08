@@ -123,7 +123,7 @@ const DEFAULT_TRAINING_FITNESS_CONFIG: TrainingFitnessConfig = {
 let trainingFitnessConfig: TrainingFitnessConfig = { ...DEFAULT_TRAINING_FITNESS_CONFIG };
 let terrainVarietyConfig: TerrainVarietyConfig = { ...DEFAULT_TERRAIN_VARIETY_CONFIG };
 
-interface PursuitDesignRuntimeFlags {
+interface PursuitDesignMetadata {
   pressureStarts: boolean;
   crossPlayGate: boolean;
   strictContemporaryGate: boolean;
@@ -134,7 +134,7 @@ interface PursuitDesignRuntimeFlags {
 // Permanent camera-decoupled pursuit design. Physics, curriculum, soft multi-distance retention,
 // league opponents and clean-tag showcase behavior are the normal training rules and are shared
 // with the visible simulation.
-const BASELINE_PURSUIT_FLAGS: PursuitDesignRuntimeFlags = {
+const PURSUIT_DESIGN_METADATA: PursuitDesignMetadata = {
   pressureStarts: true,
   crossPlayGate: false,
   strictContemporaryGate: false,
@@ -142,8 +142,6 @@ const BASELINE_PURSUIT_FLAGS: PursuitDesignRuntimeFlags = {
   cleanTagShowcase: true,
 };
 let activePursuitDesign: PursuitDesignConfig | null = { ...BASELINE_PURSUIT_DESIGN };
-let activePursuitDesignFlags: PursuitDesignRuntimeFlags = { ...BASELINE_PURSUIT_FLAGS };
-
 
 function sanitizeTrainingFitnessConfig(value?: Partial<TrainingFitnessConfig>): TrainingFitnessConfig {
   const target = Number(value?.runnerPaceTargetPxPerWindow);
@@ -832,9 +830,7 @@ function evaluateGeneralistCrossPlay(genome: NeatGenomeData, role: 'chaser' | 'e
   const opponents = generalistCrossPlayOpponents(role);
   if (opponents.length === 0) return { meanFitness: 100, matches: 0 };
   const candidate = new LearningAgent(role, genome);
-  const modes: TrainingStartMode[] = activePursuitDesignFlags.pressureStarts
-    ? ['pressure', 'varied', 'midgame']
-    : ['visual', 'varied', 'midgame'];
+  const modes: TrainingStartMode[] = ['pressure', 'varied', 'midgame'];
   let fitnessTotal = 0;
   let matches = 0;
   for (let opponentIndex = 0; opponentIndex < opponents.length; opponentIndex++) {
@@ -945,22 +941,6 @@ function evaluateContemporaryMatchup(genome: NeatGenomeData, role: 'chaser' | 'e
   };
 }
 
-function passesStrictContemporaryGate(role: 'chaser' | 'evader', evaluation: ContemporaryMatchupEvaluation): boolean {
-  if (evaluation.matches === 0) return true;
-  if (role === 'chaser') {
-    // A retained Chaser must prove both clean-catch capability and the ability to close from
-    // ordinary/long pursuit starts. This blocks specialists that only work in close-pressure resets.
-    const hasCleanCatchCapability = evaluation.cleanTagsPerEpisode >= 0.25;
-    const closesFromNormalOrLong = evaluation.normalLongClosingPx >= 80 ||
-      evaluation.normalLongTimeWithin200Pct >= 0.08 ||
-      evaluation.normalLongCloseEncountersPerEpisode >= 0.5;
-    return hasCleanCatchCapability && closesFromNormalOrLong;
-  }
-  // A retained Runner must remain a progressing survivor against the current elite Chaser rather
-  // than winning only by camping or by repeatedly falling through the course.
-  return evaluation.paceCompletion >= 0.55 && evaluation.failureEventsPerEpisode <= 2;
-}
-
 function evaluateGeneralistCandidate(
   genome: NeatGenomeData,
   role: 'chaser' | 'evader',
@@ -969,22 +949,15 @@ function evaluateGeneralistCandidate(
   const benchmark = cachedBenchmark || evaluateFixedBenchmark(genome, role);
   const benchmarkScore = generalistValidationScore(role, benchmark.telemetry);
   const crossPlay = evaluateGeneralistCrossPlay(genome, role);
-  const contemporary = (activePursuitDesignFlags.strictContemporaryGate || activePursuitDesignFlags.softMultiDistancePursuit)
-    ? evaluateContemporaryMatchup(genome, role)
-    : { meanFitness: 100, matches: 0, cleanTagsPerEpisode: 0, paceCompletion: 0, timeWithin200Pct: 0, closeEncountersPerEpisode: 0, failureEventsPerEpisode: 0, normalLongClosingPx: 0, normalLongTimeWithin200Pct: 0, normalLongCloseEncountersPerEpisode: 0 };
+  const contemporary = evaluateContemporaryMatchup(genome, role);
   const pursuitScore = role === 'chaser' ? softMultiDistancePursuitScore(contemporary) : { total: 0, cleanTag: 0, closing: 0, threat: 0, encounters: 0 };
   // Hybrid Chaser retention: 70% permanent benchmark + 30% smooth multi-distance pursuit evidence.
-  // This keeps B's generalization/exploration pressure while preserving the useful pursuit signal C
-  // discovered without C's brittle pass/fail gate. Runner retention stays on the B-style benchmark
-  // plus light cross-play so it cannot trade away pace/platforming merely to survive one opponent.
-  const score = activePursuitDesignFlags.softMultiDistancePursuit && role === 'chaser' && contemporary.matches > 0
+  // Runner retention combines the benchmark with light cross-play so it cannot trade away
+  // pace/platforming merely to survive one opponent.
+  const score = role === 'chaser' && contemporary.matches > 0
     ? 0.70 * benchmarkScore + 0.30 * pursuitScore.total
-    : activePursuitDesignFlags.strictContemporaryGate && contemporary.matches > 0
-    ? 0.35 * benchmarkScore + 0.35 * crossPlay.meanFitness + 0.30 * contemporary.meanFitness
     : crossPlay.matches > 0
-      ? activePursuitDesignFlags.crossPlayGate
-        ? 0.40 * benchmarkScore + 0.60 * crossPlay.meanFitness
-        : 0.75 * benchmarkScore + 0.25 * crossPlay.meanFitness
+      ? 0.75 * benchmarkScore + 0.25 * crossPlay.meanFitness
       : benchmarkScore;
   return {
     benchmark,
@@ -1106,7 +1079,7 @@ function considerRetainedGeneralistCandidates(
   // Re-score the incumbent on the same current cross-play panel as challengers. Its frozen benchmark
   // result remains stable, while the matchup components evolve as the opposing archive improves.
   let incumbentScore = -Infinity;
-  let incumbentBenchmarkScore = -Infinity;
+
   if (incumbent) {
     const benchmark: BenchmarkRoleEvaluation = {
       telemetry: { ...incumbent.telemetry.benchmark },
@@ -1130,7 +1103,6 @@ function considerRetainedGeneralistCandidates(
     incumbent.telemetry.contemporaryPursuitThreatScore = current.pursuitScore.threat;
     incumbent.telemetry.contemporaryPursuitEncounterScore = current.pursuitScore.encounters;
     incumbentScore = current.score;
-    incumbentBenchmarkScore = current.benchmarkScore;
   }
 
   let bestGenome: NeatGenomeData | null = null;
@@ -1138,15 +1110,6 @@ function considerRetainedGeneralistCandidates(
   let bestScore = -Infinity;
   for (const genome of unique.values()) {
     const evaluation = evaluateGeneralistCandidate(genome, role);
-    if (incumbent && activePursuitDesignFlags.crossPlayGate) {
-      const benchmarkFloor = incumbentBenchmarkScore >= 0
-        ? incumbentBenchmarkScore * 0.90
-        : incumbentBenchmarkScore - Math.max(5, Math.abs(incumbentBenchmarkScore) * 0.10);
-      if (evaluation.benchmarkScore < benchmarkFloor) continue;
-    }
-    if (incumbent && activePursuitDesignFlags.strictContemporaryGate && !passesStrictContemporaryGate(role, evaluation.contemporary)) {
-      continue;
-    }
     if (evaluation.score > bestScore) {
       bestGenome = genome;
       bestEvaluation = evaluation;
@@ -1217,9 +1180,7 @@ function showcaseCandidatePool(role: 'chaser' | 'evader'): NeatGenomeData[] {
 function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGenomeData, generation: number): ShowcasePairTelemetry {
   const chaserController = new LearningAgent('chaser', chaserGenome);
   const runnerController = new LearningAgent('evader', runnerGenome);
-  const modes: TrainingStartMode[] = activePursuitDesignFlags.pressureStarts
-    ? ['pressure', 'varied', 'midgame']
-    : ['visual', 'varied', 'midgame'];
+  const modes: TrainingStartMode[] = ['pressure', 'varied', 'midgame'];
   let tags = 0;
   let postFallTags = 0;
   let pace = 0;
@@ -1265,7 +1226,7 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
   const chaserEscapesPerEpisode = chaserEscapes / denom;
   const runnerFallsPerEpisode = runnerFalls / denom;
   const branchLandingsPerEpisode = branches / denom;
-  const showcaseTagRate = activePursuitDesignFlags.cleanTagShowcase ? cleanTagsPerEpisode : tagsPerEpisode;
+  const showcaseTagRate = cleanTagsPerEpisode;
   const score =
     18 * Math.min(1, runnerPaceCompletion / 0.65) +
     8 * Math.min(3, showcaseTagRate) +
@@ -1275,7 +1236,7 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
     6 * (chaserFallsPerEpisode + chaserEscapesPerEpisode + runnerFallsPerEpisode) -
     3 * Math.max(0, showcaseTagRate - 3) -
     (showcaseTagRate < 0.15 ? 15 : 0) -
-    (activePursuitDesignFlags.cleanTagShowcase ? 5 * postFallTagsPerEpisode : 0) -
+    5 * postFallTagsPerEpisode -
     (closeEncountersPerEpisode < 0.75 ? 10 : 0) -
     (runnerPaceCompletion < 0.35 ? 12 : 0);
   return {
@@ -1547,8 +1508,8 @@ function recordGenerationAnalysis(generation: number): void {
     terrainVarietyConfig: sanitizeTerrainVarietyConfig(terrainVarietyConfig),
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     pursuitDesign: activePursuitDesign ? { ...activePursuitDesign } : null,
-    pursuitDesignFlags: { ...activePursuitDesignFlags },
-    selectionAggregation: '70% mean + 30% lower-quartile fitness',
+    pursuitDesignFlags: { ...PURSUIT_DESIGN_METADATA },
+    selectionAggregation: '70% mean + 30% lower-quartile fitness; held-out validation never changes breeding fitness',
     historicalOpponentPanel: '50/20/15/15 league: current + strong recent + strongest historical + diverse historical',
     eliteSeeding: {
       ...lastEliteSeedTelemetry,
@@ -1763,19 +1724,13 @@ function commonPopulationOpponentIndices(
 }
 
 function populationStartMode(round: number): TrainingStartMode {
-  if (activePursuitDesignFlags.pressureStarts) {
-    // Full pursuit curriculum mixes direct pressure with varied and true mid-game states.
-    if (round === 0) return 'pressure';
-    if (round === 1) return 'varied';
-    return 'midgame';
-  }
-  if (round === 0) return 'visual';
+  // A common panel spans pressure, fresh terrain, and real midgame starts.
+  if (round === 0) return 'pressure';
   if (round === 1) return 'varied';
   return 'midgame';
 }
 
 function historicalStartMode(round: number): TrainingStartMode {
-  if (!activePursuitDesignFlags.pressureStarts) return 'midgame';
   return round % 2 === 0 ? 'pressure' : 'midgame';
 }
 
@@ -1849,10 +1804,10 @@ function commonValidationHallPanel(
 
 /**
  * Re-check only the strongest few genomes against opponents and scenario seeds not used by the
- * main common panel. The winner gets an infinitesimal fitness promotion so NEAT's normal evolve()
- * preserves that validated genome as the generation champion without otherwise reshaping selection.
+ * main common panel. This ranks retained-champion candidates without altering the fitness used
+ * for reproduction, species allocation, or the generation's common-panel champion.
  */
-function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number): ValidatedChampionCandidate[] {
+function validateChampionCandidates(role: 'chaser' | 'evader', generation: number): ValidatedChampionCandidate[] {
   const population = role === 'chaser' ? chaserPopulation : evaderPopulation;
   const controllers = role === 'chaser' ? chaserControllers : evaderControllers;
   const opponentControllers = role === 'chaser' ? evaderControllers : chaserControllers;
@@ -1982,9 +1937,6 @@ function promoteValidatedChampion(role: 'chaser' | 'evader', generation: number)
   }
 
   validated.sort((a, b) => b.validationFitness - a.validationFitness || b.rawFitness - a.rawFitness);
-  const winner = validated[0];
-  const maxRawFitness = Math.max(...population.genomes.map(g => g.fitness ?? -Infinity));
-  population.genomes[winner.index].fitness = maxRawFitness + 1e-6;
 
   return validated.map(candidate => ({
     genome: cloneGenome(population.genomes[candidate.index]),
@@ -2744,8 +2696,8 @@ function finishGeneration() {
 
   // Main fitness uses common opponent panels. Before accepting a champion, re-test only the
   // strongest few against held-out current opponents and historical strategies.
-  const chaserValidated = promoteValidatedChampion('chaser', evaluatedGeneration);
-  const evaderValidated = promoteValidatedChampion('evader', evaluatedGeneration);
+  const chaserValidated = validateChampionCandidates('chaser', evaluatedGeneration);
+  const evaderValidated = validateChampionCandidates('evader', evaluatedGeneration);
 
   // Freeze the benchmark bank before evolution changes the population. The generation benchmark
   // remains diagnostic, while a separate retained-generalist pass decides which policies are shown
@@ -2986,8 +2938,8 @@ function buildAnalysisExport(historyStride = 1) {
     stateSchema: 'world-relative-senses-v3',
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     pursuitDesign: activePursuitDesign ? { ...activePursuitDesign } : null,
-    pursuitDesignFlags: { ...activePursuitDesignFlags },
-    selectionAggregation: '70% mean + 30% lower-quartile fitness',
+    pursuitDesignFlags: { ...PURSUIT_DESIGN_METADATA },
+    selectionAggregation: '70% mean + 30% lower-quartile fitness; held-out validation never changes breeding fitness',
     historicalOpponentPanel: '50/20/15/15 league: current + strong recent + strongest historical + diverse historical',
     viewportSize: { ...viewportSize },
     fitness: {
@@ -3108,8 +3060,8 @@ function emitTelemetry(force = false) {
       terrainVarietyConfig: sanitizeTerrainVarietyConfig(terrainVarietyConfig),
       networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     pursuitDesign: activePursuitDesign ? { ...activePursuitDesign } : null,
-    pursuitDesignFlags: { ...activePursuitDesignFlags },
-    selectionAggregation: '70% mean + 30% lower-quartile fitness',
+    pursuitDesignFlags: { ...PURSUIT_DESIGN_METADATA },
+    selectionAggregation: '70% mean + 30% lower-quartile fitness; held-out validation never changes breeding fitness',
     historicalOpponentPanel: '50/20/15/15 league: current + strong recent + strongest historical + diverse historical',
       eliteSeeding: {
         ...lastEliteSeedTelemetry,
