@@ -37,7 +37,7 @@ const result = await build({
       let source = sourceRef
         ? execFileSync('git', ['show', `${revision}:${repoPath}`], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 })
         : await readFile(path, 'utf8');
-      if (repoPath === 'learning/trainingEpisode.ts' && ['cohesion-off', 'cohesion-penalty'].includes(condition)) {
+      if (repoPath === 'learning/trainingEpisode.ts' && ['cohesion-off', 'cohesion-penalty'].includes(condition) && !source.includes('cohesionPaceWeight')) {
         const changesToEpisode = [
           ['  let cohesionRunnerDistance = 0, cohesionDiameter = 0, cohesionSamples = 0;', '  let cohesionWindowCost = 0, cohesionWindowSamples = 0;\n  let cohesionRunnerDistance = 0, cohesionDiameter = 0, cohesionSamples = 0;'],
           ['    cohesionSamples++;', '    cohesionSamples++;\n    cohesionWindowCost += cohesion.runnerCost;\n    cohesionWindowSamples++;'],
@@ -49,7 +49,7 @@ const result = await build({
         }
         changes.push('Disable pace qualification by group cohesion; retain the original pace reward');
       }
-      if (repoPath === 'learning/groupCohesion.ts' && condition === 'cohesion-off') {
+      if (repoPath === 'learning/groupCohesion.ts' && condition === 'cohesion-off' && !source.includes('sanitizeCohesionShaping')) {
         if (source.split('penaltyCap: 6').length !== 2) throw new Error('Source changed: cohesion cap');
         source = source.replace('penaltyCap: 6', 'penaltyCap: 0');
         changes.push('Disable only cohesion fitness penalty, retaining solid bodies and universal surfaces');
@@ -91,7 +91,9 @@ const workerPath = resolve(out, 'worker.mjs');
 await writeFile(workerPath, result.outputFiles[0].contents);
 const metadata = { condition, seed, generations, changes, revision, sourceRef,
   runtime: process.version,
-  startOverrides: condition === 'pace3' ? { runnerPaceRewardPerWindow: 3 }
+  startOverrides: condition === 'cohesion-off' ? { cohesionPenaltyCap: 0, cohesionPaceWeight: 0 }
+    : condition === 'cohesion-penalty' ? { cohesionPaceWeight: 0 }
+    : condition === 'pace3' ? { runnerPaceRewardPerWindow: 3 }
     : condition === 'separate-pace8' ? { runnerPaceRewardPerWindow: 8 } : {},
   workingTreeDirty: !sourceRef && !!execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim(),
   bundleSha256: createHash('sha256').update(result.outputFiles[0].contents).digest('hex'),

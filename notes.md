@@ -1,10 +1,13 @@
-We could add a future multi mode when the user can set the total number of agents and the number of taggers
+- we could allow the NEAT system to also evolve certain agent physical property trade offs like sprint speed vs energy cost or total energy stores vs refill speed.
 
-we could allow the NEAT system to also evolve certain agent physical property trade offs like sprint speed vs energy cost or total energy stores vs refill speed. 
+- Design and implement more elaborate animations for the agents, i would like a pixelart stick-figure look so it looks like an arcade action game.
 
-I want to work on incetivising exploration so the agents continually keep moving in the either direction, when we later add level architecture progressions like branching paths or moving platforms these will start apearing as the agents move further from the starting point gradually getting more abundant and challenging.
+- add crumbling platforms and other interesting platform types.
 
-add aditional variety to the terrain. incorportate branching paths and moving platforms allow these to be toggled in a separate menu, allow user to turn on and off and set the % of training episodes that includes these platform types, allow to toggle for continous view.
+- add dynamic backgrounds and changing biomes that influence the world generation and biome specific platforms and other special modifiers.
 
-add hooverable labels to network visualization to show which input nodes and output nodes correspond t owhich senses and actions
+- remove the topology complexity graph and try create a more informative set of plots showing how the agent models changed over time and put them in the topology tab.
 
+- Could we use transformer models for this task?
+
+- once the models have become quite compotent to the point where it could be reasonably hung on a wall, i would like to switch from using NEAT to train the models to a type of training that could run in just the single visual instance and allow them to very slowly get better based on only the info from that one simulation.

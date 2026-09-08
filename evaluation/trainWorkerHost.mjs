@@ -35,6 +35,8 @@ globalThis.self = {
 };
 await import(pathToFileURL(bundle).href);
 const payload = {};
+if (condition === 'cohesion-off') payload.trainingFitnessConfig = { cohesionPenaltyCap: 0, cohesionPaceWeight: 0 };
+if (condition === 'cohesion-penalty') payload.trainingFitnessConfig = { cohesionPaceWeight: 0 };
 if (condition === 'pace3') payload.trainingFitnessConfig = { runnerPaceRewardPerWindow: 3 };
 if (condition === 'separate-pace8') payload.trainingFitnessConfig = { runnerPaceRewardPerWindow: 8 };
 started = true;

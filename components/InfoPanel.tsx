@@ -2,6 +2,7 @@
 
 import React from 'react';
 import type { AgentState, TrainingFitnessConfig, UpgradeConfig, UpgradeMode, UpgradeRule, SprintUpgradeRule, SprintRoleAdvanced, TerrainVarietyConfig } from '../types';
+import { MAX_COHESION_PENALTY } from '../learning/groupCohesion';
 import { AgentStatus } from '../types';
 import { Radar, Zap, ArrowUp, SlidersHorizontal, Eye, Route, Gauge, ChevronDown } from 'lucide-react';
 import { MAX_SPEED, SPRINT_MAX_SPEED, SPRINT_ENERGY_COST_PER_SEC, MIN_RUNNER_PACE_TARGET_PX, MAX_RUNNER_PACE_TARGET_PX, MAX_RUNNER_PACE_REWARD_PER_WINDOW, MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM } from '../constants';
@@ -433,6 +434,12 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
             <CommittedRange label="Runner pace target / 2s" min={MIN_RUNNER_PACE_TARGET_PX} max={MAX_RUNNER_PACE_TARGET_PX} step={10} value={trainingFitnessConfig.runnerPaceTargetPxPerWindow} valueText={v => `${v.toFixed(0)} px`} onCommit={v => onUpdateTrainingFitnessConfig({ runnerPaceTargetPxPerWindow: v })} />
             <CommittedRange label="Runner maximum reward / window" min={0} max={MAX_RUNNER_PACE_REWARD_PER_WINDOW} step={1} value={trainingFitnessConfig.runnerPaceRewardPerWindow} valueText={v => `+${v.toFixed(1)}`} onCommit={v => onUpdateTrainingFitnessConfig({ runnerPaceRewardPerWindow: v })} />
             <CommittedRange label="Chaser follow reward / platform" min={0} max={MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM} step={0.5} value={trainingFitnessConfig.chaserPursuitRewardPerPlatform} valueText={v => `+${v.toFixed(1)}`} valueClassName="text-amber-300" onCommit={v => onUpdateTrainingFitnessConfig({ chaserPursuitRewardPerPlatform: v })} />
+            <div className="space-y-3 border-t border-cyan-500/15 pt-3">
+              <div className="text-[10px] font-bold text-cyan-200">Group cohesion</div>
+              <CommittedRange label="Separation penalty / episode" min={0} max={MAX_COHESION_PENALTY} step={0.5} value={trainingFitnessConfig.cohesionPenaltyCap} valueText={v => v === 0 ? 'Off' : `up to −${v.toFixed(1)}`} onCommit={v => onUpdateTrainingFitnessConfig({ cohesionPenaltyCap: v })} />
+              <CommittedRange label="Cohesion influence on Runner pace reward" min={0} max={1} step={0.05} value={trainingFitnessConfig.cohesionPaceWeight} valueText={v => `${Math.round(v * 100)}%`} onCommit={v => onUpdateTrainingFitnessConfig({ cohesionPaceWeight: v })} />
+              <p className="text-[9px] leading-relaxed text-gray-600">The penalty applies to each role. Pace influence reduces the Runner movement bonus when the group spreads out: 0% leaves it unchanged, 100% applies full cohesion shaping. Set both to zero to disable cohesion shaping. Collisions stay unchanged.</p>
+            </div>
             <div className="text-[8px] leading-relaxed text-gray-700">Changing a shaping value starts a fresh evaluation of the current generation so genomes are never compared under mixed fitness settings.</div>
           </fieldset>
         </details>

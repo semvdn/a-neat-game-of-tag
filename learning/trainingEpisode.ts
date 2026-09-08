@@ -1,4 +1,4 @@
-import { GROUP_COHESION, measureGroupCohesion } from './groupCohesion';
+import { sanitizeCohesionShaping, measureGroupCohesion } from './groupCohesion';
 import { resolveRunnerContacts } from './bodyContacts';
 import { EncounterTracker } from './encounters';
 import type { LearningAgent } from './agent';
@@ -182,6 +182,8 @@ export interface TrainingEpisodeOptions {
   runnerPaceTargetPxPerWindow?: number;
   runnerPaceRewardPerWindow?: number;
   chaserPursuitRewardPerPlatform?: number;
+  cohesionPenaltyCap?: number;
+  cohesionPaceWeight?: number;
   pursuitDesign?: PursuitDesignConfig;
   /** Per-episode terrain feature frequency and geometry controls. */
   terrainConfig?: TerrainVarietyConfig;
@@ -843,6 +845,7 @@ export function runTrainingEpisode(
   const encounterTracker = new EncounterTracker();
   let closeEncounters = 0;
   let successfulEvades = 0;
+  const { cohesionPenaltyCap, cohesionPaceWeight } = sanitizeCohesionShaping(options);
   let cohesionWindowCost = 0, cohesionWindowSamples = 0;
   let cohesionRunnerDistance = 0, cohesionDiameter = 0, cohesionSamples = 0;
   let runnerCohesionPenalty = 0, chaserCohesionPenalty = 0;
@@ -1085,9 +1088,9 @@ export function runTrainingEpisode(
     cohesionSamples++;
     cohesionWindowCost += cohesion.runnerCost;
     cohesionWindowSamples++;
-    const cohesionStep = GROUP_COHESION.penaltyCap * DT / NEAT_EPISODE_MAX_MS;
-    runnerCohesionPenalty = Math.min(GROUP_COHESION.penaltyCap, runnerCohesionPenalty + cohesion.runnerCost * cohesionStep);
-    chaserCohesionPenalty = Math.min(GROUP_COHESION.penaltyCap, chaserCohesionPenalty + cohesion.chaserCost * cohesionStep);
+    const cohesionStep = cohesionPenaltyCap * DT / NEAT_EPISODE_MAX_MS;
+    runnerCohesionPenalty = Math.min(cohesionPenaltyCap, runnerCohesionPenalty + cohesion.runnerCost * cohesionStep);
+    chaserCohesionPenalty = Math.min(cohesionPenaltyCap, chaserCohesionPenalty + cohesion.chaserCost * cohesionStep);
     const escapeEvaluation = evaluateChaseEscape(gameState.agents);
     if (escapeEvaluation.escaped) {
       chaserEscapes++;
@@ -1185,7 +1188,7 @@ export function runTrainingEpisode(
       const averageRunnerProgress = safeProgressThisWindow / 2;
       const completion = Math.min(1, averageRunnerProgress / runnerPaceTargetPx);
       // Pay for safe progress while the group is together, not for racing out of the chase.
-      runnerPaceFitnessBonus += completion * runnerPaceRewardPerWindow * (1 - cohesionWindowCost / Math.max(1, cohesionWindowSamples));
+      runnerPaceFitnessBonus += completion * runnerPaceRewardPerWindow * (1 - cohesionPaceWeight * cohesionWindowCost / Math.max(1, cohesionWindowSamples));
       cohesionWindowCost = 0;
       cohesionWindowSamples = 0;
       // The pace target is a requirement, not merely an optional bonus. With bonus-only shaping a

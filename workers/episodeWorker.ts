@@ -84,6 +84,8 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
         runnerPaceTargetPxPerWindow: loadedFitnessConfig?.runnerPaceTargetPxPerWindow,
         runnerPaceRewardPerWindow: loadedFitnessConfig?.runnerPaceRewardPerWindow,
         chaserPursuitRewardPerPlatform: loadedFitnessConfig?.chaserPursuitRewardPerPlatform,
+        cohesionPenaltyCap: loadedFitnessConfig?.cohesionPenaltyCap,
+        cohesionPaceWeight: loadedFitnessConfig?.cohesionPaceWeight,
         pursuitDesign: loadedPursuitDesign,
         terrainConfig: loadedTerrainConfig,
       });

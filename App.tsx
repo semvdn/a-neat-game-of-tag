@@ -1,3 +1,4 @@
+import { DEFAULT_TRAINING_FITNESS_CONFIG, sanitizeTrainingFitnessConfig } from './learning/trainingFitnessConfig';
 import { resolveRunnerContacts } from './learning/bodyContacts';
 import { useExhibitionMode } from './hooks/useExhibitionMode';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -54,13 +55,6 @@ import {
   SURVIVAL_TIME_HISTORY_LENGTH,
   TIME_TO_TAG_HISTORY_LENGTH,
   INITIAL_ELO,
-  DEFAULT_RUNNER_PACE_TARGET_PX,
-  MIN_RUNNER_PACE_TARGET_PX,
-  MAX_RUNNER_PACE_TARGET_PX,
-  DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW,
-  MAX_RUNNER_PACE_REWARD_PER_WINDOW,
-  DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM,
-  MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM,
   POLICY_CONTROL_ACTIVE_THRESHOLD,
   NEW_CHASER_TAG_DELAY_MS,
 } from './constants';
@@ -145,31 +139,13 @@ const loadUpgradeConfig = (): UpgradeConfig => {
 };
 
 const TRAINING_FITNESS_STORAGE_KEY = 'ai_tag_training_fitness_config_pace_v3';
-const DEFAULT_TRAINING_FITNESS_CONFIG: TrainingFitnessConfig = {
-  runnerPaceTargetPxPerWindow: DEFAULT_RUNNER_PACE_TARGET_PX,
-  runnerPaceRewardPerWindow: DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW,
-  chaserPursuitRewardPerPlatform: DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM,
-};
+
 
 const loadTrainingFitnessConfig = (): TrainingFitnessConfig => {
   try {
     const raw = localStorage.getItem(TRAINING_FITNESS_STORAGE_KEY);
     if (!raw) return DEFAULT_TRAINING_FITNESS_CONFIG;
-    const parsed = JSON.parse(raw) as Partial<TrainingFitnessConfig>;
-    const target = Number(parsed.runnerPaceTargetPxPerWindow);
-    const paceReward = Number(parsed.runnerPaceRewardPerWindow);
-    const pursuit = Number(parsed.chaserPursuitRewardPerPlatform);
-    return {
-      runnerPaceTargetPxPerWindow: Number.isFinite(target)
-        ? Math.max(MIN_RUNNER_PACE_TARGET_PX, Math.min(MAX_RUNNER_PACE_TARGET_PX, target))
-        : DEFAULT_TRAINING_FITNESS_CONFIG.runnerPaceTargetPxPerWindow,
-      runnerPaceRewardPerWindow: Number.isFinite(paceReward)
-        ? Math.max(0, Math.min(MAX_RUNNER_PACE_REWARD_PER_WINDOW, paceReward))
-        : DEFAULT_TRAINING_FITNESS_CONFIG.runnerPaceRewardPerWindow,
-      chaserPursuitRewardPerPlatform: Number.isFinite(pursuit)
-        ? Math.max(0, Math.min(MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM, pursuit))
-        : DEFAULT_TRAINING_FITNESS_CONFIG.chaserPursuitRewardPerPlatform,
-    };
+    return sanitizeTrainingFitnessConfig(JSON.parse(raw));
   } catch {
     return DEFAULT_TRAINING_FITNESS_CONFIG;
   }
@@ -817,22 +793,7 @@ export const App: React.FC = () => {
   }, []);
 
   const updateTrainingFitnessConfig = useCallback((patch: Partial<TrainingFitnessConfig>) => {
-    setTrainingFitnessConfig(prev => ({
-      ...prev,
-      ...patch,
-      runnerPaceTargetPxPerWindow: Math.max(
-        MIN_RUNNER_PACE_TARGET_PX,
-        Math.min(MAX_RUNNER_PACE_TARGET_PX, Number(patch.runnerPaceTargetPxPerWindow ?? prev.runnerPaceTargetPxPerWindow) || DEFAULT_RUNNER_PACE_TARGET_PX)
-      ),
-      runnerPaceRewardPerWindow: Math.max(
-        0,
-        Math.min(MAX_RUNNER_PACE_REWARD_PER_WINDOW, Number(patch.runnerPaceRewardPerWindow ?? prev.runnerPaceRewardPerWindow) || 0)
-      ),
-      chaserPursuitRewardPerPlatform: Math.max(
-        0,
-        Math.min(MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM, Number(patch.chaserPursuitRewardPerPlatform ?? prev.chaserPursuitRewardPerPlatform) || 0)
-      ),
-    }));
+    setTrainingFitnessConfig(prev => sanitizeTrainingFitnessConfig({ ...prev, ...patch }));
   }, []);
 
   const updateTerrainVarietyConfig = useCallback((patch: Partial<TerrainVarietyConfig>) => {
@@ -1353,18 +1314,7 @@ export const App: React.FC = () => {
         if (typeof checkpoint.evaderElo === 'number') evaderElo.current = checkpoint.evaderElo;
         if (checkpoint.upgradeConfig) setUpgradeConfig(checkpoint.upgradeConfig);
         if (checkpoint.trainingFitnessConfig) {
-          const cfg = checkpoint.trainingFitnessConfig as Partial<TrainingFitnessConfig>;
-          setTrainingFitnessConfig({
-            runnerPaceTargetPxPerWindow: Number.isFinite(Number(cfg.runnerPaceTargetPxPerWindow))
-              ? Math.max(MIN_RUNNER_PACE_TARGET_PX, Math.min(MAX_RUNNER_PACE_TARGET_PX, Number(cfg.runnerPaceTargetPxPerWindow)))
-              : DEFAULT_RUNNER_PACE_TARGET_PX,
-            runnerPaceRewardPerWindow: Number.isFinite(Number(cfg.runnerPaceRewardPerWindow))
-              ? Math.max(0, Math.min(MAX_RUNNER_PACE_REWARD_PER_WINDOW, Number(cfg.runnerPaceRewardPerWindow)))
-              : DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW,
-            chaserPursuitRewardPerPlatform: Number.isFinite(Number(cfg.chaserPursuitRewardPerPlatform))
-              ? Math.max(0, Math.min(MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM, Number(cfg.chaserPursuitRewardPerPlatform)))
-              : DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM,
-          });
+          setTrainingFitnessConfig(sanitizeTrainingFitnessConfig(checkpoint.trainingFitnessConfig));
         }
         if (checkpoint.terrainVarietyConfig) {
           setTerrainVarietyConfig(sanitizeTerrainVarietyConfig(checkpoint.terrainVarietyConfig));

@@ -1,3 +1,4 @@
+import { DEFAULT_TRAINING_FITNESS_CONFIG, sanitizeTrainingFitnessConfig } from '../learning/trainingFitnessConfig';
 import { GROUP_COHESION } from '../learning/groupCohesion';
 import { BASELINE_PURSUIT_DESIGN } from '../learning/pursuitConfig';
 import { LearningAgent, type AgentWeights } from '../learning/agent';
@@ -41,13 +42,6 @@ import {
   MAX_SPEED,
   SPRINT_MAX_SPEED,
   SPRINT_ENERGY_COST_PER_SEC,
-  DEFAULT_RUNNER_PACE_TARGET_PX,
-  MIN_RUNNER_PACE_TARGET_PX,
-  MAX_RUNNER_PACE_TARGET_PX,
-  DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW,
-  MAX_RUNNER_PACE_REWARD_PER_WINDOW,
-  DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM,
-  MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM,
 } from '../constants';
 import { DEFAULT_TERRAIN_VARIETY_CONFIG, sanitizeTerrainVarietyConfig } from '../learning/terrainConfig';
 
@@ -116,11 +110,7 @@ const DEFAULT_UPGRADE_CONFIG: UpgradeConfig = {
   controlledJump: { mode: 'off', chaserEnabled: true, runnerEnabled: true },
 };
 let upgradeConfig: UpgradeConfig = DEFAULT_UPGRADE_CONFIG;
-const DEFAULT_TRAINING_FITNESS_CONFIG: TrainingFitnessConfig = {
-  runnerPaceTargetPxPerWindow: DEFAULT_RUNNER_PACE_TARGET_PX,
-  runnerPaceRewardPerWindow: DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW,
-  chaserPursuitRewardPerPlatform: DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM,
-};
+
 let trainingFitnessConfig: TrainingFitnessConfig = { ...DEFAULT_TRAINING_FITNESS_CONFIG };
 let terrainVarietyConfig: TerrainVarietyConfig = { ...DEFAULT_TERRAIN_VARIETY_CONFIG };
 
@@ -144,22 +134,7 @@ const PURSUIT_DESIGN_METADATA: PursuitDesignMetadata = {
 };
 let activePursuitDesign: PursuitDesignConfig | null = { ...BASELINE_PURSUIT_DESIGN };
 
-function sanitizeTrainingFitnessConfig(value?: Partial<TrainingFitnessConfig>): TrainingFitnessConfig {
-  const target = Number(value?.runnerPaceTargetPxPerWindow);
-  const paceReward = Number(value?.runnerPaceRewardPerWindow);
-  const pursuit = Number(value?.chaserPursuitRewardPerPlatform);
-  return {
-    runnerPaceTargetPxPerWindow: Number.isFinite(target)
-      ? Math.max(MIN_RUNNER_PACE_TARGET_PX, Math.min(MAX_RUNNER_PACE_TARGET_PX, target))
-      : DEFAULT_TRAINING_FITNESS_CONFIG.runnerPaceTargetPxPerWindow,
-    runnerPaceRewardPerWindow: Number.isFinite(paceReward)
-      ? Math.max(0, Math.min(MAX_RUNNER_PACE_REWARD_PER_WINDOW, paceReward))
-      : DEFAULT_TRAINING_FITNESS_CONFIG.runnerPaceRewardPerWindow,
-    chaserPursuitRewardPerPlatform: Number.isFinite(pursuit)
-      ? Math.max(0, Math.min(MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM, pursuit))
-      : DEFAULT_TRAINING_FITNESS_CONFIG.chaserPursuitRewardPerPlatform,
-  };
-}
+
 
 function sanitizeUpgradeConfig(value?: Partial<UpgradeConfig>): UpgradeConfig {
   const normalize = (rule: any, fallback: UpgradeConfig[keyof UpgradeConfig]): UpgradeConfig['controlledJump'] => ({
@@ -552,6 +527,8 @@ function runEpisode(
     runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
     runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
     chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+    cohesionPenaltyCap: trainingFitnessConfig.cohesionPenaltyCap,
+    cohesionPaceWeight: trainingFitnessConfig.cohesionPaceWeight,
     pursuitDesign: activePursuitDesign || undefined,
     terrainConfig: terrainVarietyConfig,
   });
@@ -655,6 +632,8 @@ function evaluateFixedBenchmark(genome: NeatGenomeData, role: 'chaser' | 'evader
             runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
     runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
     chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+    cohesionPenaltyCap: trainingFitnessConfig.cohesionPenaltyCap,
+    cohesionPaceWeight: trainingFitnessConfig.cohesionPaceWeight,
     pursuitDesign: activePursuitDesign || undefined,
     terrainConfig: terrainVarietyConfig,
           })
@@ -667,6 +646,8 @@ function evaluateFixedBenchmark(genome: NeatGenomeData, role: 'chaser' | 'evader
             runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
     runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
     chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+    cohesionPenaltyCap: trainingFitnessConfig.cohesionPenaltyCap,
+    cohesionPaceWeight: trainingFitnessConfig.cohesionPaceWeight,
     pursuitDesign: activePursuitDesign || undefined,
     terrainConfig: terrainVarietyConfig,
           });
@@ -851,6 +832,8 @@ function evaluateGeneralistCrossPlay(genome: NeatGenomeData, role: 'chaser' | 'e
         runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
         runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
         chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+        cohesionPenaltyCap: trainingFitnessConfig.cohesionPenaltyCap,
+        cohesionPaceWeight: trainingFitnessConfig.cohesionPaceWeight,
         pursuitDesign: activePursuitDesign || undefined,
     terrainConfig: terrainVarietyConfig,
       };
@@ -907,6 +890,8 @@ function evaluateContemporaryMatchup(genome: NeatGenomeData, role: 'chaser' | 'e
       runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
       runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
       chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+      cohesionPenaltyCap: trainingFitnessConfig.cohesionPenaltyCap,
+      cohesionPaceWeight: trainingFitnessConfig.cohesionPaceWeight,
       pursuitDesign: activePursuitDesign || undefined,
     terrainConfig: terrainVarietyConfig,
     } as const;
@@ -1204,6 +1189,8 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
       runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
       runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
       chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+      cohesionPenaltyCap: trainingFitnessConfig.cohesionPenaltyCap,
+      cohesionPaceWeight: trainingFitnessConfig.cohesionPaceWeight,
       pursuitDesign: activePursuitDesign || undefined,
     terrainConfig: terrainVarietyConfig,
     });
@@ -1489,7 +1476,7 @@ function recordGenerationAnalysis(generation: number): void {
     generation,
     recordedAt: Date.now(),
     gameplayObjectiveVersion: 'solid-group-v12',
-    groupCohesionConfig: { ...GROUP_COHESION },
+    groupCohesionConfig: { ...GROUP_COHESION, penaltyCap: trainingFitnessConfig.cohesionPenaltyCap, paceWeight: trainingFitnessConfig.cohesionPaceWeight },
     simulatedTimeMs: totalSimulatedTime,
     completedEpisodes,
     chaserMetrics: lastChaserMetrics ? { ...lastChaserMetrics } : null,
@@ -1880,6 +1867,8 @@ function validateChampionCandidates(role: 'chaser' | 'evader', generation: numbe
             runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
             runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
             chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+            cohesionPenaltyCap: trainingFitnessConfig.cohesionPenaltyCap,
+            cohesionPaceWeight: trainingFitnessConfig.cohesionPaceWeight,
     pursuitDesign: activePursuitDesign || undefined,
     terrainConfig: terrainVarietyConfig,
           })
@@ -1892,6 +1881,8 @@ function validateChampionCandidates(role: 'chaser' | 'evader', generation: numbe
             runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
             runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
             chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+            cohesionPenaltyCap: trainingFitnessConfig.cohesionPenaltyCap,
+            cohesionPaceWeight: trainingFitnessConfig.cohesionPaceWeight,
     pursuitDesign: activePursuitDesign || undefined,
     terrainConfig: terrainVarietyConfig,
           });
@@ -1915,6 +1906,8 @@ function validateChampionCandidates(role: 'chaser' | 'evader', generation: numbe
             runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
             runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
             chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+            cohesionPenaltyCap: trainingFitnessConfig.cohesionPenaltyCap,
+            cohesionPaceWeight: trainingFitnessConfig.cohesionPaceWeight,
     pursuitDesign: activePursuitDesign || undefined,
     terrainConfig: terrainVarietyConfig,
           })
@@ -1927,6 +1920,8 @@ function validateChampionCandidates(role: 'chaser' | 'evader', generation: numbe
             runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
             runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
             chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+            cohesionPenaltyCap: trainingFitnessConfig.cohesionPenaltyCap,
+            cohesionPaceWeight: trainingFitnessConfig.cohesionPaceWeight,
     pursuitDesign: activePursuitDesign || undefined,
     terrainConfig: terrainVarietyConfig,
           });
@@ -2821,6 +2816,8 @@ function buildAnalysisProbeSet(
       runnerPaceTargetPxPerWindow: trainingFitnessConfig.runnerPaceTargetPxPerWindow,
       runnerPaceRewardPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow,
       chaserPursuitRewardPerPlatform: trainingFitnessConfig.chaserPursuitRewardPerPlatform,
+      cohesionPenaltyCap: trainingFitnessConfig.cohesionPenaltyCap,
+      cohesionPaceWeight: trainingFitnessConfig.cohesionPaceWeight,
       pursuitDesign: activePursuitDesign || undefined,
     terrainConfig: terrainVarietyConfig,
       recordTrace: true,
@@ -2963,7 +2960,7 @@ function buildAnalysisExport(historyStride = 1) {
         ...trainingFitnessConfig,
         runnerPaceShortfallPenaltyAtZeroPerWindow: trainingFitnessConfig.runnerPaceRewardPerWindow * (2 / 3),
       },
-      groupCohesion: { ...GROUP_COHESION, definition: 'Time-integrated world-distance excess, capped per role per episode. Runner cost is the maximum of teammate and farthest-threat separation; Chaser cost uses its farthest Runner. No reward for touching or standing still.' },
+      groupCohesion: { ...GROUP_COHESION, penaltyCap: trainingFitnessConfig.cohesionPenaltyCap, paceWeight: trainingFitnessConfig.cohesionPaceWeight, definition: 'Time-integrated world-distance excess, capped per role per episode. Runner cost is the maximum of teammate and farthest-threat separation; Chaser cost uses its farthest Runner. No reward for touching or standing still.' },
       paceDefinition: 'The positive pace bonus is multiplied by mean group cohesion in the same window, so far-separated progress earns less without adding a new reward. Every 2 seconds, SAFE rightward progress across both Runner slots is averaged into a 0..1 completion fraction. Reward saturates at the target, while the unsatisfied fraction carries a modest shortfall penalty so standing still is not a free survival strategy. Clean close-pressure escapes add only a small capped tactical bonus.',
       pursuitDefinition: 'The Chaser earns small capped signals for following Runner-used terrain and, only in the full pursuit condition, for reaching genuinely new best proximity within a chase segment. Repeating the same distance does not pay again; tags remain +20 and dominant.',
       escapeDefinition: 'If the Chaser is outside the minimum useful 50% camera envelope of every Runner in the invariant 1200x800 reference frame, the Runners have escaped. The episode ends immediately and the Chaser receives one -20 failure event, equal to a Chaser fall; the Runner receives no artificial +20 event bonus.',
@@ -3269,7 +3266,9 @@ self.onmessage = (event: MessageEvent) => {
       const changed =
         next.runnerPaceTargetPxPerWindow !== trainingFitnessConfig.runnerPaceTargetPxPerWindow ||
         next.runnerPaceRewardPerWindow !== trainingFitnessConfig.runnerPaceRewardPerWindow ||
-        next.chaserPursuitRewardPerPlatform !== trainingFitnessConfig.chaserPursuitRewardPerPlatform;
+        next.chaserPursuitRewardPerPlatform !== trainingFitnessConfig.chaserPursuitRewardPerPlatform ||
+        next.cohesionPenaltyCap !== trainingFitnessConfig.cohesionPenaltyCap ||
+        next.cohesionPaceWeight !== trainingFitnessConfig.cohesionPaceWeight;
       trainingFitnessConfig = next;
       if (changed) {
         // Do not mix two reward scales inside one generation or benchmark revision.

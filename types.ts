@@ -45,6 +45,10 @@ export interface UpgradeConfig {
   controlledJump: UpgradeRule;
 }
 export interface TrainingFitnessConfig {
+  /** Maximum separation penalty per role per episode. */
+  cohesionPenaltyCap: number;
+  /** 0 disables pace qualification, 1 applies full cohesion qualification. */
+  cohesionPaceWeight: number;
   /** SAFE rightward distance needed across the two Runner slots in each 2-second pace window. */
   runnerPaceTargetPxPerWindow: number;
   /** Maximum Runner fitness earned for satisfying one pace window. */

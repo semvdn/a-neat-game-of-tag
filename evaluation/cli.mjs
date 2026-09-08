@@ -10,8 +10,9 @@ import { fixture } from './fixtures.ts';
 import { verifyEncounterAccounting } from './regressions.mjs';
 import { verifyLandings } from './landingRegressions.mjs';
 import { verifyBodyContacts } from './bodyRegressions.mjs';
+import { verifyCohesionControls } from './cohesionControls.mjs';
 import { SPRINT_MAX_SPEED, SPRINT_ENERGY_COST_PER_SEC, DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW } from '../constants.ts';
-import { GROUP_COHESION } from '../learning/groupCohesion.ts';
+import { sanitizeCohesionShaping } from '../learning/groupCohesion.ts';
 
 const args = process.argv.slice(2);
 const option = (key, fallback) => args.includes(key) ? args[args.indexOf(key) + 1] : fallback;
@@ -28,6 +29,7 @@ const seeds = Number(option('--seeds', 8));
 if (args.includes('--verify')) verifyEncounterAccounting();
 if (args.includes('--verify')) verifyLandings();
 if (args.includes('--verify')) verifyBodyContacts();
+if (args.includes('--verify')) verifyCohesionControls();
 assert(Number.isInteger(seeds) && seeds >= 1 && seeds <= 1000, '--seeds must be 1..1000');
 const modes = ['visual', 'varied', 'pressure_close', 'pressure_normal', 'pressure_long', 'midgame'];
 const conditions = args.includes('--conditions') ? JSON.parse(await readFile(option('--conditions'), 'utf8')) : [
@@ -40,7 +42,7 @@ assert(new Set(conditions.map(c => c.name)).size === conditions.length, 'Conditi
 for (const c of conditions) {
   assert(typeof c.name === 'string' && c.name.length > 0);
   assert(Object.keys(c).every(k => ['name', 'terrainConfig', 'pursuitDesign', 'upgrades', 'fitness'].includes(k)), 'Unknown condition field');
-  for (const [field, keys] of Object.entries({ terrainConfig: Object.keys(DEFAULT_TERRAIN_VARIETY_CONFIG), pursuitDesign: Object.keys(BASELINE_PURSUIT_DESIGN), fitness: ['runnerPaceTargetPxPerWindow', 'runnerPaceRewardPerWindow', 'chaserPursuitRewardPerPlatform'] })) {
+  for (const [field, keys] of Object.entries({ terrainConfig: Object.keys(DEFAULT_TERRAIN_VARIETY_CONFIG), pursuitDesign: Object.keys(BASELINE_PURSUIT_DESIGN), fitness: ['runnerPaceTargetPxPerWindow', 'runnerPaceRewardPerWindow', 'chaserPursuitRewardPerPlatform', 'cohesionPenaltyCap', 'cohesionPaceWeight'] })) {
     if (c[field]) assert(Object.keys(c[field]).every(k => keys.includes(k)), `Unknown ${field} setting in ${c.name}`);
   }
 }
@@ -106,7 +108,7 @@ for (const condition of conditions) {
       finally { Math.random = random; }
     };
     const result = run();
-    assert(result.groupCohesion.runnerPenalty >= 0 && result.groupCohesion.runnerPenalty <= GROUP_COHESION.penaltyCap && result.groupCohesion.chaserPenalty >= 0 && result.groupCohesion.chaserPenalty <= GROUP_COHESION.penaltyCap, 'Separation penalties must stay within the episode cap');
+    assert(result.groupCohesion.runnerPenalty >= 0 && result.groupCohesion.runnerPenalty <= sanitizeCohesionShaping(options).cohesionPenaltyCap && result.groupCohesion.chaserPenalty >= 0 && result.groupCohesion.chaserPenalty <= sanitizeCohesionShaping(options).cohesionPenaltyCap, 'Separation penalties must stay within the episode cap');
     assert(result.runnerPaceFitnessBonus >= 0 && result.runnerPaceFitnessBonus <= result.runnerPaceWindowsTotal * (options.runnerPaceRewardPerWindow ?? DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW) + 1e-6, 'Cohesion must not manufacture extra pace reward');
     if (args.includes('--verify')) assert.deepEqual(run(), result, `Nondeterministic: ${condition.name}/${pair.name}/${startMode}/${seed}`);
     const values = metrics(result);
