@@ -1,10 +1,10 @@
-Activate per-biome terrain generation and refine scenery
+Refine biome assets and platform materials
 
-- apply biome width, gap, verticality, branch, mover, speed, and route-persistence profiles
-- blend mechanical terrain parameters smoothly across biome transitions
-- keep reachability, branch corridors, swept clearance, and overlap checks authoritative
-- stratify training seeds across all ten biomes without exposing biome identity to policies
-- keep crumble weighting dormant until a crumble mechanic is observable to agents
-- refine procedural landmark density and relative scale across all biome backgrounds
-- replace repeated desert/rural motifs with larger, more natural landmark silhouettes
-- update biome architecture docs and renderer-derived ten-biome sanity sheet
+- redesign individual procedural landmarks for all ten biomes with clearer silhouettes and scale hierarchy
+- add broader natural forms to Lowlands, Desert, Forest, Village, and Swamp instead of repeated vertical stamps
+- diversify Spires, Foundry, Ruins, City, and Snowy Mountain architecture/landmarks
+- smooth natural far ridges and reduce snow foothill clutter so major landmarks read at gameplay scale
+- refine every biome platform material while preserving a consistent physical top edge
+- improve Lowlands and Swamp midground contrast without reducing agent readability
+- version visual-biome descriptor caches independently from mechanical world generation
+- add renderer-derived individual asset and platform material reference sheets to biome documentation

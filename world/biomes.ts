@@ -4,7 +4,7 @@ import type { BiomeId, BiomeSample, BiomeVisualStamp, PlatformState, TerrainRunt
 export const DEFAULT_BIOME_WORLD_SEED = 0x54414731;
 export const BIOME_REGION_LENGTH = 12_000;
 export const BIOME_TRANSITION_LENGTH = 2_000;
-export const BIOME_VISUAL_VERSION = 2;
+export const BIOME_VISUAL_VERSION = 3;
 export const BIOME_TERRAIN_VERSION = 2;
 export const WORLD_GEN_VERSION = 2;
 
@@ -59,16 +59,16 @@ export const TERRAIN_BIOME_PROFILES: Record<BiomeId, TerrainBiomeProfile> = {
  */
 
 export const VISUAL_BIOMES: Record<BiomeId, VisualBiomeDefinition> = {
-  lowlands: { id: 'lowlands', label: 'Lowlands', palette: { skyTop:'#111827', skyBottom:'#34413f', haze:'#55645b', far:'#25333a', mid:'#31423d', near:'#3d4c42', detail:'#7b7852', platformTop:'#69745f', platformFace:'#4d5a4e', platformShadow:'#2c3732', motionAccent:'#d5c86d' }, farDensity:.65, midDensity:.58, nearDensity:.42 },
+  lowlands: { id: 'lowlands', label: 'Lowlands', palette: { skyTop:'#111827', skyBottom:'#34413f', haze:'#55645b', far:'#25333a', mid:'#384b43', near:'#46594b', detail:'#8a8b61', platformTop:'#69745f', platformFace:'#4d5a4e', platformShadow:'#2c3732', motionAccent:'#d5c86d' }, farDensity:.65, midDensity:.58, nearDensity:.42 },
   spires: { id: 'spires', label: 'Spires', palette: { skyTop:'#101422', skyBottom:'#30364b', haze:'#555d78', far:'#222b3d', mid:'#2d3850', near:'#38445d', detail:'#777da1', platformTop:'#66718b', platformFace:'#4b556d', platformShadow:'#2a3142', motionAccent:'#9dd7e8' }, farDensity:.88, midDensity:.66, nearDensity:.48 },
   foundry: { id: 'foundry', label: 'Foundry', palette: { skyTop:'#17171c', skyBottom:'#453a36', haze:'#6a5850', far:'#2a292c', mid:'#3b3433', near:'#4a3d39', detail:'#9b6949', platformTop:'#705d52', platformFace:'#514640', platformShadow:'#2e2a29', motionAccent:'#e6a34c' }, farDensity:.76, midDensity:.9, nearDensity:.7 },
   ruins: { id: 'ruins', label: 'Ruins', palette: { skyTop:'#151522', skyBottom:'#453f4e', haze:'#6c6572', far:'#2c2b39', mid:'#3b3947', near:'#4a4652', detail:'#8e826f', platformTop:'#756e72', platformFace:'#565158', platformShadow:'#302e35', motionAccent:'#c7b58a' }, farDensity:.7, midDensity:.72, nearDensity:.58 },
-  desert: { id: 'desert', label: 'Desert', palette: { skyTop:'#30243a', skyBottom:'#8d6448', haze:'#b58a63', far:'#5b4742', mid:'#785446', near:'#8e6248', detail:'#d8b06d', platformTop:'#c49460', platformFace:'#8e674e', platformShadow:'#513f3a', motionAccent:'#f0d57a' }, farDensity:.54, midDensity:.42, nearDensity:.30 },
+  desert: { id: 'desert', label: 'Desert', palette: { skyTop:'#30243a', skyBottom:'#8d6448', haze:'#b58a63', far:'#5b4742', mid:'#785446', near:'#8e6248', detail:'#d8b06d', platformTop:'#c49460', platformFace:'#8e674e', platformShadow:'#513f3a', motionAccent:'#f0d57a' }, farDensity:.46, midDensity:.36, nearDensity:.26 },
   'snowy-mountains': { id:'snowy-mountains', label:'Snowy Mountains', palette: { skyTop:'#101a2c', skyBottom:'#45596e', haze:'#8da8b7', far:'#27384a', mid:'#354b5d', near:'#435969', detail:'#d8e7ea', platformTop:'#d0dde0', platformFace:'#657785', platformShadow:'#334351', motionAccent:'#bdeeff' }, farDensity:.76, midDensity:.48, nearDensity:.36 },
   'temperate-forest': { id:'temperate-forest', label:'Temperate Forest', palette: { skyTop:'#0f2022', skyBottom:'#405b4c', haze:'#6e8370', far:'#233b36', mid:'#2d4b3d', near:'#3b5b46', detail:'#8e9d65', platformTop:'#718262', platformFace:'#4d614b', platformShadow:'#293b34', motionAccent:'#d6d78a' }, farDensity:.62, midDensity:.84, nearDensity:.74 },
   city: { id:'city', label:'City', palette: { skyTop:'#111528', skyBottom:'#4b465a', haze:'#766f7f', far:'#262b3a', mid:'#343947', near:'#454957', detail:'#b69d6f', platformTop:'#79808a', platformFace:'#585e68', platformShadow:'#30343c', motionAccent:'#ffd166' }, farDensity:.84, midDensity:.88, nearDensity:.68 },
-  'rural-village': { id:'rural-village', label:'Rural Village', palette: { skyTop:'#152333', skyBottom:'#536958', haze:'#83927a', far:'#2c4542', mid:'#3d5549', near:'#526450', detail:'#c4a56d', platformTop:'#8b8068', platformFace:'#655b4c', platformShadow:'#393832', motionAccent:'#e7ca82' }, farDensity:.58, midDensity:.74, nearDensity:.58 },
-  swamp: { id:'swamp', label:'Swamp', palette: { skyTop:'#101c22', skyBottom:'#39483f', haze:'#617162', far:'#263a36', mid:'#314940', near:'#405446', detail:'#8a8a5e', platformTop:'#65715a', platformFace:'#485646', platformShadow:'#28352f', motionAccent:'#b9c86a' }, farDensity:.56, midDensity:.8, nearDensity:.84 },
+  'rural-village': { id:'rural-village', label:'Rural Village', palette: { skyTop:'#152333', skyBottom:'#536958', haze:'#83927a', far:'#2c4542', mid:'#3d5549', near:'#526450', detail:'#c4a56d', platformTop:'#8b8068', platformFace:'#655b4c', platformShadow:'#393832', motionAccent:'#e7ca82' }, farDensity:.46, midDensity:.58, nearDensity:.46 },
+  swamp: { id:'swamp', label:'Swamp', palette: { skyTop:'#101c22', skyBottom:'#39483f', haze:'#617162', far:'#263a36', mid:'#395248', near:'#4a6050', detail:'#969768', platformTop:'#65715a', platformFace:'#485646', platformShadow:'#28352f', motionAccent:'#b9c86a' }, farDensity:.56, midDensity:.8, nearDensity:.84 },
 };
 
 const floorMod = (value:number, divisor:number) => ((value % divisor) + divisor) % divisor;

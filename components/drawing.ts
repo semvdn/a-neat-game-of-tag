@@ -295,44 +295,107 @@ export const drawPlatform = (ctx: CanvasRenderingContext2D, platform: PlatformSt
   else if (platform.structureType === 'branch-lower') face = mixHex(face, palette.platformShadow, 0.12);
   else if (platform.structureType === 'merge') face = mixHex(face, palette.platformTop, 0.12);
 
-  const x = Math.round(platform.position.x), y = Math.round(platform.position.y);
-  const w = Math.round(platform.width), h = Math.round(platform.height);
-  ctx.fillStyle = face; ctx.fillRect(x, y, w, h);
-  ctx.fillStyle = palette.platformTop; ctx.fillRect(x, y, w, Math.min(5, h));
-  ctx.fillStyle = palette.platformShadow; ctx.fillRect(x, y + Math.max(0, h - 4), w, 4);
+  const x = Math.round(platform.position.x);
+  const y = Math.round(platform.position.y);
+  const w = Math.round(platform.width);
+  const h = Math.round(platform.height);
+  const topH = Math.min(5, h);
 
-  // Biome material details are decorative only and stay inside the collision rectangle.
-  if (biome === 'desert') {
-    ctx.fillStyle = mixHex(face, palette.detail, .28);
-    for (let xx = x + 18; xx < x + w - 12; xx += 42) ctx.fillRect(xx, y + 9, 18, 2);
+  ctx.fillStyle = face;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = palette.platformTop;
+  ctx.fillRect(x, y, w, topH);
+  ctx.fillStyle = palette.platformShadow;
+  ctx.fillRect(x, y + Math.max(0, h - 4), w, 4);
+
+  // Materials deliberately use different visual grammars per biome. All marks stay inside the
+  // collision rectangle so the true walkable top edge remains unambiguous.
+  if (biome === 'lowlands') {
+    // Turf over rough fieldstone: irregular short grass blocks plus sparse stone joints.
+    ctx.fillStyle = mixHex(palette.platformTop, palette.detail, 0.3);
+    for (let xx = x + 7; xx < x + w - 4; xx += 24) {
+      ctx.fillRect(xx, y + 1, 8 + ((xx / 24) % 3) * 2, 2);
+    }
+    ctx.fillStyle = mixHex(face, palette.platformShadow, 0.18);
+    for (let xx = x + 28; xx < x + w - 8; xx += 52) ctx.fillRect(xx, y + 8, 2, Math.max(3, h - 13));
+  } else if (biome === 'desert') {
+    // Sandstone strata are predominantly horizontal; this helps distinguish them from wood/metal.
+    ctx.fillStyle = mixHex(face, palette.detail, 0.24);
+    ctx.fillRect(x + 8, y + 8, Math.max(0, w - 16), 2);
+    if (h > 15) ctx.fillRect(x + 22, y + 13, Math.max(0, w - 48), 2);
+    ctx.fillStyle = mixHex(face, palette.platformShadow, 0.12);
+    for (let xx = x + 54; xx < x + w - 10; xx += 76) ctx.fillRect(xx, y + 6, 2, 5);
   } else if (biome === 'snowy-mountains') {
-    ctx.fillStyle = mixHex(palette.platformTop, '#f3f8fa', .55);
-    ctx.fillRect(x, y, w, Math.min(7, h));
-    ctx.fillStyle = mixHex(face, palette.detail, .18);
-    for (let xx = x + 22; xx < x + w - 8; xx += 48) ctx.fillRect(xx, y + 9, 3, Math.max(2, h - 14));
+    // Uneven snow cap sitting on cold stone. The cap remains fully inside the collision body.
+    const snow = mixHex(palette.platformTop, '#f4f8fa', 0.62);
+    ctx.fillStyle = snow;
+    for (let xx = x; xx < x + w; xx += 28) {
+      const seg = Math.min(28, x + w - xx);
+      const depth = ((Math.floor((xx - x) / 28) + platform.id) % 3 === 0) ? 7 : 5;
+      ctx.fillRect(xx, y, seg, Math.min(depth, h));
+    }
+    ctx.fillStyle = mixHex(face, palette.detail, 0.16);
+    for (let xx = x + 30; xx < x + w - 8; xx += 58) ctx.fillRect(xx, y + 9, 3, Math.max(2, h - 14));
   } else if (biome === 'temperate-forest') {
-    ctx.fillStyle = mixHex(palette.platformTop, palette.detail, .32);
-    for (let xx = x + 8; xx < x + w - 5; xx += 23) ctx.fillRect(xx, y - 2, 3, 5);
+    // Moss-covered earth/wood: clustered moss on top and root-like seams below.
+    ctx.fillStyle = mixHex(palette.platformTop, palette.detail, 0.36);
+    for (let xx = x + 5; xx < x + w - 4; xx += 31) ctx.fillRect(xx, y + 1, 13 + ((xx / 31) % 2) * 5, 3);
+    ctx.fillStyle = mixHex(face, palette.platformShadow, 0.12);
+    for (let xx = x + 24; xx < x + w - 8; xx += 47) {
+      ctx.fillRect(xx, y + 8, 2, Math.max(3, h - 12));
+      if (xx + 7 < x + w) ctx.fillRect(xx + 2, y + 12, 7, 2);
+    }
   } else if (biome === 'city') {
-    ctx.fillStyle = mixHex(face, palette.detail, .2);
-    for (let xx = x + 28; xx < x + w - 10; xx += 38) ctx.fillRect(xx, y + 6, 2, Math.max(3, h - 11));
-    ctx.fillStyle = mixHex(palette.platformTop, '#d7c46a', .35);
-    for (let xx = x + 16; xx < x + w - 12; xx += 52) ctx.fillRect(xx, y + 2, 22, 2);
+    // Concrete expansion joints; moving slabs additionally carry short safety-yellow markings.
+    ctx.fillStyle = mixHex(face, palette.platformShadow, 0.18);
+    for (let xx = x + 42; xx < x + w - 8; xx += 56) ctx.fillRect(xx, y + 5, 2, Math.max(4, h - 9));
+    if (platform.motion) {
+      ctx.fillStyle = mixHex(palette.motionAccent, palette.platformTop, 0.18);
+      for (let xx = x + 13; xx < x + w - 12; xx += 44) ctx.fillRect(xx, y + 2, 20, 2);
+    }
   } else if (biome === 'rural-village') {
-    ctx.fillStyle = mixHex(face, palette.detail, .22);
-    for (let xx = x + 14; xx < x + w - 10; xx += 36) { ctx.fillRect(xx, y + 8, 2, Math.max(2, h - 13)); ctx.fillRect(xx + 3, y + 11, 18, 2); }
+    // Heavy timber boards with joints and small nail heads.
+    ctx.fillStyle = mixHex(face, palette.detail, 0.18);
+    for (let xx = x + 30; xx < x + w - 8; xx += 46) {
+      ctx.fillRect(xx, y + 6, 2, Math.max(3, h - 10));
+      ctx.fillRect(xx - 13, y + 10, 3, 3);
+    }
+    ctx.fillStyle = mixHex(palette.platformTop, palette.detail, 0.16);
+    ctx.fillRect(x + 6, y + 2, Math.max(0, w - 12), 2);
   } else if (biome === 'swamp') {
-    ctx.fillStyle = mixHex(palette.platformTop, palette.detail, .34);
-    for (let xx = x + 9; xx < x + w - 6; xx += 27) { ctx.fillRect(xx, y + 2, 8, 3); if ((xx / 27) % 2 > .4) ctx.fillRect(xx + 3, y + 5, 2, 5); }
+    // Rot-darkened timber with irregular moss islands and hanging damp streaks.
+    ctx.fillStyle = mixHex(palette.platformTop, palette.detail, 0.38);
+    for (let xx = x + 6; xx < x + w - 5; xx += 33) {
+      const patchW = 9 + ((Math.floor((xx - x) / 33) + platform.id) % 3) * 4;
+      ctx.fillRect(xx, y + 1, Math.min(patchW, x + w - xx), 3);
+    }
+    ctx.fillStyle = mixHex(face, palette.platformShadow, 0.22);
+    for (let xx = x + 25; xx < x + w - 8; xx += 51) ctx.fillRect(xx, y + 7, 2, Math.max(3, h - 10));
   } else if (biome === 'foundry') {
-    ctx.fillStyle = mixHex(face, palette.detail, .35);
-    for (let xx = x + 16; xx < x + w - 8; xx += 34) ctx.fillRect(xx, y + Math.max(7, h * .5), 3, 3);
-  } else if (biome === 'ruins' || biome === 'spires') {
-    ctx.fillStyle = mixHex(face, palette.detail, .22);
-    for (let xx = x + 20; xx < x + w - 9; xx += 42) { ctx.fillRect(xx, y + 8, 3, 8); ctx.fillRect(xx + 3, y + 14, 7, 2); }
-  } else {
-    ctx.fillStyle = mixHex(face, palette.detail, .22);
-    for (let xx = x + 18; xx < x + w - 8; xx += 40) ctx.fillRect(xx, y + 8, 3, Math.max(2, h - 13));
+    // Industrial plate seams and paired rivets.
+    ctx.fillStyle = mixHex(face, palette.platformShadow, 0.17);
+    for (let xx = x + 44; xx < x + w - 8; xx += 52) ctx.fillRect(xx, y + 5, 2, Math.max(4, h - 9));
+    ctx.fillStyle = mixHex(face, palette.detail, 0.38);
+    for (let xx = x + 17; xx < x + w - 8; xx += 34) {
+      ctx.fillRect(xx, y + 8, 3, 3);
+      if (h >= 17) ctx.fillRect(xx, y + 13, 3, 3);
+    }
+  } else if (biome === 'spires') {
+    // Dressed blue stone with long block courses and narrow carved slits.
+    ctx.fillStyle = mixHex(face, palette.platformShadow, 0.16);
+    if (h > 14) ctx.fillRect(x + 8, y + 11, Math.max(0, w - 16), 2);
+    ctx.fillStyle = mixHex(face, palette.detail, 0.24);
+    for (let xx = x + 34; xx < x + w - 8; xx += 58) ctx.fillRect(xx, y + 6, 3, 5);
+  } else if (biome === 'ruins') {
+    // Uneven masonry blocks and short cracks; deliberately less regular than Spires.
+    ctx.fillStyle = mixHex(face, palette.platformShadow, 0.18);
+    for (let xx = x + 36; xx < x + w - 8; xx += 61) {
+      ctx.fillRect(xx, y + 6, 2, 6);
+      ctx.fillRect(xx + 2, y + 11, 8, 2);
+      if (xx + 14 < x + w) ctx.fillRect(xx + 10, y + 13, 2, 3);
+    }
+    ctx.fillStyle = mixHex(face, palette.detail, 0.16);
+    if (h > 15) ctx.fillRect(x + 12, y + 9, Math.max(0, w * 0.28), 2);
   }
 
   if (platform.motion) {

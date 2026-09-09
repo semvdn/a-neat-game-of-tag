@@ -1,6 +1,6 @@
 import type { BiomeId, BiomeSample } from '../types';
 import { WORLD_REF_HEIGHT } from '../constants';
-import { biomeHash, biomeRandom01, getBiomeAtX, mixHex, paletteForBiomeSample, VISUAL_BIOMES } from '../world/biomes';
+import { BIOME_VISUAL_VERSION, biomeHash, biomeRandom01, getBiomeAtX, mixHex, paletteForBiomeSample, VISUAL_BIOMES } from '../world/biomes';
 
 const BACKGROUND_CHUNK_WIDTH = 600;
 const MAX_DESCRIPTOR_CACHE = 96;
@@ -24,7 +24,7 @@ export class BiomeBackgroundCache {
   clear(){this.chunks.clear();}
   get size(){return this.chunks.size;}
   getChunk(layer:Layer,chunkIndex:number,seed:number):BackgroundChunkDescriptor{
-    const key=`${seed}:${layer}:${chunkIndex}`;const existing=this.chunks.get(key);
+    const key=`v${BIOME_VISUAL_VERSION}:${seed}:${layer}:${chunkIndex}`;const existing=this.chunks.get(key);
     if(existing){this.chunks.delete(key);this.chunks.set(key,existing);return existing;}
     const descriptor=this.generateChunk(layer,chunkIndex,seed);this.chunks.set(key,descriptor);
     if(this.chunks.size>MAX_DESCRIPTOR_CACHE){const oldest=this.chunks.keys().next().value as string|undefined;if(oldest)this.chunks.delete(oldest);}
@@ -63,120 +63,608 @@ function drawSkyBands(ctx:CanvasRenderingContext2D,o:BackgroundDrawOptions){
   }
 }
 
-function rectTree(ctx:CanvasRenderingContext2D,x:number,baseY:number,w:number,h:number,color:string,detail:string,broad=false){
-  ctx.fillStyle=color;const trunk=Math.max(3,snap(w*.1));ctx.fillRect(snap(x+w*.47),snap(baseY-h*.55),trunk,snap(h*.55));
-  if(broad){ctx.fillRect(snap(x+w*.12),snap(baseY-h*.77),snap(w*.76),snap(h*.25));ctx.fillRect(snap(x+w*.25),snap(baseY-h*.94),snap(w*.52),snap(h*.22));ctx.fillRect(snap(x+w*.04),snap(baseY-h*.64),snap(w*.92),snap(h*.18));}
-  else {for(let i=0;i<4;i++){const yy=baseY-h*(.34+i*.14),ww=w*(.9-i*.15);ctx.fillRect(snap(x+(w-ww)/2),snap(yy),snap(ww),snap(h*.16));}}
-  ctx.fillStyle=rgba(detail,.28);ctx.fillRect(snap(x+w*.34),snap(baseY-h*.7),Math.max(2,snap(w*.08)),Math.max(2,snap(h*.06)));
-}
-
-function drawLowland(ctx:CanvasRenderingContext2D,x:number,b:number,w:number,h:number,c:string,d:string,v:number){rectTree(ctx,x,b,w,h,c,d,v%3!==0);}
-function drawSpire(ctx:CanvasRenderingContext2D,x:number,b:number,w:number,h:number,c:string,d:string,v:number){ctx.fillStyle=c;const bw=Math.max(8,snap(w*(.38+(v%3)*.08))),bx=snap(x+(w-bw)*.5);ctx.fillRect(bx,snap(b-h*.72),bw,snap(h*.72));ctx.beginPath();ctx.moveTo(bx-3,snap(b-h*.72));ctx.lineTo(snap(x+w*.5),snap(b-h));ctx.lineTo(bx+bw+3,snap(b-h*.72));ctx.closePath();ctx.fill();ctx.fillStyle=rgba(d,.4);for(let yy=b-h*.58;yy<b-h*.12;yy+=Math.max(8,h*.16))ctx.fillRect(snap(bx+bw*.38),snap(yy),Math.max(2,snap(bw*.22)),3);}
-function drawFoundry(ctx:CanvasRenderingContext2D,x:number,b:number,w:number,h:number,c:string,d:string,v:number){ctx.fillStyle=c;if(v%2===0){const sw=Math.max(7,snap(w*.24));ctx.fillRect(snap(x+w*.18),snap(b-h*.88),sw,snap(h*.88));ctx.fillRect(snap(x+w*.55),snap(b-h*.62),Math.max(7,snap(w*.28)),snap(h*.62));ctx.fillRect(snap(x+w*.08),snap(b-h*.22),snap(w*.84),snap(h*.22));}else{ctx.fillRect(snap(x+w*.12),snap(b-h*.55),snap(w*.76),snap(h*.55));ctx.fillRect(snap(x+w*.3),snap(b-h*.82),snap(w*.18),snap(h*.27));}ctx.fillStyle=rgba(d,.46);ctx.fillRect(snap(x+w*.18),snap(b-h*.32),snap(w*.64),4);ctx.fillRect(snap(x+w*.58),snap(b-h*.5),4,snap(h*.28));}
-function drawRuins(ctx:CanvasRenderingContext2D,x:number,b:number,w:number,h:number,c:string,d:string,v:number){ctx.fillStyle=c;const cw=Math.max(6,snap(w*.18));ctx.fillRect(snap(x+w*.12),snap(b-h*.72),cw,snap(h*.72));ctx.fillRect(snap(x+w*.68),snap(b-h*(v%2?.5:.7)),cw,snap(h*(v%2?.5:.7)));ctx.fillRect(snap(x+w*.12),snap(b-h*.72),snap(w*.74),Math.max(5,snap(h*.1)));ctx.fillStyle=rgba(d,.22);ctx.fillRect(snap(x+w*.36),snap(b-h*.48),snap(w*.26),snap(h*.48));}
-
-function drawDesert(ctx:CanvasRenderingContext2D,x:number,b:number,w:number,h:number,c:string,d:string,v:number,layer:Layer){
-  if(layer==='far'){
-    ctx.fillStyle=c;const top=b-h*(.42+(v%3)*.08);ctx.fillRect(snap(x+w*.12),snap(top),snap(w*.7),snap(b-top));ctx.fillRect(snap(x+w*.02),snap(top+h*.12),snap(w*.92),snap(h*.18));ctx.fillStyle=rgba(d,.18);ctx.fillRect(snap(x+w*.2),snap(top+h*.18),snap(w*.5),4);return;
+function rectTree(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  baseY: number,
+  w: number,
+  h: number,
+  color: string,
+  detail: string,
+  broad = false,
+) {
+  ctx.fillStyle = color;
+  const trunk = Math.max(3, snap(w * (broad ? 0.09 : 0.1)));
+  ctx.fillRect(snap(x + w * 0.47), snap(baseY - h * 0.54), trunk, snap(h * 0.54));
+  if (broad) {
+    // Broad crowns use staggered blocks so they read as foliage rather than a rectangular skyline.
+    ctx.fillRect(snap(x + w * 0.12), snap(baseY - h * 0.72), snap(w * 0.76), snap(h * 0.19));
+    ctx.fillRect(snap(x + w * 0.23), snap(baseY - h * 0.9), snap(w * 0.55), snap(h * 0.2));
+    ctx.fillRect(snap(x + w * 0.02), snap(baseY - h * 0.61), snap(w * 0.92), snap(h * 0.15));
+    ctx.fillRect(snap(x + w * 0.32), snap(baseY - h), snap(w * 0.36), snap(h * 0.12));
+  } else {
+    for (let i = 0; i < 4; i++) {
+      const yy = baseY - h * (0.3 + i * 0.15);
+      const ww = w * (0.9 - i * 0.15);
+      ctx.fillRect(snap(x + (w - ww) / 2), snap(yy), snap(ww), snap(h * 0.14));
+    }
   }
-  ctx.fillStyle=c;
-  if(v===0||v===4){ // sparse cactus landmark
-    const tw=Math.max(4,snap(w*.12)),tx=snap(x+w*.47);ctx.fillRect(tx,snap(b-h*.78),tw,snap(h*.78));ctx.fillRect(snap(tx-w*.22),snap(b-h*.55),snap(w*.24),tw);ctx.fillRect(snap(tx-w*.22),snap(b-h*.55),tw,snap(h*.2));ctx.fillRect(snap(tx+tw),snap(b-h*.4),snap(w*.25),tw);ctx.fillRect(snap(tx+w*.22),snap(b-h*.55),tw,snap(h*.18));
-  } else if(v===2||v===6){ // low weathered boulder / shelf
-    ctx.fillRect(snap(x+w*.08),snap(b-h*.3),snap(w*.84),snap(h*.3));ctx.fillRect(snap(x+w*.2),snap(b-h*.43),snap(w*.56),snap(h*.15));
-  } else { // eroded rock arch
-    ctx.fillRect(snap(x+w*.14),snap(b-h*.58),snap(w*.18),snap(h*.58));ctx.fillRect(snap(x+w*.68),snap(b-h*.46),snap(w*.16),snap(h*.46));ctx.fillRect(snap(x+w*.14),snap(b-h*.58),snap(w*.7),snap(h*.13));
+  ctx.fillStyle = rgba(detail, 0.24);
+  ctx.fillRect(snap(x + w * 0.31), snap(baseY - h * 0.72), Math.max(2, snap(w * 0.07)), Math.max(2, snap(h * 0.05)));
+}
+
+function drawLowland(
+  ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
+  c: string, d: string, v: number, layer: Layer,
+) {
+  if (layer === 'far') {
+    // Small copses instead of a wall of tree spikes.
+    ctx.fillStyle = c;
+    const crownY = b - h * 0.42;
+    ctx.fillRect(snap(x + w * 0.08), snap(crownY), snap(w * 0.34), snap(h * 0.26));
+    ctx.fillRect(snap(x + w * 0.31), snap(crownY - h * 0.12), snap(w * 0.37), snap(h * 0.38));
+    ctx.fillRect(snap(x + w * 0.62), snap(crownY + h * 0.03), snap(w * 0.28), snap(h * 0.23));
+    return;
   }
-  ctx.fillStyle=rgba(d,.3);ctx.fillRect(snap(x+w*.2),snap(b-h*.18),snap(w*.55),3);
-}
-
-function drawSnowyMountain(ctx:CanvasRenderingContext2D,x:number,b:number,w:number,h:number,c:string,d:string,v:number,layer:Layer){
-  if(layer==='far'){
-    ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(snap(x),snap(b));ctx.lineTo(snap(x+w*.48),snap(b-h));ctx.lineTo(snap(x+w),snap(b));ctx.closePath();ctx.fill();ctx.fillStyle=rgba(d,.72);ctx.beginPath();ctx.moveTo(snap(x+w*.48),snap(b-h));ctx.lineTo(snap(x+w*.33),snap(b-h*.68));ctx.lineTo(snap(x+w*.46),snap(b-h*.73));ctx.lineTo(snap(x+w*.56),snap(b-h*.64));ctx.lineTo(snap(x+w*.65),snap(b-h*.7));ctx.closePath();ctx.fill();return;
+  const kind = v % 5;
+  if (kind === 0) {
+    // Low hedge / scrub mass gives the biome horizontal visual weight.
+    ctx.fillStyle = c;
+    ctx.fillRect(snap(x + w * 0.04), snap(b - h * 0.28), snap(w * 0.92), snap(h * 0.28));
+    ctx.fillRect(snap(x + w * 0.16), snap(b - h * 0.41), snap(w * 0.3), snap(h * 0.15));
+    ctx.fillRect(snap(x + w * 0.58), snap(b - h * 0.37), snap(w * 0.25), snap(h * 0.11));
+  } else if (kind === 2) {
+    // Poplar pair — narrow vertical punctuation, but much shorter than Spires architecture.
+    const tw = Math.max(3, snap(w * 0.07));
+    for (const [ox, scale] of [[0.28, 0.85], [0.58, 0.68]] as const) {
+      ctx.fillStyle = c;
+      ctx.fillRect(snap(x + w * ox), snap(b - h * 0.5 * scale), tw, snap(h * 0.5 * scale));
+      ctx.fillRect(snap(x + w * (ox - 0.1)), snap(b - h * 0.82 * scale), snap(w * 0.22), snap(h * 0.36 * scale));
+    }
+  } else if (kind === 3) {
+    // Grass-covered stone mound: a low landmark that keeps the horizon open.
+    ctx.fillStyle = c;
+    ctx.fillRect(snap(x + w * 0.12), snap(b - h * 0.22), snap(w * 0.76), snap(h * 0.22));
+    ctx.fillRect(snap(x + w * 0.26), snap(b - h * 0.34), snap(w * 0.42), snap(h * 0.13));
+    ctx.fillStyle = rgba(d, 0.26);
+    ctx.fillRect(snap(x + w * 0.18), snap(b - h * 0.22), snap(w * 0.54), 3);
+  } else {
+    rectTree(ctx, x, b, w, h, c, d, true);
   }
-  if(v%5===0){ctx.fillStyle=c;ctx.fillRect(snap(x+w*.18),snap(b-h*.34),snap(w*.64),snap(h*.34));ctx.fillStyle=rgba(d,.68);ctx.beginPath();ctx.moveTo(snap(x+w*.08),snap(b-h*.34));ctx.lineTo(snap(x+w*.5),snap(b-h*.58));ctx.lineTo(snap(x+w*.92),snap(b-h*.34));ctx.closePath();ctx.fill();ctx.fillStyle=rgba('#17222d',.55);ctx.fillRect(snap(x+w*.44),snap(b-h*.2),snap(w*.14),snap(h*.2));}
-  else rectTree(ctx,x,b,w,h,c,d,false);
 }
 
-function drawTemperateForest(ctx:CanvasRenderingContext2D,x:number,b:number,w:number,h:number,c:string,d:string,v:number,layer:Layer){
-  if(layer==='far'){ctx.fillStyle=c;const blobs=4;for(let i=0;i<blobs;i++){const bw=w*(.32+(i%2)*.08);ctx.fillRect(snap(x+i*w*.2),snap(b-h*(.5+(i%3)*.09)),snap(bw),snap(h*(.38+(i%2)*.08)));}return;}
-  rectTree(ctx,x,b,w,h,c,d,true);
-  if(v%4===0){ctx.fillStyle=rgba(d,.26);ctx.fillRect(snap(x+w*.05),snap(b-h*.12),snap(w*.28),3);ctx.fillRect(snap(x+w*.68),snap(b-h*.2),snap(w*.24),3);}
-}
-
-function drawCity(ctx:CanvasRenderingContext2D,x:number,b:number,w:number,h:number,c:string,d:string,v:number,layer:Layer){
-  ctx.fillStyle=c;const buildingW=Math.max(12,snap(w*(.55+(v%3)*.12))),bx=snap(x+(w-buildingW)*.5),bh=h*(.55+(v%4)*.11);ctx.fillRect(bx,snap(b-bh),buildingW,snap(bh));
-  if(v%3===0)ctx.fillRect(snap(bx+buildingW*.18),snap(b-bh-h*.16),snap(buildingW*.18),snap(h*.16));
-  if(v%5===0){ctx.fillRect(snap(bx+buildingW*.66),snap(b-bh-h*.1),3,snap(h*.1));ctx.fillRect(snap(bx+buildingW*.58),snap(b-bh-h*.1),snap(buildingW*.18),3);}
-  ctx.fillStyle=rgba(d,layer==='far'?.22:.42);const cols=Math.max(1,Math.floor(buildingW/14)),rows=Math.max(1,Math.floor(bh/18));for(let yy=0;yy<rows;yy++)for(let xx=0;xx<cols;xx++)if((xx+yy+v)%3!==0)ctx.fillRect(snap(bx+5+xx*13),snap(b-bh+7+yy*17),3,4);
-}
-
-function drawRuralVillage(ctx:CanvasRenderingContext2D,x:number,b:number,w:number,h:number,c:string,d:string,v:number,layer:Layer){
-  if(layer==='far'&&v===0){ // one occasional distant windmill, not a forest of poles
-    ctx.fillStyle=c;ctx.fillRect(snap(x+w*.46),snap(b-h*.7),4,snap(h*.7));ctx.fillStyle=rgba(d,.35);ctx.fillRect(snap(x+w*.18),snap(b-h*.5),snap(w*.64),4);ctx.fillRect(snap(x+w*.48),snap(b-h*.78),4,snap(h*.5));return;
+function drawSpire(
+  ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
+  c: string, d: string, v: number, layer: Layer,
+) {
+  ctx.fillStyle = c;
+  const kind = v % 5;
+  if (kind === 1 && layer !== 'far') {
+    // Twin towers connected by a narrow high bridge.
+    const towerW = Math.max(7, snap(w * 0.22));
+    for (const ox of [0.2, 0.6]) {
+      const bx = snap(x + w * ox);
+      ctx.fillRect(bx, snap(b - h * 0.64), towerW, snap(h * 0.64));
+      ctx.beginPath();
+      ctx.moveTo(bx - 2, snap(b - h * 0.64));
+      ctx.lineTo(snap(bx + towerW * 0.5), snap(b - h * 0.92));
+      ctx.lineTo(bx + towerW + 2, snap(b - h * 0.64));
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.fillRect(snap(x + w * 0.29), snap(b - h * 0.4), snap(w * 0.44), Math.max(4, snap(h * 0.07)));
+    return;
   }
-  if(v===5){ // near/mid windmill landmark
-    ctx.fillStyle=c;ctx.fillRect(snap(x+w*.42),snap(b-h*.54),snap(w*.16),snap(h*.54));ctx.fillStyle=rgba(d,.48);ctx.fillRect(snap(x+w*.47),snap(b-h*.8),4,snap(h*.52));ctx.fillRect(snap(x+w*.22),snap(b-h*.56),snap(w*.56),4);return;
+  if (kind === 2 && layer !== 'far') {
+    // Open gate/arch: broad base and negative space keep it distinct from the needle towers.
+    const colW = Math.max(7, snap(w * 0.18));
+    ctx.fillRect(snap(x + w * 0.12), snap(b - h * 0.56), colW, snap(h * 0.56));
+    ctx.fillRect(snap(x + w * 0.7), snap(b - h * 0.56), colW, snap(h * 0.56));
+    ctx.fillRect(snap(x + w * 0.12), snap(b - h * 0.58), snap(w * 0.76), Math.max(6, snap(h * 0.1)));
+    ctx.beginPath();
+    ctx.moveTo(snap(x + w * 0.2), snap(b - h * 0.58));
+    ctx.lineTo(snap(x + w * 0.5), snap(b - h * 0.82));
+    ctx.lineTo(snap(x + w * 0.8), snap(b - h * 0.58));
+    ctx.closePath(); ctx.fill();
+    return;
   }
-  ctx.fillStyle=c;
-  if(v===3||v===6){ // low barn
-    ctx.fillRect(snap(x+w*.08),snap(b-h*.32),snap(w*.84),snap(h*.32));ctx.fillStyle=rgba(d,.44);ctx.beginPath();ctx.moveTo(snap(x+w*.04),snap(b-h*.32));ctx.lineTo(snap(x+w*.34),snap(b-h*.53));ctx.lineTo(snap(x+w*.66),snap(b-h*.53));ctx.lineTo(snap(x+w*.96),snap(b-h*.32));ctx.closePath();ctx.fill();ctx.fillStyle=rgba('#1d2524',.48);ctx.fillRect(snap(x+w*.43),snap(b-h*.2),snap(w*.16),snap(h*.2));return;
+  if (kind === 4 && layer !== 'far') {
+    // Cluster of three smaller pinnacles.
+    const specs = [[0.16, 0.56, 0.18], [0.42, 0.76, 0.2], [0.68, 0.48, 0.16]] as const;
+    for (const [ox, hh, ww] of specs) {
+      const bx = x + w * ox;
+      ctx.fillRect(snap(bx), snap(b - h * hh), snap(w * ww), snap(h * hh));
+      ctx.beginPath();
+      ctx.moveTo(snap(bx - w * 0.02), snap(b - h * hh));
+      ctx.lineTo(snap(bx + w * ww * 0.5), snap(b - h * (hh + 0.18)));
+      ctx.lineTo(snap(bx + w * ww + w * 0.02), snap(b - h * hh));
+      ctx.closePath(); ctx.fill();
+    }
+    return;
   }
-  // Cottage: deliberately broader than it is tall so it reads as a building, never a platform.
-  ctx.fillRect(snap(x+w*.14),snap(b-h*.36),snap(w*.72),snap(h*.36));ctx.fillStyle=rgba(d,.48);ctx.beginPath();ctx.moveTo(snap(x+w*.06),snap(b-h*.36));ctx.lineTo(snap(x+w*.5),snap(b-h*.6));ctx.lineTo(snap(x+w*.94),snap(b-h*.36));ctx.closePath();ctx.fill();ctx.fillStyle=rgba('#1d2524',.5);ctx.fillRect(snap(x+w*.43),snap(b-h*.19),snap(w*.14),snap(h*.19));
+
+  const bodyW = Math.max(9, snap(w * (kind === 3 ? 0.42 : 0.35)));
+  const bx = snap(x + (w - bodyW) * 0.5);
+  const shoulderY = b - h * (kind === 3 ? 0.6 : 0.67);
+  ctx.fillRect(bx, snap(shoulderY), bodyW, snap(b - shoulderY));
+  ctx.fillRect(snap(bx - bodyW * 0.26), snap(b - h * 0.27), snap(bodyW * 1.52), snap(h * 0.27));
+  ctx.beginPath();
+  ctx.moveTo(bx - 3, snap(shoulderY));
+  ctx.lineTo(snap(x + w * 0.5), snap(b - h * (kind === 3 ? 0.86 : 1)));
+  ctx.lineTo(bx + bodyW + 3, snap(shoulderY));
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = rgba(d, 0.34);
+  for (let yy = b - h * 0.52; yy < b - h * 0.12; yy += Math.max(9, h * 0.18)) {
+    ctx.fillRect(snap(bx + bodyW * 0.38), snap(yy), Math.max(2, snap(bodyW * 0.22)), 3);
+  }
 }
 
-function drawSwamp(ctx:CanvasRenderingContext2D,x:number,b:number,w:number,h:number,c:string,d:string,v:number,layer:Layer){
-  ctx.fillStyle=c;
-  if(v%4===0){ // dead tree
-    const tx=snap(x+w*.46),tw=Math.max(4,snap(w*.11));ctx.fillRect(tx,snap(b-h*.78),tw,snap(h*.78));ctx.fillRect(snap(tx-w*.28),snap(b-h*.58),snap(w*.3),4);ctx.fillRect(snap(tx+w*.06),snap(b-h*.48),snap(w*.3),4);ctx.fillRect(snap(tx-w*.24),snap(b-h*.58),4,snap(h*.18));
-  } else { // cypress / willow mass
-    ctx.fillRect(snap(x+w*.43),snap(b-h*.64),Math.max(4,snap(w*.12)),snap(h*.64));ctx.fillRect(snap(x+w*.12),snap(b-h*.78),snap(w*.76),snap(h*.26));ctx.fillRect(snap(x+w*.2),snap(b-h*.58),snap(w*.62),snap(h*.18));ctx.fillStyle=rgba(d,.26);for(let i=0;i<4;i++)ctx.fillRect(snap(x+w*(.22+i*.15)),snap(b-h*.56),2,snap(h*(.14+(i%2)*.08)));
+function drawFoundry(
+  ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
+  c: string, d: string, v: number, layer: Layer,
+) {
+  ctx.fillStyle = c;
+  const kind = v % 4;
+  if (kind === 0) {
+    // Furnace hall + one substantial stack.
+    ctx.fillRect(snap(x + w * 0.08), snap(b - h * 0.42), snap(w * 0.72), snap(h * 0.42));
+    ctx.fillRect(snap(x + w * 0.58), snap(b - h * 0.9), snap(w * 0.16), snap(h * 0.52));
+    ctx.fillRect(snap(x + w * 0.55), snap(b - h * 0.92), snap(w * 0.22), Math.max(4, snap(h * 0.06)));
+    ctx.fillStyle = rgba(d, 0.3);
+    ctx.fillRect(snap(x + w * 0.14), snap(b - h * 0.3), snap(w * 0.35), Math.max(4, snap(h * 0.08)));
+  } else if (kind === 1) {
+    // Storage tank with a short pipe run.
+    const tankX = x + w * 0.17, tankW = w * 0.5;
+    ctx.fillRect(snap(tankX), snap(b - h * 0.53), snap(tankW), snap(h * 0.53));
+    ctx.fillRect(snap(tankX + tankW * 0.1), snap(b - h * 0.6), snap(tankW * 0.8), snap(h * 0.08));
+    ctx.fillRect(snap(x + w * 0.67), snap(b - h * 0.3), snap(w * 0.26), Math.max(4, snap(h * 0.08)));
+    ctx.fillRect(snap(x + w * 0.84), snap(b - h * 0.3), Math.max(4, snap(w * 0.06)), snap(h * 0.22));
+  } else if (kind === 2 && layer !== 'far') {
+    // Gantry/crane silhouette — broad rather than another vertical chimney.
+    const legW = Math.max(4, snap(w * 0.07));
+    ctx.fillRect(snap(x + w * 0.18), snap(b - h * 0.64), legW, snap(h * 0.64));
+    ctx.fillRect(snap(x + w * 0.7), snap(b - h * 0.48), legW, snap(h * 0.48));
+    ctx.fillRect(snap(x + w * 0.16), snap(b - h * 0.66), snap(w * 0.64), Math.max(5, snap(h * 0.08)));
+    ctx.fillRect(snap(x + w * 0.48), snap(b - h * 0.58), 3, snap(h * 0.22));
+  } else {
+    // Sawtooth factory roof.
+    ctx.fillRect(snap(x + w * 0.06), snap(b - h * 0.38), snap(w * 0.88), snap(h * 0.38));
+    for (let i = 0; i < 3; i++) {
+      const sx = x + w * (0.1 + i * 0.27);
+      ctx.beginPath();
+      ctx.moveTo(snap(sx), snap(b - h * 0.38));
+      ctx.lineTo(snap(sx + w * 0.11), snap(b - h * 0.52));
+      ctx.lineTo(snap(sx + w * 0.21), snap(b - h * 0.38));
+      ctx.closePath(); ctx.fill();
+    }
   }
-  if(layer!=='far'){ctx.fillStyle=rgba(d,.36);for(let i=0;i<5;i++)ctx.fillRect(snap(x+i*w*.18),snap(b-h*(.07+(i%2)*.03)),2,snap(h*.08));}
 }
 
-function scaleFeatureForBiome(biome:BiomeId,layer:Layer,variant:number,width:number,height:number):{width:number;height:number}{
-  let w=width,h=height;
-  if(biome==='desert'){
-    if(layer==='far'){w*=2.3;h*=.8;} else if(variant===0||variant===4){w*=.68;h*=1.34;} else if(variant===2||variant===6){w*=1.55;h*=.76;} else {w*=1.48;h*=.92;}
-  } else if(biome==='snowy-mountains'){
-    if(layer==='far'){w*=2.2;h*=1.34;} else {w*=.92;h*=1.24;}
-  } else if(biome==='temperate-forest'){
-    if(layer==='far'){w*=1.8;h*=.76;} else {w*=1.42;h*=1.12;}
-  } else if(biome==='city'){
-    w*=layer==='far'?.95:1.02; h*=layer==='far'?1.38:1.32;
-  } else if(biome==='rural-village'){
-    if(layer==='far'){w*=1.62;h*=.84;} else if(variant===5){w*=1.18;h*=1.34;} else {w*=1.68;h*=.86;}
-  } else if(biome==='swamp'){
-    w*=1.22; h*=layer==='far'?.96:1.26;
-  } else if(biome==='lowlands'){
-    w*=1.16;h*=1.02;
-  } else if(biome==='spires'){
-    w*=.9;h*=1.08;
+function drawRuins(
+  ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
+  c: string, d: string, v: number, layer: Layer,
+) {
+  ctx.fillStyle = c;
+  const kind = v % 4;
+  if (kind === 0) {
+    // Broken arch with asymmetric surviving sides.
+    const colW = Math.max(6, snap(w * 0.16));
+    ctx.fillRect(snap(x + w * 0.12), snap(b - h * 0.68), colW, snap(h * 0.68));
+    ctx.fillRect(snap(x + w * 0.72), snap(b - h * 0.52), colW, snap(h * 0.52));
+    ctx.fillRect(snap(x + w * 0.12), snap(b - h * 0.68), snap(w * 0.76), Math.max(6, snap(h * 0.12)));
+    ctx.fillStyle = rgba(d, 0.18);
+    ctx.fillRect(snap(x + w * 0.36), snap(b - h * 0.46), snap(w * 0.28), snap(h * 0.46));
+  } else if (kind === 1) {
+    // Column pair and fragmentary lintel.
+    const colW = Math.max(6, snap(w * 0.14));
+    ctx.fillRect(snap(x + w * 0.22), snap(b - h * 0.72), colW, snap(h * 0.72));
+    ctx.fillRect(snap(x + w * 0.62), snap(b - h * 0.64), colW, snap(h * 0.64));
+    ctx.fillRect(snap(x + w * 0.17), snap(b - h * 0.74), snap(w * 0.56), Math.max(4, snap(h * 0.07)));
+  } else if (kind === 2) {
+    // Collapsed wall with deliberately irregular skyline.
+    ctx.fillRect(snap(x + w * 0.06), snap(b - h * 0.34), snap(w * 0.86), snap(h * 0.34));
+    ctx.fillRect(snap(x + w * 0.12), snap(b - h * 0.53), snap(w * 0.24), snap(h * 0.2));
+    ctx.fillRect(snap(x + w * 0.55), snap(b - h * 0.46), snap(w * 0.18), snap(h * 0.13));
+    ctx.fillStyle = rgba(d, 0.22);
+    ctx.fillRect(snap(x + w * 0.36), snap(b - h * 0.25), snap(w * 0.14), snap(h * 0.25));
+  } else {
+    // Broken tower, broader than Spires and visibly incomplete.
+    ctx.fillRect(snap(x + w * 0.27), snap(b - h * 0.72), snap(w * 0.42), snap(h * 0.72));
+    ctx.fillStyle = rgba(d, 0.24);
+    ctx.fillRect(snap(x + w * 0.37), snap(b - h * 0.52), snap(w * 0.12), snap(h * 0.14));
+    ctx.fillRect(snap(x + w * 0.52), snap(b - h * 0.31), snap(w * 0.09), snap(h * 0.1));
+    ctx.fillRect(snap(x + w * 0.27), snap(b - h * 0.78), snap(w * 0.13), snap(h * 0.08));
   }
-  return {width:Math.max(12,w),height:Math.max(20,h)};
 }
 
-function drawFeatureForBiome(ctx:CanvasRenderingContext2D,biome:BiomeId,x:number,b:number,w:number,h:number,c:string,d:string,v:number,layer:Layer){
-  if(biome==='lowlands')drawLowland(ctx,x,b,w,h,c,d,v);
-  else if(biome==='spires')drawSpire(ctx,x,b,w,h,c,d,v);
-  else if(biome==='foundry')drawFoundry(ctx,x,b,w,h,c,d,v);
-  else if(biome==='ruins')drawRuins(ctx,x,b,w,h,c,d,v);
-  else if(biome==='desert')drawDesert(ctx,x,b,w,h,c,d,v,layer);
-  else if(biome==='snowy-mountains')drawSnowyMountain(ctx,x,b,w,h,c,d,v,layer);
-  else if(biome==='temperate-forest')drawTemperateForest(ctx,x,b,w,h,c,d,v,layer);
-  else if(biome==='city')drawCity(ctx,x,b,w,h,c,d,v,layer);
-  else if(biome==='rural-village')drawRuralVillage(ctx,x,b,w,h,c,d,v,layer);
-  else drawSwamp(ctx,x,b,w,h,c,d,v,layer);
+function drawDesert(
+  ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
+  c: string, d: string, v: number, layer: Layer,
+) {
+  ctx.fillStyle = c;
+  if (layer === 'far') {
+    // Broad stepped mesas with different shoulder heights.
+    const top = b - h * (0.38 + (v % 3) * 0.055);
+    ctx.fillRect(snap(x + w * 0.08), snap(top + h * 0.1), snap(w * 0.84), snap(b - top - h * 0.1));
+    ctx.fillRect(snap(x + w * 0.2), snap(top), snap(w * 0.53), snap(h * 0.16));
+    if (v % 2 === 0) ctx.fillRect(snap(x + w * 0.32), snap(top - h * 0.1), snap(w * 0.24), snap(h * 0.12));
+    ctx.fillStyle = rgba(d, 0.16);
+    ctx.fillRect(snap(x + w * 0.2), snap(top + h * 0.2), snap(w * 0.48), 4);
+    return;
+  }
+  const kind = v % 5;
+  if (kind === 0) {
+    // Saguaro: deliberately slender and clearly organic.
+    const trunkW = Math.max(4, snap(w * 0.1));
+    const tx = snap(x + w * 0.47);
+    ctx.fillRect(tx, snap(b - h * 0.76), trunkW, snap(h * 0.76));
+    ctx.fillRect(snap(tx - w * 0.22), snap(b - h * 0.5), snap(w * 0.23), trunkW);
+    ctx.fillRect(snap(tx - w * 0.22), snap(b - h * 0.5), trunkW, snap(h * 0.2));
+    ctx.fillRect(snap(tx + trunkW), snap(b - h * 0.38), snap(w * 0.24), trunkW);
+    ctx.fillRect(snap(tx + w * 0.21), snap(b - h * 0.54), trunkW, snap(h * 0.18));
+  } else if (kind === 1 || kind === 4) {
+    // Layered boulders: low, broad counterweight to the cactus.
+    ctx.fillRect(snap(x + w * 0.06), snap(b - h * 0.28), snap(w * 0.88), snap(h * 0.28));
+    ctx.fillRect(snap(x + w * 0.18), snap(b - h * 0.43), snap(w * 0.56), snap(h * 0.17));
+    ctx.fillRect(snap(x + w * 0.42), snap(b - h * 0.52), snap(w * 0.29), snap(h * 0.1));
+  } else if (kind === 2) {
+    // Eroded arch with a generous opening.
+    ctx.fillRect(snap(x + w * 0.1), snap(b - h * 0.54), snap(w * 0.18), snap(h * 0.54));
+    ctx.fillRect(snap(x + w * 0.72), snap(b - h * 0.46), snap(w * 0.16), snap(h * 0.46));
+    ctx.fillRect(snap(x + w * 0.1), snap(b - h * 0.54), snap(w * 0.78), snap(h * 0.13));
+  } else {
+    // Split hoodoo pair.
+    ctx.fillRect(snap(x + w * 0.22), snap(b - h * 0.58), snap(w * 0.18), snap(h * 0.58));
+    ctx.fillRect(snap(x + w * 0.17), snap(b - h * 0.61), snap(w * 0.29), snap(h * 0.1));
+    ctx.fillRect(snap(x + w * 0.61), snap(b - h * 0.42), snap(w * 0.14), snap(h * 0.42));
+    ctx.fillRect(snap(x + w * 0.56), snap(b - h * 0.45), snap(w * 0.24), snap(h * 0.08));
+  }
+  ctx.fillStyle = rgba(d, 0.24);
+  ctx.fillRect(snap(x + w * 0.2), snap(b - h * 0.16), snap(w * 0.52), 3);
 }
 
-function drawNaturalRidge(ctx:CanvasRenderingContext2D,biome:BiomeId,chunk:BackgroundChunkDescriptor,x0:number,w:number,b:number,cssHeight:number,color:string,detail:string){
-  if(biome==='city'||biome==='foundry'||biome==='ruins')return;
-  ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(snap(x0-2),snap(cssHeight+2));
-  for(let i=0;i<=RIDGE_SEGMENTS;i++){const x=x0+w*(i/RIDGE_SEGMENTS);let ridgeHeight=cssHeight*(.1+chunk.ridge[i]*.22);if(biome==='desert')ridgeHeight*=.48;if(biome==='swamp')ridgeHeight*=.28;if(biome==='rural-village')ridgeHeight*=.5;if(biome==='temperate-forest')ridgeHeight*=.55;if(biome==='snowy-mountains')ridgeHeight*=1.18;ctx.lineTo(snap(x),snap(b-ridgeHeight));}
-  ctx.lineTo(snap(x0+w+2),snap(cssHeight+2));ctx.closePath();ctx.fill();
-  if(biome==='snowy-mountains'){ctx.strokeStyle=rgba(detail,.16);ctx.lineWidth=2;ctx.stroke();}
+function drawSnowyMountain(
+  ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
+  c: string, d: string, v: number, layer: Layer,
+) {
+  if (layer === 'far') {
+    ctx.fillStyle = c;
+    const peak = 0.42 + (v % 3) * 0.07;
+    ctx.beginPath();
+    ctx.moveTo(snap(x), snap(b));
+    ctx.lineTo(snap(x + w * peak), snap(b - h));
+    ctx.lineTo(snap(x + w), snap(b));
+    ctx.closePath(); ctx.fill();
+    // Snow cap follows the peak rather than forming an oversized white triangle.
+    ctx.fillStyle = rgba(d, 0.68);
+    ctx.beginPath();
+    ctx.moveTo(snap(x + w * peak), snap(b - h));
+    ctx.lineTo(snap(x + w * (peak - 0.14)), snap(b - h * 0.69));
+    ctx.lineTo(snap(x + w * (peak - 0.03)), snap(b - h * 0.74));
+    ctx.lineTo(snap(x + w * (peak + 0.07)), snap(b - h * 0.65));
+    ctx.lineTo(snap(x + w * (peak + 0.17)), snap(b - h * 0.71));
+    ctx.closePath(); ctx.fill();
+    return;
+  }
+  if (v % 6 === 0) {
+    // Small chalet breaks up endless conifers.
+    ctx.fillStyle = c;
+    ctx.fillRect(snap(x + w * 0.18), snap(b - h * 0.31), snap(w * 0.64), snap(h * 0.31));
+    ctx.fillStyle = rgba(d, 0.64);
+    ctx.beginPath();
+    ctx.moveTo(snap(x + w * 0.08), snap(b - h * 0.31));
+    ctx.lineTo(snap(x + w * 0.5), snap(b - h * 0.53));
+    ctx.lineTo(snap(x + w * 0.92), snap(b - h * 0.31));
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = rgba('#17222d', 0.5);
+    ctx.fillRect(snap(x + w * 0.44), snap(b - h * 0.18), snap(w * 0.14), snap(h * 0.18));
+  } else if (v % 4 === 1) {
+    // Pair of pines at different heights.
+    rectTree(ctx, x, b, w * 0.58, h * 0.9, c, d, false);
+    rectTree(ctx, x + w * 0.43, b, w * 0.52, h * 0.7, c, d, false);
+  } else {
+    rectTree(ctx, x, b, w, h, c, d, false);
+  }
+}
+
+function drawTemperateForest(
+  ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
+  c: string, d: string, v: number, layer: Layer,
+) {
+  if (layer === 'far') {
+    // Rolling overlapping crowns with visible gaps; no rectangular skyline wall.
+    ctx.fillStyle = c;
+    const crowns = [
+      [0.02, 0.58, 0.35, 0.3], [0.24, 0.72, 0.38, 0.42], [0.52, 0.62, 0.34, 0.34], [0.7, 0.75, 0.27, 0.44],
+    ];
+    for (const [ox, top, ww, hh] of crowns) {
+      ctx.fillRect(snap(x + w * ox), snap(b - h * top), snap(w * ww), snap(h * hh));
+    }
+    return;
+  }
+  if (v % 5 === 0) {
+    // Fallen log / understorey cluster adds a low form to the tree vocabulary.
+    ctx.fillStyle = c;
+    ctx.fillRect(snap(x + w * 0.08), snap(b - h * 0.18), snap(w * 0.82), snap(h * 0.13));
+    ctx.fillRect(snap(x + w * 0.15), snap(b - h * 0.29), snap(w * 0.23), snap(h * 0.12));
+    ctx.fillRect(snap(x + w * 0.61), snap(b - h * 0.26), snap(w * 0.18), snap(h * 0.1));
+  } else if (v % 4 === 1) {
+    rectTree(ctx, x, b, w * 0.66, h, c, d, true);
+    rectTree(ctx, x + w * 0.43, b, w * 0.58, h * 0.8, c, d, true);
+  } else {
+    rectTree(ctx, x, b, w, h, c, d, true);
+  }
+}
+
+function drawCity(
+  ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
+  c: string, d: string, v: number, layer: Layer,
+) {
+  ctx.fillStyle = c;
+  const kind = v % 5;
+  let bx = x + w * 0.12, buildingW = w * 0.72, buildingH = h * 0.72;
+  if (kind === 1) { bx = x + w * 0.23; buildingW = w * 0.5; buildingH = h * 0.9; }
+  if (kind === 2) { bx = x + w * 0.08; buildingW = w * 0.84; buildingH = h * 0.48; }
+  if (kind === 3) { bx = x + w * 0.17; buildingW = w * 0.62; buildingH = h * 0.8; }
+  ctx.fillRect(snap(bx), snap(b - buildingH), snap(buildingW), snap(buildingH));
+
+  if (kind === 0 || kind === 3) {
+    // Stepped roof mass.
+    ctx.fillRect(snap(bx + buildingW * 0.18), snap(b - buildingH - h * 0.1), snap(buildingW * 0.52), snap(h * 0.11));
+  }
+  if (kind === 1) {
+    // Antenna only on the narrow tower variant.
+    ctx.fillRect(snap(bx + buildingW * 0.48), snap(b - buildingH - h * 0.14), 3, snap(h * 0.14));
+  }
+  if (kind === 2 && layer !== 'far') {
+    // Low rooftop water tank/utility silhouette.
+    ctx.fillRect(snap(bx + buildingW * 0.58), snap(b - buildingH - h * 0.13), snap(buildingW * 0.22), snap(h * 0.14));
+    ctx.fillRect(snap(bx + buildingW * 0.62), snap(b - buildingH), 3, snap(h * 0.12));
+    ctx.fillRect(snap(bx + buildingW * 0.76), snap(b - buildingH), 3, snap(h * 0.12));
+  }
+
+  ctx.fillStyle = rgba(d, layer === 'far' ? 0.19 : 0.38);
+  const cols = Math.max(1, Math.floor(buildingW / 16));
+  const rows = Math.max(1, Math.floor(buildingH / 20));
+  for (let yy = 0; yy < rows; yy++) {
+    for (let xx = 0; xx < cols; xx++) {
+      if ((xx + yy + v) % 3 !== 0) {
+        ctx.fillRect(snap(bx + 6 + xx * 15), snap(b - buildingH + 8 + yy * 19), 3, 4);
+      }
+    }
+  }
+}
+
+function drawRuralVillage(
+  ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
+  c: string, d: string, v: number, layer: Layer,
+) {
+  const kind = v % 7;
+  if (kind === 5 && layer !== 'far') {
+    // One windmill landmark. Rotor diameter is proportional to tower height, not the whole chunk.
+    ctx.fillStyle = c;
+    const towerX = x + w * 0.43;
+    ctx.fillRect(snap(towerX), snap(b - h * 0.52), snap(w * 0.14), snap(h * 0.52));
+    const hubX = x + w * 0.5, hubY = b - h * 0.58;
+    ctx.fillStyle = rgba(d, 0.46);
+    ctx.fillRect(snap(hubX - w * 0.22), snap(hubY - 2), snap(w * 0.44), 4);
+    ctx.fillRect(snap(hubX - 2), snap(hubY - h * 0.22), 4, snap(h * 0.44));
+    ctx.fillRect(snap(hubX - 3), snap(hubY - 3), 6, 6);
+    return;
+  }
+  ctx.fillStyle = c;
+  if (kind === 3 || kind === 6) {
+    // Barn: low and broad, with a large central door.
+    ctx.fillRect(snap(x + w * 0.07), snap(b - h * 0.32), snap(w * 0.86), snap(h * 0.32));
+    ctx.fillStyle = rgba(d, 0.43);
+    ctx.beginPath();
+    ctx.moveTo(snap(x + w * 0.03), snap(b - h * 0.32));
+    ctx.lineTo(snap(x + w * 0.33), snap(b - h * 0.51));
+    ctx.lineTo(snap(x + w * 0.67), snap(b - h * 0.51));
+    ctx.lineTo(snap(x + w * 0.97), snap(b - h * 0.32));
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = rgba('#1d2524', 0.44);
+    ctx.fillRect(snap(x + w * 0.42), snap(b - h * 0.2), snap(w * 0.18), snap(h * 0.2));
+    return;
+  }
+  if (kind === 2 && layer !== 'far') {
+    // Haystack + small tree keeps the village grounded in landscape, not just buildings.
+    ctx.fillStyle = c;
+    ctx.fillRect(snap(x + w * 0.1), snap(b - h * 0.22), snap(w * 0.38), snap(h * 0.22));
+    ctx.fillRect(snap(x + w * 0.17), snap(b - h * 0.31), snap(w * 0.24), snap(h * 0.11));
+    rectTree(ctx, x + w * 0.52, b, w * 0.43, h * 0.54, c, d, true);
+    return;
+  }
+  // Cottage; windows/door keep it recognizable when scaled down.
+  ctx.fillRect(snap(x + w * 0.14), snap(b - h * 0.35), snap(w * 0.72), snap(h * 0.35));
+  ctx.fillStyle = rgba(d, 0.46);
+  ctx.beginPath();
+  ctx.moveTo(snap(x + w * 0.06), snap(b - h * 0.35));
+  ctx.lineTo(snap(x + w * 0.5), snap(b - h * 0.58));
+  ctx.lineTo(snap(x + w * 0.94), snap(b - h * 0.35));
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = rgba('#1d2524', 0.46);
+  ctx.fillRect(snap(x + w * 0.44), snap(b - h * 0.19), snap(w * 0.13), snap(h * 0.19));
+  ctx.fillRect(snap(x + w * 0.24), snap(b - h * 0.22), snap(w * 0.1), snap(h * 0.09));
+  ctx.fillRect(snap(x + w * 0.67), snap(b - h * 0.22), snap(w * 0.1), snap(h * 0.09));
+}
+
+function drawSwamp(
+  ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
+  c: string, d: string, v: number, layer: Layer,
+) {
+  ctx.fillStyle = c;
+  const kind = v % 5;
+  if (kind === 0) {
+    // Dead snag with a flared, irregular base.
+    const tx = snap(x + w * 0.46), trunkW = Math.max(4, snap(w * 0.1));
+    ctx.fillRect(tx, snap(b - h * 0.76), trunkW, snap(h * 0.76));
+    ctx.fillRect(snap(tx - w * 0.2), snap(b - h * 0.1), snap(w * 0.5), snap(h * 0.1));
+    ctx.fillRect(snap(tx - w * 0.25), snap(b - h * 0.54), snap(w * 0.27), 4);
+    ctx.fillRect(snap(tx + w * 0.06), snap(b - h * 0.43), snap(w * 0.27), 4);
+    ctx.fillRect(snap(tx - w * 0.22), snap(b - h * 0.54), 4, snap(h * 0.18));
+  } else if (kind === 1 || kind === 4) {
+    // Cypress crown: narrower top, heavier buttressed base.
+    ctx.fillRect(snap(x + w * 0.43), snap(b - h * 0.67), Math.max(4, snap(w * 0.11)), snap(h * 0.67));
+    ctx.fillRect(snap(x + w * 0.28), snap(b - h * 0.12), snap(w * 0.45), snap(h * 0.12));
+    ctx.fillRect(snap(x + w * 0.18), snap(b - h * 0.69), snap(w * 0.64), snap(h * 0.19));
+    ctx.fillRect(snap(x + w * 0.28), snap(b - h * 0.82), snap(w * 0.47), snap(h * 0.16));
+  } else if (kind === 2) {
+    // Willow mass with hanging strands.
+    ctx.fillRect(snap(x + w * 0.44), snap(b - h * 0.55), Math.max(4, snap(w * 0.1)), snap(h * 0.55));
+    ctx.fillRect(snap(x + w * 0.08), snap(b - h * 0.72), snap(w * 0.84), snap(h * 0.2));
+    ctx.fillRect(snap(x + w * 0.18), snap(b - h * 0.83), snap(w * 0.62), snap(h * 0.16));
+    ctx.fillStyle = rgba(d, 0.24);
+    for (let i = 0; i < 5; i++) ctx.fillRect(snap(x + w * (0.18 + i * 0.15)), snap(b - h * 0.58), 2, snap(h * (0.16 + (i % 2) * 0.08)));
+  } else {
+    // Low reed/island clump prevents the swamp becoming another forest wall.
+    ctx.fillRect(snap(x + w * 0.05), snap(b - h * 0.13), snap(w * 0.9), snap(h * 0.13));
+    for (let i = 0; i < 6; i++) {
+      const rx = x + w * (0.12 + i * 0.13);
+      ctx.fillRect(snap(rx), snap(b - h * (0.22 + (i % 3) * 0.06)), 2, snap(h * (0.18 + (i % 3) * 0.06)));
+    }
+  }
+  if (layer !== 'far' && kind !== 3) {
+    ctx.fillStyle = rgba(d, 0.28);
+    for (let i = 0; i < 4; i++) ctx.fillRect(snap(x + w * (0.08 + i * 0.22)), snap(b - h * (0.06 + (i % 2) * 0.02)), 2, snap(h * 0.07));
+  }
+}
+
+function scaleFeatureForBiome(
+  biome: BiomeId,
+  layer: Layer,
+  variant: number,
+  width: number,
+  height: number,
+): { width: number; height: number } {
+  let w = width, h = height;
+  if (biome === 'desert') {
+    if (layer === 'far') { w *= 2.55; h *= 0.82; }
+    else if (variant % 5 === 0) { w *= 0.78; h *= 1.22; }
+    else { w *= 1.62; h *= 0.78; }
+  } else if (biome === 'snowy-mountains') {
+    if (layer === 'far') { w *= 2.35; h *= 1.26; }
+    else { w *= 1.02; h *= 1.12; }
+  } else if (biome === 'temperate-forest') {
+    if (layer === 'far') { w *= 1.65; h *= 0.7; }
+    else if (variant % 5 === 0) { w *= 1.55; h *= 0.64; }
+    else { w *= 1.38; h *= 1.0; }
+  } else if (biome === 'city') {
+    w *= layer === 'far' ? 1.05 : 1.12;
+    h *= layer === 'far' ? 1.22 : 1.16;
+  } else if (biome === 'rural-village') {
+    if (layer === 'far') { w *= 1.75; h *= 0.7; }
+    else if (variant % 7 === 5) { w *= 1.15; h *= 1.1; }
+    else { w *= 1.82; h *= 0.76; }
+  } else if (biome === 'swamp') {
+    if (variant % 5 === 3) { w *= 1.55; h *= 0.58; }
+    else { w *= 1.35; h *= layer === 'far' ? 0.86 : 1.05; }
+  } else if (biome === 'lowlands') {
+    if (variant % 5 === 0) { w *= 1.5; h *= 0.66; }
+    else { w *= 1.28; h *= 0.94; }
+  } else if (biome === 'spires') {
+    w *= layer === 'far' ? 1.05 : 1.0;
+    h *= layer === 'far' ? 1.0 : 1.08;
+  } else if (biome === 'foundry') {
+    w *= 1.25; h *= layer === 'far' ? 0.92 : 0.98;
+  } else if (biome === 'ruins') {
+    w *= 1.3; h *= layer === 'far' ? 0.86 : 0.96;
+  }
+  const minW = layer === 'far' ? 18 : layer === 'mid' ? 24 : layer === 'near' ? 30 : 28;
+  const minH = layer === 'far' ? 24 : layer === 'mid' ? 30 : layer === 'near' ? 34 : 32;
+  return { width: Math.max(minW, w), height: Math.max(minH, h) };
+}
+
+function drawFeatureForBiome(
+  ctx: CanvasRenderingContext2D,
+  biome: BiomeId,
+  x: number,
+  b: number,
+  w: number,
+  h: number,
+  c: string,
+  d: string,
+  v: number,
+  layer: Layer,
+) {
+  if (biome === 'lowlands') drawLowland(ctx, x, b, w, h, c, d, v, layer);
+  else if (biome === 'spires') drawSpire(ctx, x, b, w, h, c, d, v, layer);
+  else if (biome === 'foundry') drawFoundry(ctx, x, b, w, h, c, d, v, layer);
+  else if (biome === 'ruins') drawRuins(ctx, x, b, w, h, c, d, v, layer);
+  else if (biome === 'desert') drawDesert(ctx, x, b, w, h, c, d, v, layer);
+  else if (biome === 'snowy-mountains') drawSnowyMountain(ctx, x, b, w, h, c, d, v, layer);
+  else if (biome === 'temperate-forest') drawTemperateForest(ctx, x, b, w, h, c, d, v, layer);
+  else if (biome === 'city') drawCity(ctx, x, b, w, h, c, d, v, layer);
+  else if (biome === 'rural-village') drawRuralVillage(ctx, x, b, w, h, c, d, v, layer);
+  else drawSwamp(ctx, x, b, w, h, c, d, v, layer);
+}
+
+/** Development/documentation helper: renders one procedural motif at representative scale. */
+export function drawBiomeAssetPreview(
+  ctx: CanvasRenderingContext2D,
+  biome: BiomeId,
+  layer: Layer,
+  variant: number,
+  centerX: number,
+  baseY: number,
+  baseWidth: number,
+  baseHeight: number,
+  color: string,
+  detail: string,
+): void {
+  const scaled = scaleFeatureForBiome(biome, layer, variant, baseWidth, baseHeight);
+  drawFeatureForBiome(
+    ctx,
+    biome,
+    centerX - scaled.width * 0.5,
+    baseY,
+    scaled.width,
+    scaled.height,
+    color,
+    detail,
+    variant,
+    layer,
+  );
+}
+
+function drawNaturalRidge(
+  ctx: CanvasRenderingContext2D,
+  biome: BiomeId,
+  chunk: BackgroundChunkDescriptor,
+  x0: number,
+  w: number,
+  b: number,
+  cssHeight: number,
+  color: string,
+  detail: string,
+) {
+  if (biome === 'city' || biome === 'foundry' || biome === 'ruins' || biome === 'spires') return;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(snap(x0 - 2), snap(cssHeight + 2));
+  const softLandscape = biome === 'lowlands' || biome === 'temperate-forest' || biome === 'rural-village' || biome === 'swamp' || biome === 'snowy-mountains';
+  for (let i = 0; i <= RIDGE_SEGMENTS; i++) {
+    const x = x0 + w * (i / RIDGE_SEGMENTS);
+    const prev = chunk.ridge[Math.max(0, i - 1)];
+    const current = chunk.ridge[i];
+    const next = chunk.ridge[Math.min(RIDGE_SEGMENTS, i + 1)];
+    const ridgeValue = softLandscape ? (prev + current * 2 + next) / 4 : current;
+    let ridgeHeight = cssHeight * (0.1 + ridgeValue * 0.22);
+    if (biome === 'desert') ridgeHeight *= 0.42;
+    if (biome === 'swamp') ridgeHeight *= 0.22;
+    if (biome === 'rural-village') ridgeHeight *= 0.38;
+    if (biome === 'temperate-forest') ridgeHeight *= 0.48;
+    // Snow mountains are now supplied by the large far assets; the ridge is only foothills.
+    if (biome === 'snowy-mountains') ridgeHeight *= 0.52;
+    ctx.lineTo(snap(x), snap(b - ridgeHeight));
+  }
+  ctx.lineTo(snap(x0 + w + 2), snap(cssHeight + 2));
+  ctx.closePath();
+  ctx.fill();
+  if (biome === 'snowy-mountains') {
+    ctx.strokeStyle = rgba(detail, 0.12);
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
 }
 
 function drawLayer(ctx:CanvasRenderingContext2D,cache:BiomeBackgroundCache,layer:'far'|'mid'|'near',o:BackgroundDrawOptions){
@@ -213,4 +701,4 @@ function drawAmbientDetails(ctx:CanvasRenderingContext2D,o:BackgroundDrawOptions
 
 export function drawBiomeBackground(ctx:CanvasRenderingContext2D,cache:BiomeBackgroundCache,o:BackgroundDrawOptions){ctx.save();ctx.imageSmoothingEnabled=false;drawSkyBands(ctx,o);drawLayer(ctx,cache,'far',o);drawLayer(ctx,cache,'mid',o);drawLayer(ctx,cache,'near',o);drawAmbientDetails(ctx,o);const p=paletteForBiomeSample(getBiomeAtX(o.cameraCenterX,o.worldSeed));ctx.fillStyle=rgba(p.haze,.045);ctx.fillRect(0,o.cssHeight*.42,o.cssWidth,o.cssHeight*.58);ctx.restore();}
 
-export function drawBiomeForeground(ctx:CanvasRenderingContext2D,cache:BiomeBackgroundCache,o:BackgroundDrawOptions){const {cssWidth,cssHeight,cameraCenterX,cameraScale,worldSeed}=o;if(cameraScale<.5)return;const layer:Layer='foreground',parallax=.88,halfWorldVisible=cssWidth*.55/Math.max(.0001,cameraScale*parallax),minChunk=Math.floor((cameraCenterX-halfWorldVisible)/BACKGROUND_CHUNK_WIDTH)-1,maxChunk=Math.floor((cameraCenterX+halfWorldVisible)/BACKGROUND_CHUNK_WIDTH)+1;ctx.save();ctx.globalAlpha=.18;for(let chunkIndex=minChunk;chunkIndex<=maxChunk;chunkIndex++){const chunk=cache.getChunk(layer,chunkIndex,worldSeed),chunkWorldX=chunkIndex*BACKGROUND_CHUNK_WIDTH;for(const feature of chunk.features){const featureWorldX=chunkWorldX+feature.x*BACKGROUND_CHUNK_WIDTH,x=cssWidth*.5+(featureWorldX-cameraCenterX)*cameraScale*parallax;if(x>cssWidth*.2&&x<cssWidth*.8)continue;const sample=getBiomeAtX(featureWorldX,worldSeed),palette=paletteForBiomeSample(sample),biome=dominantBiome(sample),width=Math.max(18,feature.width*420*cameraScale),height=Math.max(30,feature.height*cssHeight*.34);drawFeatureForBiome(ctx,biome,x-width*.5,cssHeight+8,width,height,palette.near,palette.detail,feature.variant,layer);}}ctx.restore();}
+export function drawBiomeForeground(ctx:CanvasRenderingContext2D,cache:BiomeBackgroundCache,o:BackgroundDrawOptions){const {cssWidth,cssHeight,cameraCenterX,cameraScale,worldSeed}=o;if(cameraScale<.5)return;const layer:Layer='foreground',parallax=.88,halfWorldVisible=cssWidth*.55/Math.max(.0001,cameraScale*parallax),minChunk=Math.floor((cameraCenterX-halfWorldVisible)/BACKGROUND_CHUNK_WIDTH)-1,maxChunk=Math.floor((cameraCenterX+halfWorldVisible)/BACKGROUND_CHUNK_WIDTH)+1;ctx.save();ctx.globalAlpha=.18;for(let chunkIndex=minChunk;chunkIndex<=maxChunk;chunkIndex++){const chunk=cache.getChunk(layer,chunkIndex,worldSeed),chunkWorldX=chunkIndex*BACKGROUND_CHUNK_WIDTH;for(const feature of chunk.features){const featureWorldX=chunkWorldX+feature.x*BACKGROUND_CHUNK_WIDTH,x=cssWidth*.5+(featureWorldX-cameraCenterX)*cameraScale*parallax;if(x>cssWidth*.2&&x<cssWidth*.8)continue;const sample=getBiomeAtX(featureWorldX,worldSeed),palette=paletteForBiomeSample(sample),biome=dominantBiome(sample),baseWidth=Math.max(18,feature.width*420*cameraScale),baseHeight=Math.max(30,feature.height*cssHeight*.34),scaled=scaleFeatureForBiome(biome,layer,feature.variant,baseWidth,baseHeight),width=scaled.width,height=scaled.height;drawFeatureForBiome(ctx,biome,x-width*.5,cssHeight+8,width,height,palette.near,palette.detail,feature.variant,layer);}}ctx.restore();}
