@@ -1,9 +1,6 @@
-Add rare ambient background events
+Add a little more daytime sunlight
 
-- add deterministic daytime bird groups with biome-aware silhouettes
-- add rare biome-specific ground-animal silhouettes behind gameplay platforms
-- add dusk/night fireflies in forest and swamp regions
-- add very rare pixel-art shooting stars under dark skies
-- schedule each event entirely inside deterministic time slots to avoid popping mid-animation
-- keep all ambient events renderer-only and outside simulation, sensing, terrain, and fitness state
-- pass one shared visual timestamp through background and foreground rendering
+- increase daytime palette lift across sky, haze, scenery and platform materials
+- add a subtle warm solar tint during daylight without changing dawn/dusk timing
+- make the daytime sun disc slightly stronger
+- preserve night and twilight contrast and keep lighting seam-free

@@ -158,7 +158,7 @@ function drawSkyBands(ctx:CanvasRenderingContext2D,o:BackgroundDrawOptions){
   const sunAltitude=Math.sin(Math.PI*lighting.sunProgress);
   const sunX=cssWidth*(.1+.8*lighting.sunProgress);
   const sunY=cssHeight*(.39-.28*Math.max(0,sunAltitude));
-  const sunAlpha=Math.max(lighting.daylight*.62,lighting.twilight*.5);
+  const sunAlpha=Math.max(lighting.daylight*.72,lighting.twilight*.5);
   if(sunAlpha>.025){
     const r=Math.max(16,Math.round(cssHeight*.045));
     drawPixelDisc(ctx,sunX,sunY,r,rgba(lighting.dusk>lighting.dawn?'#f3a15f':'#f6cf7a',sunAlpha));

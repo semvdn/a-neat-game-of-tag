@@ -88,8 +88,11 @@ const mixHex = (a: string, b: string, amount: number): string => {
   return `#${channel(lerp(hexChannel(a, 1), hexChannel(b, 1)))}${channel(lerp(hexChannel(a, 3), hexChannel(b, 3)))}${channel(lerp(hexChannel(a, 5), hexChannel(b, 5)))}`;
 };
 
-const lightColor = (base: string, nightTarget: string, nightAmount: number, warmTarget: string, warmAmount: number, dayLift = 0): string => {
-  let result = mixHex(base, '#dbe7e5', dayLift);
+const lightColor = (base: string, nightTarget: string, nightAmount: number, warmTarget: string, warmAmount: number, dayLift = 0, sunlightWarmth = 0): string => {
+  // Daylight gets a gentle bright-neutral lift plus a very small warm solar tint. Keep both
+  // continuous so increasing daytime brightness cannot introduce overlay bands or seams.
+  let result = mixHex(base, '#edf3ec', dayLift);
+  result = mixHex(result, '#fff0c4', sunlightWarmth);
   result = mixHex(result, nightTarget, nightAmount);
   return mixHex(result, warmTarget, warmAmount);
 };
@@ -99,19 +102,20 @@ export const lightBiomePalette = (palette: BiomePalette, lighting: WorldLighting
   const night = lighting.night;
   const warm = lighting.twilight;
   const warmSky = lighting.dusk > lighting.dawn ? '#c96757' : '#d98c67';
-  const dayLift = lighting.daylight * 0.035;
+  const dayLift = lighting.daylight * 0.055;
+  const sunlightWarmth = lighting.daylight * 0.018;
   return {
-    skyTop: lightColor(palette.skyTop, '#030712', night * 0.74, '#4a4666', warm * 0.28, dayLift * 1.4),
-    skyBottom: lightColor(palette.skyBottom, '#101626', night * 0.64, warmSky, warm * 0.48, dayLift * 1.7),
-    haze: lightColor(palette.haze, '#293344', night * 0.48, '#b97864', warm * 0.24, dayLift),
-    far: lightColor(palette.far, '#111827', night * 0.56, '#6d4d52', warm * 0.12, dayLift * 0.5),
-    mid: lightColor(palette.mid, '#151d2b', night * 0.47, '#73534f', warm * 0.1, dayLift * 0.55),
-    near: lightColor(palette.near, '#192230', night * 0.38, '#77594f', warm * 0.08, dayLift * 0.65),
-    detail: lightColor(palette.detail, '#53606d', night * 0.24, '#d49a70', warm * 0.09, dayLift),
-    platformTop: lightColor(palette.platformTop, '#273241', night * 0.34, '#8a6758', warm * 0.07, dayLift * 0.6),
-    platformFace: lightColor(palette.platformFace, '#202936', night * 0.42, '#76564e', warm * 0.06, dayLift * 0.45),
-    platformShadow: lightColor(palette.platformShadow, '#101722', night * 0.48, '#493b3d', warm * 0.04, dayLift * 0.2),
-    motionAccent: lightColor(palette.motionAccent, '#70808d', night * 0.12, '#e0a876', warm * 0.08, dayLift),
+    skyTop: lightColor(palette.skyTop, '#030712', night * 0.74, '#4a4666', warm * 0.28, dayLift * 1.5, sunlightWarmth * 0.55),
+    skyBottom: lightColor(palette.skyBottom, '#101626', night * 0.64, warmSky, warm * 0.48, dayLift * 1.85, sunlightWarmth * 0.75),
+    haze: lightColor(palette.haze, '#293344', night * 0.48, '#b97864', warm * 0.24, dayLift * 1.2, sunlightWarmth * 0.65),
+    far: lightColor(palette.far, '#111827', night * 0.56, '#6d4d52', warm * 0.12, dayLift * 0.72, sunlightWarmth * 0.35),
+    mid: lightColor(palette.mid, '#151d2b', night * 0.47, '#73534f', warm * 0.1, dayLift * 0.8, sunlightWarmth * 0.42),
+    near: lightColor(palette.near, '#192230', night * 0.38, '#77594f', warm * 0.08, dayLift * 0.88, sunlightWarmth * 0.48),
+    detail: lightColor(palette.detail, '#53606d', night * 0.24, '#d49a70', warm * 0.09, dayLift * 1.1, sunlightWarmth * 0.5),
+    platformTop: lightColor(palette.platformTop, '#273241', night * 0.34, '#8a6758', warm * 0.07, dayLift * 0.78, sunlightWarmth * 0.35),
+    platformFace: lightColor(palette.platformFace, '#202936', night * 0.42, '#76564e', warm * 0.06, dayLift * 0.62, sunlightWarmth * 0.25),
+    platformShadow: lightColor(palette.platformShadow, '#101722', night * 0.48, '#493b3d', warm * 0.04, dayLift * 0.28, sunlightWarmth * 0.12),
+    motionAccent: lightColor(palette.motionAccent, '#70808d', night * 0.12, '#e0a876', warm * 0.08, dayLift * 1.08, sunlightWarmth * 0.42),
   };
 };
 
