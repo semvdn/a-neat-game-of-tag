@@ -348,21 +348,47 @@ export function drawPlatformDecorations(
 
   const topY = Math.round(platform.position.y);
   const left = platform.position.x + margin;
-  const slotWidth = usable / count;
+  const right = platform.position.x + width - margin - 18;
+  const placementSpan = Math.max(0, right - left);
   const minSeparation = 30;
   const placed: number[] = [];
+
+  // Randomize across the whole safe platform span. For several decorations we use a shuffled
+  // stratified layout: each prop gets a different broad zone, but both the zone order and the
+  // position inside that zone are deterministic random values. This avoids the old visual habit
+  // of one prop sitting near the center of every platform while still preventing ugly clumps.
+  const strata = Array.from({ length: count }, (_, index) => index);
+  for (let i = strata.length - 1; i > 0; i--) {
+    const j = Math.floor(rand01(platform, 0x44534846, i) * (i + 1));
+    [strata[i], strata[j]] = [strata[j], strata[i]];
+  }
 
   ctx.save();
   ctx.imageSmoothingEnabled = false;
 
   for (let i = 0; i < count; i++) {
-    const slotCenter = left + slotWidth * (i + 0.5);
-    const jitter = (rand01(platform, 0x44504f53, i) - 0.5) * Math.min(slotWidth * 0.5, 24);
-    let px = slotCenter + jitter;
+    let px: number;
+    if (count === 1) {
+      // A lone signature prop can occur anywhere along the safe span instead of gravitating to
+      // the middle. Keep a tiny extra inset so a large lamp/cactus never visually kisses an edge.
+      const edgeInset = Math.min(10, placementSpan * 0.12);
+      px = left + edgeInset + rand01(platform, 0x44504f53, i) * Math.max(0, placementSpan - edgeInset * 2);
+    } else {
+      const stratumWidth = placementSpan / count;
+      const stratum = strata[i];
+      const localPadding = Math.min(8, stratumWidth * 0.15);
+      const localSpan = Math.max(0, stratumWidth - localPadding * 2);
+      px = left + stratum * stratumWidth + localPadding + rand01(platform, 0x44504f53, i) * localSpan;
+    }
 
-    // Keep props comfortably away from platform ends and from each other. This is visual spacing
-    // only—the collision body remains the original platform rectangle.
-    px = Math.max(platform.position.x + margin, Math.min(platform.position.x + width - margin - 18, px));
+    px = Math.max(left, Math.min(right, px));
+
+    // If the randomized position lands too close to an earlier prop, try a few alternate
+    // deterministic samples in the same safe span. This keeps placement random without overlap.
+    for (let attempt = 0; attempt < 5 && placed.some(prev => Math.abs(prev - px) < minSeparation); attempt++) {
+      const candidate = left + rand01(platform, 0x44505259 ^ (attempt * 0x131), i) * placementSpan;
+      px = Math.max(left, Math.min(right, candidate));
+    }
     if (placed.some(prev => Math.abs(prev - px) < minSeparation)) continue;
     placed.push(px);
 

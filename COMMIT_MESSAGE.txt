@@ -1,8 +1,6 @@
-Add biome-specific platform decorations
+Randomize platform decoration placement
 
-- add deterministic non-collidable platform-top props for all ten biomes
-- include grass, shrubs, flowers, cactus, tumbleweed, pines, ferns, lamps, bins, fences, reeds, vents and stone fragments
-- scale decoration density by biome and platform width
-- keep moving-platform dressing sparse for readability
-- let city street lamps respond subtly to night lighting
-- keep all decoration state renderer-only and outside physics/policy sensing
+- let single biome decorations appear anywhere across the safe platform span
+- shuffle broad placement zones for multi-decoration platforms
+- preserve deterministic placement per platform/world while avoiding center bias
+- retry deterministic alternate positions when props would overlap visually
