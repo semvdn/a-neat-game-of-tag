@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { GameState, PlatformState } from '../types';
 import { drawPlatform, drawAgent, drawAgentTrail, drawTagEffect, drawAgentSenses } from './drawing';
-import { AGENT_HEIGHT, AGENT_WIDTH, WORLD_REF_WIDTH, WORLD_REF_HEIGHT, CAMERA_FRAME_PADDING_REFERENCE_PX, CAMERA_MIN_USEFUL_AUTO_ZOOM } from '../constants';
+import { AGENT_WIDTH, WORLD_REF_WIDTH, WORLD_REF_HEIGHT, CAMERA_FRAME_PADDING_REFERENCE_PX, CAMERA_MIN_USEFUL_AUTO_ZOOM } from '../constants';
 import { cameraRelevantAgents } from '../learning/cameraFraming';
 import { biomeLabel, DEFAULT_BIOME_WORLD_SEED, getBiomeAtX } from '../world/biomes';
 import { BiomeBackgroundCache, drawBiomeBackground, drawBiomeForeground } from './biomeBackground';
@@ -17,63 +17,103 @@ interface GameCanvasProps {
 }
 
 // The visual camera is deliberately separate from the 1200x800 policy/sensor frame.
-// Keeping the platform at this screen-height ratio leaves enough headroom for a full jump
-// even at 200% visual zoom, while still showing the platform beneath the characters.
-const PLATFORM_SCREEN_Y_RATIO = 0.72;
-// Vertical presentation camera easing. This is real-time based (not simulation-time based),
-// so changing champion view speed does not make the camera snap or become sluggish.
-const CAMERA_VERTICAL_FOLLOW_RATE = 5.5;
+// The presentation camera now prioritizes TERRAIN readability vertically: agents may briefly jump
+// above the viewport, but the maximum useful number of local platforms should remain visible.
+const CAMERA_VERTICAL_FOLLOW_RATE = 4.2;
 const CAMERA_HORIZONTAL_FOLLOW_RATE = 6.0;
-// Zooming out must be immediate enough to preserve visibility when agents commit to different
-// branches. Zooming back in is deliberately slower so the presentation does not pulse.
-const CAMERA_ZOOM_IN_FOLLOW_RATE = 2.4;
-// While easing, keep the active platform inside this vertical screen band. The target sits at
-// 72%, leaving room above for jumps while guaranteeing that downward height changes cannot
-// disappear below the viewport at high zoom.
-const PLATFORM_SCREEN_Y_MIN_RATIO = 0.56;
-const PLATFORM_SCREEN_Y_MAX_RATIO = 0.86;
+// Zooming out remains immediate; zooming back in is slower to avoid pulsing after route splits.
+const CAMERA_ZOOM_IN_FOLLOW_RATE = 2.1;
+const PLATFORM_VERTICAL_PADDING_REFERENCE_PX = 54;
+const PLATFORM_HORIZONTAL_QUERY_MARGIN = 1.18;
 
-const median = (values: number[]) => {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+interface PlatformVerticalFrame {
+  centerY: number;
+  minY: number;
+  maxY: number;
+  visibleCount: number;
+  totalCount: number;
+}
+
+/** Platforms relevant to the horizontal action window. We intentionally do not use airborne agent Y. */
+const platformsInHorizontalFrame = (
+  platforms: PlatformState[],
+  centerX: number,
+  worldWidth: number,
+): PlatformState[] => {
+  const half = Math.max(WORLD_REF_WIDTH * 0.35, worldWidth * 0.5 * PLATFORM_HORIZONTAL_QUERY_MARGIN);
+  const left = centerX - half;
+  const right = centerX + half;
+  const local = platforms.filter(platform =>
+    Number.isFinite(platform.position.x) &&
+    Number.isFinite(platform.position.y) &&
+    platform.position.x + platform.width >= left &&
+    platform.position.x <= right
+  );
+  return local.length > 0 ? local : platforms.filter(platform => Number.isFinite(platform.position.y));
 };
 
 /**
- * Find the platform band that best represents where the current action is happening.
- * We prefer the platforms the agents most recently occupied, because that stays stable
- * during jumps. If those platforms have been despawned, fall back to the platform nearest
- * the group in both X and Y.
+ * Choose the vertical camera center that contains the largest number of platform centers.
+ * When every local platform fits, center the complete terrain band. When it does not, a sliding
+ * window finds the densest vertical band instead of following an agent's jump arc.
  */
-const getActivePlatformY = (gameState: GameState, framingAgents: typeof gameState.agents): number => {
-  const { platforms } = gameState;
-  const agents = framingAgents;
-  if (platforms.length === 0) return WORLD_REF_HEIGHT * 0.75;
-
-  const platformById = new Map<number, PlatformState>();
-  platforms.forEach(platform => platformById.set(platform.id, platform));
-
-  const supportYs = agents
-    .map(agent => platformById.get(agent.lastPlatformId)?.position.y)
-    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
-
-  if (supportYs.length > 0) return median(supportYs);
-
-  const groupX = agents.reduce((sum, agent) => sum + agent.position.x, 0) / Math.max(1, agents.length);
-  const groupY = agents.reduce((sum, agent) => sum + agent.position.y, 0) / Math.max(1, agents.length);
-
-  let best = platforms[0];
-  let bestScore = Infinity;
-  for (const platform of platforms) {
-    const platformCenterX = platform.position.x + platform.width / 2;
-    const score = Math.abs(platformCenterX - groupX) * 0.35 + Math.abs(platform.position.y - groupY);
-    if (score < bestScore) {
-      best = platform;
-      bestScore = score;
-    }
+const bestPlatformVerticalFrame = (
+  platforms: PlatformState[],
+  visibleWorldHeight: number,
+  worldPadding: number,
+  fallbackY: number,
+): PlatformVerticalFrame => {
+  if (platforms.length === 0) {
+    return { centerY: fallbackY, minY: fallbackY, maxY: fallbackY, visibleCount: 0, totalCount: 0 };
   }
-  return best.position.y;
+
+  const centers = platforms
+    .map(platform => platform.position.y + platform.height * 0.5)
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  if (centers.length === 0) {
+    return { centerY: fallbackY, minY: fallbackY, maxY: fallbackY, visibleCount: 0, totalCount: 0 };
+  }
+
+  const minY = Math.min(...platforms.map(platform => platform.position.y));
+  const maxY = Math.max(...platforms.map(platform => platform.position.y + platform.height));
+  const usableHeight = Math.max(40, visibleWorldHeight - worldPadding * 2);
+  if (maxY - minY <= usableHeight) {
+    return {
+      centerY: (minY + maxY) * 0.5,
+      minY,
+      maxY,
+      visibleCount: centers.length,
+      totalCount: centers.length,
+    };
+  }
+
+  let bestLeft = 0;
+  let bestRight = 0;
+  let right = 0;
+  let bestDistance = Infinity;
+  for (let left = 0; left < centers.length; left++) {
+    if (right < left) right = left;
+    while (right + 1 < centers.length && centers[right + 1] - centers[left] <= usableHeight) right++;
+    const count = right - left + 1;
+    const bestCount = bestRight - bestLeft + 1;
+    const candidateCenter = (centers[left] + centers[right]) * 0.5;
+    const distance = Math.abs(candidateCenter - fallbackY);
+    if (count > bestCount || (count === bestCount && distance < bestDistance)) {
+      bestLeft = left;
+      bestRight = right;
+      bestDistance = distance;
+    }
+    if (right === left) right++;
+  }
+
+  return {
+    centerY: (centers[bestLeft] + centers[bestRight]) * 0.5,
+    minY,
+    maxY,
+    visibleCount: bestRight - bestLeft + 1,
+    totalCount: centers.length,
+  };
 };
 
 /**
@@ -170,28 +210,40 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // agent body inside a fixed screen-space safety margin.
     let minAgentX = cameraPosition.x + WORLD_REF_WIDTH * 0.5 - AGENT_WIDTH * 0.5;
     let maxAgentX = minAgentX + AGENT_WIDTH;
-    let minAgentY = WORLD_REF_HEIGHT * 0.5 - AGENT_HEIGHT * 0.5;
-    let maxAgentY = minAgentY + AGENT_HEIGHT;
     if (framingAgents.length > 0) {
       minAgentX = Math.min(...framingAgents.map(agent => agent.position.x));
       maxAgentX = Math.max(...framingAgents.map(agent => agent.position.x + AGENT_WIDTH));
-      minAgentY = Math.min(...framingAgents.map(agent => agent.position.y));
-      maxAgentY = Math.max(...framingAgents.map(agent => agent.position.y + AGENT_HEIGHT));
     }
 
     const cameraFramePaddingPx = CAMERA_FRAME_PADDING_REFERENCE_PX * fitScale;
     const frameWidthPx = Math.max(40, cssWidth - cameraFramePaddingPx * 2);
     const frameHeightPx = Math.max(40, cssHeight - cameraFramePaddingPx * 2);
     const agentSpanX = Math.max(AGENT_WIDTH, maxAgentX - minAgentX);
-    const agentSpanY = Math.max(AGENT_HEIGHT, maxAgentY - minAgentY);
-    const pairFitScale = Math.max(
-      0.0001,
-      Math.min(frameWidthPx / agentSpanX, frameHeightPx / agentSpanY)
-    );
+    // Horizontal pair separation may zoom the camera out. Vertical agent separation deliberately
+    // does NOT: jump arcs are allowed to leave the top while terrain remains framed.
+    const horizontalPairFitScale = Math.max(0.0001, frameWidthPx / agentSpanX);
     const minimumUsefulScale = fitScale * CAMERA_MIN_USEFUL_AUTO_ZOOM;
-    const fittedDesiredScale = Math.max(minimumUsefulScale, Math.min(preferredScale, pairFitScale));
+    const horizontalDesiredScale = Math.max(
+      minimumUsefulScale,
+      Math.min(preferredScale, horizontalPairFitScale)
+    );
+
+    const provisionalCenterX = hasCameraSubjects
+      ? (minAgentX + maxAgentX) * 0.5
+      : cameraPosition.x + WORLD_REF_WIDTH * 0.5;
+    const provisionalWorldWidth = cssWidth / horizontalDesiredScale;
+    const verticalCandidates = platformsInHorizontalFrame(platforms, provisionalCenterX, provisionalWorldWidth);
+    const platformMinY = verticalCandidates.length > 0
+      ? Math.min(...verticalCandidates.map(platform => platform.position.y))
+      : WORLD_REF_HEIGHT * 0.65;
+    const platformMaxY = verticalCandidates.length > 0
+      ? Math.max(...verticalCandidates.map(platform => platform.position.y + platform.height))
+      : WORLD_REF_HEIGHT * 0.75;
+    const platformSpanY = Math.max(40, platformMaxY - platformMinY);
+    const platformPaddingPx = PLATFORM_VERTICAL_PADDING_REFERENCE_PX * fitScale;
+    const platformFitScale = Math.max(0.0001, (frameHeightPx - platformPaddingPx * 2) / platformSpanY);
     const desiredScale = hasCameraSubjects
-      ? fittedDesiredScale
+      ? Math.max(minimumUsefulScale, Math.min(horizontalDesiredScale, platformFitScale))
       : (presentationCameraScaleRef.current ?? preferredScale);
 
     // Smooth only the zoom-IN direction. Zooming out is a safety response and happens immediately,
@@ -225,55 +277,40 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       cameraCenterX += (pairCenterX - cameraCenterX) * followAlpha;
     }
 
-    // Keep the active platform at a useful vertical percentage when the pair is close. Falling
-    // agents are absent from framingAgents. If every body is falling, hold the previous vertical
-    // camera exactly until somebody is back in the playable band.
+    // Vertical framing is terrain-first. At the current scale, select the densest platform band
+    // inside the horizontal action window. This deliberately ignores jump apexes.
     const visibleWorldHeight = cssHeight / cameraScale;
-    const activePlatformY = hasCameraSubjects
-      ? getActivePlatformY(gameState, framingAgents)
-      : WORLD_REF_HEIGHT * PLATFORM_SCREEN_Y_RATIO;
-    const desiredCenterY = hasCameraSubjects
-      ? activePlatformY + (0.5 - PLATFORM_SCREEN_Y_RATIO) * visibleWorldHeight
-      : (presentationCameraYRef.current ?? WORLD_REF_HEIGHT * 0.5);
+    const visibleWorldWidth = cssWidth / cameraScale;
+    const localPlatforms = platformsInHorizontalFrame(platforms, cameraCenterX, visibleWorldWidth);
+    const worldVerticalPadding = (PLATFORM_VERTICAL_PADDING_REFERENCE_PX * fitScale) / cameraScale;
+    const fallbackPlatformY = presentationCameraYRef.current ?? WORLD_REF_HEIGHT * 0.68;
+    const platformFrame = bestPlatformVerticalFrame(
+      localPlatforms,
+      visibleWorldHeight,
+      worldVerticalPadding,
+      fallbackPlatformY,
+    );
+    const desiredCenterY = platformFrame.centerY;
 
     let cameraCenterY = presentationCameraYRef.current;
     if (cameraCenterY === null || !Number.isFinite(cameraCenterY)) {
       cameraCenterY = desiredCenterY;
-    } else if (hasCameraSubjects) {
+    } else if (localPlatforms.length > 0) {
       const followAlpha = 1 - Math.exp(-CAMERA_VERTICAL_FOLLOW_RATE * dtSeconds);
       cameraCenterY += (desiredCenterY - cameraCenterY) * followAlpha;
     }
 
-    if (hasCameraSubjects) {
-      // Preserve the old active-platform safety band so normal close pursuit keeps the same
-      // visual composition as before.
-      const minimumPlatformCenterY =
-        activePlatformY + (0.5 - PLATFORM_SCREEN_Y_MAX_RATIO) * visibleWorldHeight;
-      const maximumPlatformCenterY =
-        activePlatformY + (0.5 - PLATFORM_SCREEN_Y_MIN_RATIO) * visibleWorldHeight;
-      cameraCenterY = Math.min(maximumPlatformCenterY, Math.max(minimumPlatformCenterY, cameraCenterY));
-    }
-
-    // Then hard-clamp BOTH axes to the legal camera-center interval that keeps every agent within
-    // the screen-space safety margin. This means camera smoothing can never be the reason a Runner
-    // or Chaser disappears off-screen, even during rapid recursive branch divergence.
+    // Keep the pair horizontally inside the safety margin, but intentionally do not clamp Y to
+    // agents. An airborne agent can leave the top for a moment if that preserves the platform map.
     const safeHalfWorldWidth = Math.max(0, cssWidth * 0.5 - cameraFramePaddingPx) / cameraScale;
-    const safeHalfWorldHeight = Math.max(0, cssHeight * 0.5 - cameraFramePaddingPx) / cameraScale;
     const minimumSafeCenterX = maxAgentX - safeHalfWorldWidth;
     const maximumSafeCenterX = minAgentX + safeHalfWorldWidth;
-    const minimumSafeCenterY = maxAgentY - safeHalfWorldHeight;
-    const maximumSafeCenterY = minAgentY + safeHalfWorldHeight;
 
     if (hasCameraSubjects) {
       if (minimumSafeCenterX <= maximumSafeCenterX) {
         cameraCenterX = Math.min(maximumSafeCenterX, Math.max(minimumSafeCenterX, cameraCenterX));
       } else {
         cameraCenterX = pairCenterX;
-      }
-      if (minimumSafeCenterY <= maximumSafeCenterY) {
-        cameraCenterY = Math.min(maximumSafeCenterY, Math.max(minimumSafeCenterY, cameraCenterY));
-      } else {
-        cameraCenterY = (minAgentY + maxAgentY) * 0.5;
       }
     }
 

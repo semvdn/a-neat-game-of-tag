@@ -788,9 +788,6 @@ function fbm1D(seed:number, namespace:number, x:number, octaves=4){
   }
   return norm>0?sum/norm:0;
 }
-function ridged1D(seed:number, namespace:number, x:number, octaves=4){
-  const n=fbm1D(seed,namespace,x,octaves); return 1-Math.abs(2*n-1);
-}
 function quantizedNoise(seed:number, namespace:number, worldX:number, segmentWidth:number, min:number, max:number){
   const seg=Math.floor(worldX/segmentWidth);
   const local=(worldX-seg*segmentWidth)/segmentWidth;
@@ -799,6 +796,32 @@ function quantizedNoise(seed:number, namespace:number, worldX:number, segmentWid
   const edge=Math.max(0,Math.min(1,(local-.08)/.16))*Math.max(0,Math.min(1,(.92-local)/.16));
   const t=smooth01(local);
   return lerp(lerp(a,a,edge), lerp(a,b,t), 1-edge);
+}
+
+function snowyMassifUnits(layer:'far'|'mid', worldX:number, seed:number){
+  const namespace=0x1200|namespaceForLayer(layer);
+  const spacing=layer==='far'?3800:3100;
+  const baseIndex=Math.floor(worldX/spacing);
+  let dominant=0;
+  let secondary=0;
+  // Evaluate a small number of broad, world-anchored peaks. Adjacent massifs overlap gently,
+  // producing large mountain bodies instead of high-frequency ridged-noise saw teeth.
+  for(let index=baseIndex-2; index<=baseIndex+2; index++){
+    const jitter=(biomeRandom01(seed,namespace^0x31,index)-.5)*spacing*.28;
+    const center=index*spacing+spacing*.5+jitter;
+    const halfWidth=spacing*(.46+biomeRandom01(seed,namespace^0x32,index)*.18);
+    const distance=Math.abs(worldX-center)/halfWidth;
+    if(distance>=1) continue;
+    const shoulder=1-distance*distance;
+    const bump=shoulder*shoulder;
+    const height=(layer==='far'?.46:.24)+(layer==='far'?.28:.16)*biomeRandom01(seed,namespace^0x33,index);
+    const value=bump*height;
+    if(value>dominant){ secondary=dominant; dominant=value; }
+    else if(value>secondary){ secondary=value; }
+  }
+  const foothills=fbm1D(seed,namespace^0x34,worldX/(layer==='far'?4200:3300),3);
+  const localShoulders=fbm1D(seed,namespace^0x35,worldX/(layer==='far'?1550:1250),2);
+  return (layer==='far'?.16:.13) + dominant + secondary*.22 + foothills*(layer==='far'?.09:.06) + localShoulders*.035;
 }
 
 function panoramaUnitsForBiome(biome:BiomeId,layer:'far'|'mid',worldX:number,seed:number){
@@ -812,9 +835,7 @@ function panoramaUnitsForBiome(biome:BiomeId,layer:'far'|'mid',worldX:number,see
     return layer==='far' ? .12 + dunes*.1 + mesas*.34 : .1 + dunes*.08 + mesas*.24;
   }
   if(biome==='snowy-mountains'){
-    const peaks=Math.pow(ridged1D(seed,0x1200|namespaceForLayer(layer),x/1500,4), layer==='far'?1.35:1.6);
-    const shoulders=fbm1D(seed,0x1201|namespaceForLayer(layer),x/800,2);
-    return layer==='far' ? .18 + peaks*.72 + shoulders*.08 : .16 + peaks*.34 + shoulders*.10;
+    return snowyMassifUnits(layer,x,seed);
   }
   if(biome==='temperate-forest'){
     const hills=fbm1D(seed,0x1300|namespaceForLayer(layer),x/1700,3), canopy=fbm1D(seed,0x1301|namespaceForLayer(layer),x/320,2);
@@ -901,13 +922,13 @@ function drawContinuousPanorama(ctx:CanvasRenderingContext2D,layer:'far'|'mid',o
   const firstNode=Math.floor(minWorldX/worldStep)*worldStep;
 
   ctx.save(); ctx.globalAlpha*=alpha;
-  type Point={x:number;y:number;worldX:number};
+  type Point={x:number;y:number;worldX:number;units:number};
   const points:Point[]=[];
   for(let worldX=firstNode;worldX<=maxWorldX+worldStep;worldX+=worldStep){
     const sample=getBiomeAtX(worldX,worldSeed);
     const units=mixedPanoramaUnits(sample,layer,worldX,worldSeed);
     const x=cssWidth*.5+(worldX-cameraCenterX)*cameraScale*parallax;
-    points.push({x,y:baselineY-maxHeight*units,worldX});
+    points.push({x,y:baselineY-maxHeight*units,worldX,units});
   }
 
   // Fill one fixed-world segment at a time. Color is sampled at the segment midpoint so biome
@@ -941,15 +962,20 @@ function drawContinuousPanorama(ctx:CanvasRenderingContext2D,layer:'far'|'mid',o
       : rgba(palette.detail,.12);
     ctx.beginPath();ctx.moveTo(snap(a.x),snap(a.y));ctx.lineTo(snap(b.x),snap(b.y));ctx.stroke();
     if(biome==='snowy-mountains'&&layer==='far'){
-      const capHeight=Math.max(4,cssHeight*.018);
-      ctx.fillStyle=rgba('#ecf6ff',.16*o.lighting.daylight+.22*o.lighting.twilight+.12*o.lighting.night);
-      ctx.beginPath();
-      ctx.moveTo(snap(a.x),snap(a.y));
-      ctx.lineTo(snap(lerp(a.x,b.x,.5)),snap(Math.min(a.y,b.y)-capHeight));
-      ctx.lineTo(snap(b.x),snap(b.y));
-      ctx.lineTo(snap(b.x),snap(b.y+capHeight*.35));
-      ctx.lineTo(snap(a.x),snap(a.y+capHeight*.35));
-      ctx.closePath();ctx.fill();
+      // Snow follows only the upper part of a broad massif. The old renderer added a tiny
+      // triangle above EVERY panorama segment, creating a repeated saw-tooth crown.
+      const snowThreshold=.43;
+      const strength=Math.max(0,Math.min(1,((a.units+b.units)*.5-snowThreshold)/.28));
+      if(strength>.02){
+        const depth=Math.max(3,cssHeight*(.007+.014*strength));
+        ctx.fillStyle=rgba('#edf7ff',(.14*o.lighting.daylight+.18*o.lighting.twilight+.1*o.lighting.night)*strength);
+        ctx.beginPath();
+        ctx.moveTo(snap(a.x),snap(a.y));
+        ctx.lineTo(snap(b.x),snap(b.y));
+        ctx.lineTo(snap(b.x),snap(b.y+depth));
+        ctx.lineTo(snap(a.x),snap(a.y+depth));
+        ctx.closePath();ctx.fill();
+      }
     }
   }
   ctx.restore();

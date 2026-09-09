@@ -1,7 +1,8 @@
-Stabilize panorama and city landmark rendering
+Prioritize platform visibility and reshape snowy mountains
 
-- sample continuous panorama silhouettes on a fixed world-space lattice
-- preserve panorama vertical proportions during automatic camera zoom changes
-- render landmark motifs in local pixel coordinates and translate them as rigid objects
-- use fixed normalized city window layouts so facade details do not crawl or pop with zoom
-- bump the visual biome cache version without changing terrain or simulation behavior
+- make vertical camera framing maximize the local platform band instead of following jump arcs
+- remove vertical agent span from auto-zoom and Y safety clamping so jump apexes may leave frame briefly
+- retain horizontal pair framing and immediate zoom-out for diverging routes
+- center on the full platform band when it fits and otherwise select the densest vertical platform window
+- replace snowy ridged-noise teeth with broad deterministic mountain massifs and foothills
+- render snow as a shallow ridge-following ribbon only on high mountain sections
