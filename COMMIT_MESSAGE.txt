@@ -1,7 +1,8 @@
-Remove background overlay seams
+Add overview win-rate graph and line-tip values
 
-- replace segmented translucent panorama fills with one continuous gradient-filled silhouette per layer
-- remove the full ridge highlight stroke that created U-shaped contour lines through valleys
-- render snowy caps as contiguous ridge runs instead of one translucent quad per segment
-- replace tiled sky color columns with continuous horizontal biome gradients
-- replace tiled lower haze overlays with one continuous gradient fill
+- add Chaser vs Runner population win-rate history to the Overview tab
+- use the evaluator's actual tagged-episode win definition and a fixed 0–100% scale
+- show each line chart's latest value directly at its endpoint
+- reserve a label gutter and separate overlapping endpoint labels with connector lines
+- format percentage tips with percent signs and species/count tips as integers
+- add current-value tip labels to topology evolution charts as well

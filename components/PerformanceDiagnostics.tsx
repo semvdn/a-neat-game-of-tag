@@ -90,53 +90,121 @@ const lineColors = [
   { stroke: 'text-pink-400', legend: 'text-pink-300' },
 ];
 
+type LineChartSeries = {
+  label: string;
+  values: number[];
+  tipDigits?: number;
+  tipSuffix?: string;
+};
+
 const LineChart: React.FC<{
-  series: { label: string; values: number[] }[];
+  series: LineChartSeries[];
   height?: number;
   emptyLabel?: string;
-}> = ({ series, height = 190, emptyLabel = 'Run evolutionary training to populate this chart.' }) => {
+  yMin?: number;
+  yMax?: number;
+}> = ({ series, height = 190, emptyLabel = 'Run evolutionary training to populate this chart.', yMin, yMax }) => {
   const values = series.flatMap(s => s.values).filter(Number.isFinite);
   if (values.length < 2) {
     return <div className="h-48 flex items-center justify-center text-sm text-gray-500 border border-dashed border-gray-800 rounded-xl">{emptyLabel}</div>;
   }
   const width = 720;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  // Reserve a right-side gutter for current-value labels so they sit at the line tips without
+  // overlapping the plot or being clipped by the SVG edge.
+  const leftPad = 18;
+  const rightPad = 82;
+  const topPad = 18;
+  const bottomPad = 18;
+  const plotRight = width - rightPad;
+  const observedMin = Math.min(...values);
+  const observedMax = Math.max(...values);
+  const min = Number.isFinite(yMin) ? Number(yMin) : observedMin;
+  const max = Number.isFinite(yMax) ? Number(yMax) : observedMax;
   const range = Math.max(1e-9, max - min);
-  const pad = 18;
-  const points = (data: number[]) => data.map((v, i) => {
-    const x = pad + (i / Math.max(1, data.length - 1)) * (width - pad * 2);
-    const y = pad + (1 - (v - min) / range) * (height - pad * 2);
-    return `${x},${y}`;
-  }).join(' ');
+  const xFor = (index: number, length: number) => leftPad + (index / Math.max(1, length - 1)) * (plotRight - leftPad);
+  const yFor = (value: number) => topPad + (1 - (value - min) / range) * (height - topPad - bottomPad);
+  const points = (data: number[]) => data.map((v, i) => `${xFor(i, data.length)},${yFor(v)}`).join(' ');
+  const formatTip = (line: LineChartSeries, value: number) => {
+    const suffix = line.tipSuffix ?? '';
+    const digits = line.tipDigits ?? (suffix === '%' ? 1 : Math.abs(value) >= 100 ? 1 : 2);
+    return `${value.toFixed(digits)}${suffix}`;
+  };
+
+  // Keep endpoint labels readable when two or more series finish at nearly the same Y position.
+  const endpointLabels = series.map((line, seriesIndex) => {
+    let lastIndex = -1;
+    for (let i = line.values.length - 1; i >= 0; i--) {
+      if (Number.isFinite(line.values[i])) { lastIndex = i; break; }
+    }
+    if (lastIndex < 0) return null;
+    const value = line.values[lastIndex];
+    const x = xFor(lastIndex, line.values.length);
+    const y = yFor(value);
+    return { seriesIndex, value, x, y, labelY: y, text: formatTip(line, value) };
+  }).filter((value): value is NonNullable<typeof value> => value !== null).sort((a, b) => a.y - b.y);
+
+  const minimumLabelGap = 13;
+  const labelMinY = 10;
+  const labelMaxY = height - 10;
+  for (let i = 0; i < endpointLabels.length; i++) {
+    const previous = endpointLabels[i - 1];
+    endpointLabels[i].labelY = Math.max(labelMinY, endpointLabels[i].y, previous ? previous.labelY + minimumLabelGap : labelMinY);
+  }
+  if (endpointLabels.length > 0 && endpointLabels[endpointLabels.length - 1].labelY > labelMaxY) {
+    endpointLabels[endpointLabels.length - 1].labelY = labelMaxY;
+    for (let i = endpointLabels.length - 2; i >= 0; i--) {
+      endpointLabels[i].labelY = Math.min(endpointLabels[i].labelY, endpointLabels[i + 1].labelY - minimumLabelGap);
+    }
+  }
+  const endpointBySeries = new Map(endpointLabels.map(endpoint => [endpoint.seriesIndex, endpoint]));
 
   return (
     <div>
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full rounded-xl border border-gray-800 bg-black/30">
         {[0.25, 0.5, 0.75].map(frac => (
-          <line key={frac} x1={pad} x2={width - pad} y1={height * frac} y2={height * frac} stroke="currentColor" className="text-gray-800" strokeWidth="1" />
+          <line key={frac} x1={leftPad} x2={plotRight} y1={height * frac} y2={height * frac} stroke="currentColor" className="text-gray-800" strokeWidth="1" />
         ))}
-        {series.map((s, idx) => {
+        {series.map((line, idx) => {
           const color = lineColors[idx % lineColors.length];
+          const endpoint = endpointBySeries.get(idx);
           return (
-            <polyline
-              key={s.label}
-              points={points(s.values)}
-              fill="none"
-              stroke="currentColor"
-              className={color.stroke}
-              strokeWidth="2.5"
-              vectorEffect="non-scaling-stroke"
-            />
+            <g key={line.label}>
+              <polyline
+                points={points(line.values)}
+                fill="none"
+                stroke="currentColor"
+                className={color.stroke}
+                strokeWidth="2.5"
+                vectorEffect="non-scaling-stroke"
+              />
+              {endpoint && <>
+                <circle cx={endpoint.x} cy={endpoint.y} r="3.4" fill="currentColor" className={color.stroke} />
+                {Math.abs(endpoint.labelY - endpoint.y) > 1 && (
+                  <line x1={endpoint.x + 4} y1={endpoint.y} x2={plotRight + 7} y2={endpoint.labelY} stroke="currentColor" className={`${color.stroke} opacity-50`} strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                )}
+                <text
+                  x={plotRight + 10}
+                  y={endpoint.labelY}
+                  dominantBaseline="middle"
+                  fill="currentColor"
+                  className={`${color.legend} text-[10px] font-mono font-semibold`}
+                  stroke="#05070b"
+                  strokeWidth="3"
+                  paintOrder="stroke"
+                >
+                  {endpoint.text}
+                </text>
+              </>}
+            </g>
           );
         })}
       </svg>
       <div className="mt-2 flex flex-wrap gap-4 text-xs text-gray-400">
-        {series.map((s, idx) => {
+        {series.map((line, idx) => {
           const color = lineColors[idx % lineColors.length];
           return (
-            <span key={s.label} className={color.legend}>
-              ● {s.label}
+            <span key={line.label} className={color.legend}>
+              ● {line.label}
             </span>
           );
         })}
@@ -166,7 +234,7 @@ const TopologyEvolutionChart: React.FC<{
     </div>
   );
 
-  const width = 620, height = 220, left = 42, right = 16, top = 16, bottom = 34;
+  const width = 620, height = 220, left = 42, right = 72, top = 16, bottom = 34;
   const generations = rows.map(row => row.generation);
   const minGeneration = Math.min(...generations), maxGeneration = Math.max(...generations);
   const generationRange = Math.max(1, maxGeneration - minGeneration);
@@ -177,12 +245,31 @@ const TopologyEvolutionChart: React.FC<{
   const y = (value: number) => top + (1 - value / yMax) * (height - top - bottom);
   const points = (key: 'champion' | 'average') => rows.filter(row => Number.isFinite(row[key])).map(row => `${x(row.generation)},${y(Number(row[key]))}`).join(' ');
   const firstChampion = rows.find(row => Number.isFinite(row.champion))?.champion;
-  const lastChampion = [...rows].reverse().find(row => Number.isFinite(row.champion))?.champion;
-  const lastAverage = [...rows].reverse().find(row => Number.isFinite(row.average))?.average;
+  const lastChampionRow = [...rows].reverse().find(row => Number.isFinite(row.champion));
+  const lastAverageRow = [...rows].reverse().find(row => Number.isFinite(row.average));
+  const lastChampion = lastChampionRow?.champion;
+  const lastAverage = lastAverageRow?.average;
   const delta = Number.isFinite(firstChampion) && Number.isFinite(lastChampion) ? Number(lastChampion) - Number(firstChampion) : undefined;
   const fmtTopology = (value: number | undefined) => Number.isFinite(value) ? Number(value).toFixed(digits) : '—';
   const deltaLabel = Number.isFinite(delta) ? `${Number(delta) >= 0 ? '+' : ''}${Number(delta).toFixed(digits)}` : '—';
   const midGeneration = Math.round((minGeneration + maxGeneration) / 2);
+  const championTip = lastChampionRow && Number.isFinite(lastChampionRow.champion)
+    ? { x: x(lastChampionRow.generation), y: y(Number(lastChampionRow.champion)), value: Number(lastChampionRow.champion) }
+    : null;
+  const averageTip = lastAverageRow && Number.isFinite(lastAverageRow.average)
+    ? { x: x(lastAverageRow.generation), y: y(Number(lastAverageRow.average)), value: Number(lastAverageRow.average) }
+    : null;
+  let championLabelY = championTip?.y ?? 0;
+  let averageLabelY = averageTip?.y ?? 0;
+  if (championTip && averageTip && Math.abs(championLabelY - averageLabelY) < 14) {
+    if (championLabelY <= averageLabelY) {
+      championLabelY = Math.max(9, championLabelY - 7);
+      averageLabelY = Math.min(height - bottom - 2, averageLabelY + 7);
+    } else {
+      averageLabelY = Math.max(9, averageLabelY - 7);
+      championLabelY = Math.min(height - bottom - 2, championLabelY + 7);
+    }
+  }
 
   return (
     <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
@@ -198,6 +285,16 @@ const TopologyEvolutionChart: React.FC<{
         {[0, .25, .5, .75, 1].map(frac => { const tickValue = yMax * (1 - frac); const tickY = top + frac * (height - top - bottom); return <g key={frac}><line x1={left} x2={width-right} y1={tickY} y2={tickY} stroke="currentColor" className="text-gray-800" strokeWidth="1" /><text x={left-7} y={tickY+3} textAnchor="end" fill="currentColor" className="text-gray-600 text-[9px]">{tickValue.toFixed(digits)}</text></g>; })}
         <polyline points={points('average')} fill="none" stroke="currentColor" className="text-cyan-400/70" strokeWidth="2" vectorEffect="non-scaling-stroke" />
         <polyline points={points('champion')} fill="none" stroke="currentColor" className="text-violet-300" strokeWidth="2.6" vectorEffect="non-scaling-stroke" />
+        {averageTip && <>
+          <circle cx={averageTip.x} cy={averageTip.y} r="3" fill="currentColor" className="text-cyan-300" />
+          {Math.abs(averageLabelY-averageTip.y)>1 && <line x1={averageTip.x+4} y1={averageTip.y} x2={width-right+7} y2={averageLabelY} stroke="currentColor" className="text-cyan-400/50" strokeWidth="1" />}
+          <text x={width-right+10} y={averageLabelY} dominantBaseline="middle" fill="currentColor" className="text-cyan-200 text-[9px] font-mono font-semibold" stroke="#05070b" strokeWidth="3" paintOrder="stroke">{fmtTopology(averageTip.value)}</text>
+        </>}
+        {championTip && <>
+          <circle cx={championTip.x} cy={championTip.y} r="3.2" fill="currentColor" className="text-violet-300" />
+          {Math.abs(championLabelY-championTip.y)>1 && <line x1={championTip.x+4} y1={championTip.y} x2={width-right+7} y2={championLabelY} stroke="currentColor" className="text-violet-300/50" strokeWidth="1" />}
+          <text x={width-right+10} y={championLabelY} dominantBaseline="middle" fill="currentColor" className="text-violet-200 text-[9px] font-mono font-semibold" stroke="#05070b" strokeWidth="3" paintOrder="stroke">{fmtTopology(championTip.value)}</text>
+        </>}
         <text x={left} y={height-10} textAnchor="middle" fill="currentColor" className="text-gray-600 text-[9px]">g{minGeneration}</text><text x={x(midGeneration)} y={height-10} textAnchor="middle" fill="currentColor" className="text-gray-600 text-[9px]">g{midGeneration}</text><text x={width-right} y={height-10} textAnchor="middle" fill="currentColor" className="text-gray-600 text-[9px]">g{maxGeneration}</text>
       </svg>
       <div className="mt-2 flex flex-wrap gap-4 text-[11px]"><span className="text-violet-300">● Champion</span><span className="text-cyan-300">● Population mean</span><span className="ml-auto text-gray-600">generation →</span></div>
@@ -619,25 +716,40 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
                 <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-cyan-300" /><h3 className="font-semibold text-white">Gameplay trend</h3></div>
                 <LineChart
                   series={[
-                    { label: 'Tag rate %', values: balanceHistory.map(m => m.tagRate * 100) },
-                    { label: 'Clean survival %', values: balanceHistory.map(m => m.survivalRate * 100) },
-                    { label: 'Runner pace %', values: balanceHistory.map(m => (m.runnerPaceCompletion ?? 0) * 100) },
+                    { label: 'Tag rate %', values: balanceHistory.map(m => m.tagRate * 100), tipDigits: 1, tipSuffix: '%' },
+                    { label: 'Clean survival %', values: balanceHistory.map(m => m.survivalRate * 100), tipDigits: 1, tipSuffix: '%' },
+                    { label: 'Runner pace %', values: balanceHistory.map(m => (m.runnerPaceCompletion ?? 0) * 100), tipDigits: 1, tipSuffix: '%' },
                   ]}
                   emptyLabel="Complete generations to populate gameplay telemetry."
                 />
               </div>
             </div>
 
-            <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
-              <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-rose-300" /><h3 className="font-semibold text-white">Failure trend</h3></div>
-              <LineChart
-                series={[
-                  { label: 'Chaser fall %', values: balanceHistory.map(m => (m.chaserFallRate ?? 0) * 100) },
-                  { label: 'Chaser escape %', values: balanceHistory.map(m => (m.chaserEscapeRate ?? 0) * 100) },
-                  { label: 'Runner fall %', values: balanceHistory.map(m => (m.runnerFallRate ?? 0) * 100) },
-                ]}
-                emptyLabel="Complete generations to populate failure telemetry."
-              />
+            <div className="grid lg:grid-cols-2 gap-4">
+              <div className="rounded-xl border border-amber-500/20 bg-amber-950/10 p-4">
+                <div className="flex items-center gap-2 mb-1"><Trophy className="w-4 h-4 text-amber-300" /><h3 className="font-semibold text-white">Population win rate</h3></div>
+                <p className="mb-3 text-[11px] leading-relaxed text-gray-500">A match with at least one contact tag is a Chaser win; a tag-free match is a Runner win.</p>
+                <LineChart
+                  series={[
+                    { label: 'Chaser win %', values: balanceHistory.map(m => m.tagRate * 100), tipDigits: 1, tipSuffix: '%' },
+                    { label: 'Runner win %', values: balanceHistory.map(m => (1 - m.tagRate) * 100), tipDigits: 1, tipSuffix: '%' },
+                  ]}
+                  yMin={0}
+                  yMax={100}
+                  emptyLabel="Complete generations to populate win-rate telemetry."
+                />
+              </div>
+              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
+                <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-rose-300" /><h3 className="font-semibold text-white">Failure trend</h3></div>
+                <LineChart
+                  series={[
+                    { label: 'Chaser fall %', values: balanceHistory.map(m => (m.chaserFallRate ?? 0) * 100), tipDigits: 1, tipSuffix: '%' },
+                    { label: 'Chaser escape %', values: balanceHistory.map(m => (m.chaserEscapeRate ?? 0) * 100), tipDigits: 1, tipSuffix: '%' },
+                    { label: 'Runner fall %', values: balanceHistory.map(m => (m.runnerFallRate ?? 0) * 100), tipDigits: 1, tipSuffix: '%' },
+                  ]}
+                  emptyLabel="Complete generations to populate failure telemetry."
+                />
+              </div>
             </div>
           </div>
         )}
@@ -654,8 +766,8 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
               ]} />
             </div>
             <div className="grid md:grid-cols-2 gap-4">
-              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4"><h3 className="font-semibold text-white mb-3">Species count</h3><LineChart series={[{ label: 'Chaser active', values: chaserHistory.map(m => m.speciesCount) }, { label: 'Runner active', values: evaderHistory.map(m => m.speciesCount) }, { label: 'Chaser reproducing', values: chaserHistory.map(m => m.reproductiveSpeciesCount ?? m.speciesCount) }, { label: 'Runner reproducing', values: evaderHistory.map(m => m.reproductiveSpeciesCount ?? m.speciesCount) }]} /></div>
-              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4"><h3 className="font-semibold text-white mb-3">Species longevity</h3><LineChart series={[{ label: 'Chaser oldest age', values: chaserHistory.map(m => m.oldestSpeciesAge ?? 0) }, { label: 'Runner oldest age', values: evaderHistory.map(m => m.oldestSpeciesAge ?? 0) }, { label: 'Chaser stagnant', values: chaserHistory.map(m => m.stagnantSpeciesCount ?? 0) }, { label: 'Runner stagnant', values: evaderHistory.map(m => m.stagnantSpeciesCount ?? 0) }]} /></div>
+              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4"><h3 className="font-semibold text-white mb-3">Species count</h3><LineChart series={[{ label: 'Chaser active', values: chaserHistory.map(m => m.speciesCount), tipDigits: 0 }, { label: 'Runner active', values: evaderHistory.map(m => m.speciesCount), tipDigits: 0 }, { label: 'Chaser reproducing', values: chaserHistory.map(m => m.reproductiveSpeciesCount ?? m.speciesCount), tipDigits: 0 }, { label: 'Runner reproducing', values: evaderHistory.map(m => m.reproductiveSpeciesCount ?? m.speciesCount), tipDigits: 0 }]} /></div>
+              <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4"><h3 className="font-semibold text-white mb-3">Species longevity</h3><LineChart series={[{ label: 'Chaser oldest age', values: chaserHistory.map(m => m.oldestSpeciesAge ?? 0), tipDigits: 0 }, { label: 'Runner oldest age', values: evaderHistory.map(m => m.oldestSpeciesAge ?? 0), tipDigits: 0 }, { label: 'Chaser stagnant', values: chaserHistory.map(m => m.stagnantSpeciesCount ?? 0), tipDigits: 0 }, { label: 'Runner stagnant', values: evaderHistory.map(m => m.stagnantSpeciesCount ?? 0), tipDigits: 0 }]} /></div>
             </div>
           </div>
         )}
