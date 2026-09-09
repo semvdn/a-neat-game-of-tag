@@ -50,3 +50,15 @@ Scenery descriptors store **one size scalar**, never independent random width an
 Within each background chunk, features occupy deterministic jittered slots rather than unconstrained random X positions. Natural biomes allow a little more baseline variation than City/Foundry/Spires/Ruins, while built silhouettes keep tighter foundations. Distant landmarks are rendered behind their ridge/foothill layer so their lower edges are naturally occluded rather than appearing pasted onto the horizon. Rare landmarks are weighted separately (for example Rural Village windmills and Snowy Mountain chalets), and asymmetric motifs may be deterministically mirrored to break repetition without inventing new geometry.
 
 `biome_visual_sanity_check.png` is generated from recorded draw operations from the actual current background renderer and overlays the real current agent sprites at gameplay scale, specifically to check relative landmark size, grounding and readability. `biome_asset_catalog.png` isolates the seven deterministic midground variants beside the same agent reference using aspect-preserving preview fitting. `biome_platform_material_catalog.png` compares normal/branch/merge-moving platform materials. These images are documentation only and are not loaded by the game.
+
+### Asset diversity pass
+
+The procedural landmark layer now uses biome-specific feature-count ranges, weighted variant pools,
+and per-biome scale ranges instead of one universal placement grammar. Open biomes can produce empty
+landmark chunks, while dense biomes retain more layered scenery.
+
+Rural Village is intentionally sparse: countryside motifs (orchards, hay, hedgerows) are weighted more
+heavily than buildings, and its midground no longer guarantees a landmark every 600 world units. The
+building vocabulary now includes multiple cottage/farmhouse forms, barn, stable, chapel, and a rare
+windmill. Spires, Foundry, Ruins, City, Forest, Desert, Snow, Lowlands, and Swamp also gained genuinely
+separate silhouette variants rather than modulo aliases of the same few shapes.

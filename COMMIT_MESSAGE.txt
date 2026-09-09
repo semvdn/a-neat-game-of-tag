@@ -1,8 +1,8 @@
-Prioritize platform visibility and reshape snowy mountains
+Refine biome landmark diversity and village spacing
 
-- make vertical camera framing maximize the local platform band instead of following jump arcs
-- remove vertical agent span from auto-zoom and Y safety clamping so jump apexes may leave frame briefly
-- retain horizontal pair framing and immediate zoom-out for diverging routes
-- center on the full platform band when it fits and otherwise select the densest vertical platform window
-- replace snowy ridged-noise teeth with broad deterministic mountain massifs and foothills
-- render snow as a shallow ridge-following ribbon only on high mountain sections
+- make Rural Village landmarks sparser and bias placement toward orchards, hay and hedgerows
+- add multiple cottage, farmhouse, barn, stable, chapel and rare windmill silhouettes
+- expand Spires, Foundry, Ruins, City, Forest, Desert, Snow, Lowlands and Swamp landmark vocabularies
+- use biome-specific landmark count bounds and scale ranges instead of one universal placement grammar
+- thin discrete landmark density where continuous panoramas already carry strong biome identity
+- bump the visual biome cache version and add refreshed asset/scene audit sheets

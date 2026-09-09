@@ -23,21 +23,48 @@ const snap=(v:number,g=2)=>Math.round(v/g)*g;
 function rgba(hex:string,alpha:number){const h=hex.replace('#','');const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);return `rgba(${r}, ${g}, ${b}, ${alpha})`;}
 
 function visualVariantForBiome(biome:BiomeId,layer:Layer,hash:number):number{
-  // Landmark variants are intentionally weighted. Rare silhouettes (windmills, chalets, etc.)
-  // should punctuate a biome rather than repeat every few hundred pixels.
-  if(biome==='rural-village'&&layer!=='far'){
-    const choices=[0,1,2,3,4,6,0,1,2,3,4,6,0,1,2,5];
-    return choices[hash%choices.length];
-  }
-  if(biome==='snowy-mountains'&&layer!=='far'){
-    const choices=[1,2,3,4,5,1,2,3,4,5,6,2];
-    return choices[hash%choices.length];
-  }
-  if(biome==='desert'&&layer!=='far'){
-    const choices=[0,1,2,3,4,1,2,3,4,1];
-    return choices[hash%choices.length];
-  }
-  return hash%7;
+  // Weighted vocabularies keep signature landmarks rare and prevent modulo aliases from making
+  // supposedly different variants collapse onto the same silhouette.
+  const pools: Partial<Record<BiomeId, readonly number[]>> = {
+    lowlands: [0,1,1,2,3,4,4,5,6,1,4],
+    spires: [0,0,1,2,3,4,4,5,6,0,3],
+    foundry: [0,1,2,3,3,4,5,0,1,3],
+    ruins: [0,1,2,2,3,4,5,0,2,4],
+    desert: [0,1,1,2,3,4,4,5,6,1,4],
+    'snowy-mountains': [0,1,1,2,2,3,4,4,5,6,2,4],
+    'temperate-forest': [0,1,1,2,2,3,4,5,5,6,2,4],
+    city: [0,1,2,3,3,4,4,5,6,0,3],
+    'rural-village': [2,7,9,0,2,7,1,2,7,3,9,7,4,2,7,6,0,9,7,8,2,7,5],
+    swamp: [0,1,1,2,3,3,4,5,6,1,3],
+  };
+  const pool=pools[biome] || [0,1,2,3,4,5,6];
+  return pool[hash%pool.length];
+}
+
+function featureCountBounds(biome:BiomeId,layer:Layer):{min:number;max:number}{
+  if(layer==='far') return {min:0,max:0};
+  const table:Record<BiomeId,{mid:[number,number];near:[number,number];foreground:[number,number]}>={
+    lowlands:{mid:[0,2],near:[0,3],foreground:[0,2]},
+    spires:{mid:[0,2],near:[0,2],foreground:[0,1]},
+    foundry:{mid:[0,2],near:[0,2],foreground:[0,2]},
+    ruins:{mid:[0,2],near:[0,3],foreground:[0,2]},
+    desert:{mid:[0,2],near:[0,2],foreground:[0,1]},
+    'snowy-mountains':{mid:[0,2],near:[0,3],foreground:[0,1]},
+    'temperate-forest':{mid:[1,3],near:[1,4],foreground:[0,2]},
+    city:{mid:[1,3],near:[1,4],foreground:[0,2]},
+    'rural-village':{mid:[0,1],near:[0,2],foreground:[0,1]},
+    swamp:{mid:[0,3],near:[1,4],foreground:[0,2]},
+  };
+  const pair=table[biome][layer as 'mid'|'near'|'foreground'];
+  return {min:pair[0],max:pair[1]};
+}
+
+function featureScaleForBiome(biome:BiomeId,seed:number,namespace:number,key:number):number{
+  const r=biomeRandom01(seed,namespace^0x77,key);
+  if(biome==='rural-village') return .76+r*.34;
+  if(biome==='lowlands'||biome==='desert'||biome==='temperate-forest'||biome==='swamp') return .76+r*.42;
+  if(biome==='city'||biome==='foundry'||biome==='spires'||biome==='ruins') return .84+r*.30;
+  return .8+r*.34;
 }
 
 function drawPixelDisc(ctx:CanvasRenderingContext2D,cx:number,cy:number,r:number,color:string){ctx.fillStyle=color;const rows=[.62,.86,1,1,.86,.62];for(let i=0;i<rows.length;i++){const hh=Math.max(2,Math.round((r*2)/rows.length)),ww=Math.round(r*2*rows[i]),yy=Math.round(cy-r+i*hh);ctx.fillRect(snap(cx-ww*.5),snap(yy),snap(ww),hh+1);}}
@@ -65,10 +92,10 @@ export class BiomeBackgroundCache {
     const centerX=(chunkIndex+.5)*BACKGROUND_CHUNK_WIDTH,sample=getBiomeAtX(centerX,seed);
     const densityA=densityFor(sample.primary,layer),densityB=sample.secondary?densityFor(sample.secondary,layer):densityA;
     const density=densityA+(densityB-densityA)*(sample.secondary?sample.blend:0);
-    const minFeatures=layer==='far'?0:layer==='foreground'?0:1;
-    const maxFeatures=layer==='far'?0:layer==='mid'?3:layer==='near'?4:2;
-    const count=Math.max(minFeatures,Math.min(maxFeatures,Math.round(
-      minFeatures+density*(maxFeatures-minFeatures)+(biomeRandom01(seed,namespace,chunkIndex)-.5)*.9
+    const centerBiome=dominantBiome(sample);
+    const bounds=featureCountBounds(centerBiome,layer);
+    const count=Math.max(bounds.min,Math.min(bounds.max,Math.round(
+      bounds.min+density*(bounds.max-bounds.min)+(biomeRandom01(seed,namespace,chunkIndex)-.5)*1.25
     )));
     const features:FeatureDescriptor[]=[];
     // Place assets in jittered slots instead of independent random X positions. This keeps the
@@ -84,7 +111,7 @@ export class BiomeBackgroundCache {
       const featureBiome=chooseBiome(featureSample,biomeRandom01(seed,namespace^0x62696f,k));
       features.push({
         x,
-        scale:.86+biomeRandom01(seed,namespace^0x77,k)*.28,
+        scale:featureScaleForBiome(featureBiome,seed,namespace,k),
         variant:visualVariantForBiome(featureBiome,layer,biomeHash(seed,namespace^0x76,k)),
         yJitter:biomeRandom01(seed,namespace^0x79,k)*2-1,
         flipX:(biomeHash(seed,namespace^0x6d6972,k)&1)===1,
@@ -173,39 +200,44 @@ function drawLowland(
   ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
   c: string, d: string, v: number, layer: Layer,
 ) {
-  if (layer === 'far') {
-    // Small copses instead of a wall of tree spikes.
-    ctx.fillStyle = c;
-    const crownY = b - h * 0.42;
-    ctx.fillRect(snap(x + w * 0.08), snap(crownY), snap(w * 0.34), snap(h * 0.26));
-    ctx.fillRect(snap(x + w * 0.31), snap(crownY - h * 0.12), snap(w * 0.37), snap(h * 0.38));
-    ctx.fillRect(snap(x + w * 0.62), snap(crownY + h * 0.03), snap(w * 0.28), snap(h * 0.23));
-    return;
-  }
-  const kind = v % 5;
-  if (kind === 0) {
-    // Low hedge / scrub mass gives the biome horizontal visual weight.
-    ctx.fillStyle = c;
-    ctx.fillRect(snap(x + w * 0.04), snap(b - h * 0.28), snap(w * 0.92), snap(h * 0.28));
-    ctx.fillRect(snap(x + w * 0.16), snap(b - h * 0.41), snap(w * 0.3), snap(h * 0.15));
-    ctx.fillRect(snap(x + w * 0.58), snap(b - h * 0.37), snap(w * 0.25), snap(h * 0.11));
-  } else if (kind === 2) {
-    // Poplar pair — narrow vertical punctuation, but much shorter than Spires architecture.
-    const tw = Math.max(3, snap(w * 0.07));
-    for (const [ox, scale] of [[0.28, 0.85], [0.58, 0.68]] as const) {
-      ctx.fillStyle = c;
-      ctx.fillRect(snap(x + w * ox), snap(b - h * 0.5 * scale), tw, snap(h * 0.5 * scale));
-      ctx.fillRect(snap(x + w * (ox - 0.1)), snap(b - h * 0.82 * scale), snap(w * 0.22), snap(h * 0.36 * scale));
+  ctx.fillStyle=c;
+  const kind=v%7;
+  if(kind===0){
+    // Hedge/scrub bank.
+    ctx.fillRect(snap(x+w*.04),snap(b-h*.27),snap(w*.92),snap(h*.27));
+    ctx.fillRect(snap(x+w*.16),snap(b-h*.4),snap(w*.3),snap(h*.15));
+    ctx.fillRect(snap(x+w*.59),snap(b-h*.36),snap(w*.24),snap(h*.11));
+  } else if(kind===1){
+    // Mature spreading oak.
+    rectTree(ctx,x,b,w,h,c,d,true);
+  } else if(kind===2){
+    // Poplar pair.
+    const specs=[[.28,.9],[.61,.7]] as const;
+    for(const [ox,scale] of specs){
+      const tw=Math.max(3,snap(w*.065));
+      ctx.fillRect(snap(x+w*ox),snap(b-h*.48*scale),tw,snap(h*.48*scale));
+      ctx.fillRect(snap(x+w*(ox-.1)),snap(b-h*.84*scale),snap(w*.22),snap(h*.39*scale));
     }
-  } else if (kind === 3) {
-    // Grass-covered stone mound: a low landmark that keeps the horizon open.
-    ctx.fillStyle = c;
-    ctx.fillRect(snap(x + w * 0.12), snap(b - h * 0.22), snap(w * 0.76), snap(h * 0.22));
-    ctx.fillRect(snap(x + w * 0.26), snap(b - h * 0.34), snap(w * 0.42), snap(h * 0.13));
-    ctx.fillStyle = rgba(d, 0.26);
-    ctx.fillRect(snap(x + w * 0.18), snap(b - h * 0.22), snap(w * 0.54), 3);
+  } else if(kind===3){
+    // Turf-covered fieldstone mound.
+    ctx.fillRect(snap(x+w*.1),snap(b-h*.2),snap(w*.8),snap(h*.2));
+    ctx.fillRect(snap(x+w*.25),snap(b-h*.32),snap(w*.45),snap(h*.13));
+    ctx.fillStyle=rgba(d,.25);ctx.fillRect(snap(x+w*.18),snap(b-h*.21),snap(w*.57),3);
+  } else if(kind===4){
+    // Uneven pair of field trees.
+    rectTree(ctx,x,b,w*.58,h*.8,c,d,true);
+    rectTree(ctx,x+w*.43,b,w*.55,h,c,d,true);
+  } else if(kind===5){
+    // Old low dry-stone wall with a shrub breaking the line.
+    ctx.fillRect(snap(x+w*.05),snap(b-h*.13),snap(w*.9),snap(h*.13));
+    ctx.fillStyle=rgba(d,.25);
+    for(let i=0;i<5;i++)ctx.fillRect(snap(x+w*(.09+i*.17)),snap(b-h*.13),2,snap(h*.13));
+    ctx.fillStyle=c;ctx.fillRect(snap(x+w*.58),snap(b-h*.29),snap(w*.24),snap(h*.18));
   } else {
-    rectTree(ctx, x, b, w, h, c, d, true);
+    // Three-bush copse keeps some chunks low and open.
+    ctx.fillRect(snap(x+w*.08),snap(b-h*.2),snap(w*.27),snap(h*.2));
+    ctx.fillRect(snap(x+w*.31),snap(b-h*.31),snap(w*.35),snap(h*.31));
+    ctx.fillRect(snap(x+w*.63),snap(b-h*.18),snap(w*.26),snap(h*.18));
   }
 }
 
@@ -213,64 +245,44 @@ function drawSpire(
   ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
   c: string, d: string, v: number, layer: Layer,
 ) {
-  ctx.fillStyle = c;
-  const kind = v % 5;
-  if (kind === 1 && layer !== 'far') {
-    // Twin towers connected by a narrow high bridge.
-    const towerW = Math.max(7, snap(w * 0.22));
-    for (const ox of [0.2, 0.6]) {
-      const bx = snap(x + w * ox);
-      ctx.fillRect(bx, snap(b - h * 0.64), towerW, snap(h * 0.64));
-      ctx.beginPath();
-      ctx.moveTo(bx - 2, snap(b - h * 0.64));
-      ctx.lineTo(snap(bx + towerW * 0.5), snap(b - h * 0.92));
-      ctx.lineTo(bx + towerW + 2, snap(b - h * 0.64));
-      ctx.closePath(); ctx.fill();
-    }
-    ctx.fillRect(snap(x + w * 0.29), snap(b - h * 0.4), snap(w * 0.44), Math.max(4, snap(h * 0.07)));
-    return;
-  }
-  if (kind === 2 && layer !== 'far') {
-    // Open gate/arch: broad base and negative space keep it distinct from the needle towers.
-    const colW = Math.max(7, snap(w * 0.18));
-    ctx.fillRect(snap(x + w * 0.12), snap(b - h * 0.56), colW, snap(h * 0.56));
-    ctx.fillRect(snap(x + w * 0.7), snap(b - h * 0.56), colW, snap(h * 0.56));
-    ctx.fillRect(snap(x + w * 0.12), snap(b - h * 0.58), snap(w * 0.76), Math.max(6, snap(h * 0.1)));
-    ctx.beginPath();
-    ctx.moveTo(snap(x + w * 0.2), snap(b - h * 0.58));
-    ctx.lineTo(snap(x + w * 0.5), snap(b - h * 0.82));
-    ctx.lineTo(snap(x + w * 0.8), snap(b - h * 0.58));
-    ctx.closePath(); ctx.fill();
-    return;
-  }
-  if (kind === 4 && layer !== 'far') {
-    // Cluster of three smaller pinnacles.
-    const specs = [[0.16, 0.56, 0.18], [0.42, 0.76, 0.2], [0.68, 0.48, 0.16]] as const;
-    for (const [ox, hh, ww] of specs) {
-      const bx = x + w * ox;
-      ctx.fillRect(snap(bx), snap(b - h * hh), snap(w * ww), snap(h * hh));
-      ctx.beginPath();
-      ctx.moveTo(snap(bx - w * 0.02), snap(b - h * hh));
-      ctx.lineTo(snap(bx + w * ww * 0.5), snap(b - h * (hh + 0.18)));
-      ctx.lineTo(snap(bx + w * ww + w * 0.02), snap(b - h * hh));
-      ctx.closePath(); ctx.fill();
-    }
-    return;
-  }
-
-  const bodyW = Math.max(9, snap(w * (kind === 3 ? 0.42 : 0.35)));
-  const bx = snap(x + (w - bodyW) * 0.5);
-  const shoulderY = b - h * (kind === 3 ? 0.6 : 0.67);
-  ctx.fillRect(bx, snap(shoulderY), bodyW, snap(b - shoulderY));
-  ctx.fillRect(snap(bx - bodyW * 0.26), snap(b - h * 0.27), snap(bodyW * 1.52), snap(h * 0.27));
-  ctx.beginPath();
-  ctx.moveTo(bx - 3, snap(shoulderY));
-  ctx.lineTo(snap(x + w * 0.5), snap(b - h * (kind === 3 ? 0.86 : 1)));
-  ctx.lineTo(bx + bodyW + 3, snap(shoulderY));
-  ctx.closePath(); ctx.fill();
-  ctx.fillStyle = rgba(d, 0.34);
-  for (let yy = b - h * 0.52; yy < b - h * 0.12; yy += Math.max(9, h * 0.18)) {
-    ctx.fillRect(snap(bx + bodyW * 0.38), snap(yy), Math.max(2, snap(bodyW * 0.22)), 3);
+  ctx.fillStyle=c;
+  const kind=v%7;
+  const roof=(cx:number,y:number,ww:number,hh:number)=>{ctx.beginPath();ctx.moveTo(snap(cx-ww*.55),snap(y));ctx.lineTo(snap(cx),snap(y-hh));ctx.lineTo(snap(cx+ww*.55),snap(y));ctx.closePath();ctx.fill();};
+  if(kind===1){
+    // Twin towers and high bridge.
+    const tw=Math.max(7,snap(w*.2));
+    for(const ox of [.19,.62]){const bx=x+w*ox;ctx.fillRect(snap(bx),snap(b-h*.62),tw,snap(h*.62));roof(bx+tw*.5,b-h*.62,tw,h*.24);}
+    ctx.fillRect(snap(x+w*.28),snap(b-h*.4),snap(w*.46),Math.max(4,snap(h*.065)));
+  } else if(kind===2){
+    // Ceremonial gate / pointed arch mass.
+    const cw=Math.max(7,snap(w*.17));
+    ctx.fillRect(snap(x+w*.1),snap(b-h*.55),cw,snap(h*.55));ctx.fillRect(snap(x+w*.73),snap(b-h*.55),cw,snap(h*.55));
+    ctx.fillRect(snap(x+w*.1),snap(b-h*.58),snap(w*.8),snap(h*.1));roof(x+w*.5,b-h*.58,w*.62,h*.22);
+  } else if(kind===3){
+    // Broad stepped bastion rather than another needle.
+    ctx.fillRect(snap(x+w*.16),snap(b-h*.4),snap(w*.68),snap(h*.4));
+    ctx.fillRect(snap(x+w*.26),snap(b-h*.58),snap(w*.48),snap(h*.19));
+    ctx.fillRect(snap(x+w*.39),snap(b-h*.73),snap(w*.22),snap(h*.16));
+    ctx.fillStyle=rgba(d,.27);ctx.fillRect(snap(x+w*.46),snap(b-h*.33),snap(w*.08),snap(h*.14));
+  } else if(kind===4){
+    // Three-pinnacle cluster.
+    for(const [ox,hh,ww] of [[.12,.53,.18],[.4,.75,.21],[.7,.46,.16]] as const){const bx=x+w*ox;ctx.fillRect(snap(bx),snap(b-h*hh),snap(w*ww),snap(h*hh));roof(bx+w*ww*.5,b-h*hh,w*ww,h*.17);}
+  } else if(kind===5){
+    // Buttressed sanctuary with wide shoulders.
+    ctx.fillRect(snap(x+w*.25),snap(b-h*.62),snap(w*.5),snap(h*.62));
+    ctx.fillRect(snap(x+w*.08),snap(b-h*.27),snap(w*.2),snap(h*.27));ctx.fillRect(snap(x+w*.72),snap(b-h*.27),snap(w*.2),snap(h*.27));
+    roof(x+w*.5,b-h*.62,w*.52,h*.25);
+  } else if(kind===6){
+    // Elevated bridge between unequal towers.
+    const lW=w*.2,rW=w*.17;
+    ctx.fillRect(snap(x+w*.13),snap(b-h*.5),snap(lW),snap(h*.5));ctx.fillRect(snap(x+w*.72),snap(b-h*.7),snap(rW),snap(h*.7));
+    roof(x+w*.23,b-h*.5,lW,h*.19);roof(x+w*.805,b-h*.7,rW,h*.2);
+    ctx.fillRect(snap(x+w*.28),snap(b-h*.34),snap(w*.5),snap(h*.075));
+  } else {
+    // Signature solitary needle.
+    const bw=Math.max(9,snap(w*.34)),bx=x+(w-bw)*.5,shoulder=b-h*.66;
+    ctx.fillRect(snap(bx),snap(shoulder),bw,snap(b-shoulder));ctx.fillRect(snap(bx-bw*.25),snap(b-h*.27),snap(bw*1.5),snap(h*.27));roof(x+w*.5,shoulder,bw,h*.31);
+    ctx.fillStyle=rgba(d,.3);for(let yy=b-h*.5;yy<b-h*.12;yy+=Math.max(9,h*.18))ctx.fillRect(snap(x+w*.47),snap(yy),Math.max(2,snap(bw*.18)),3);
   }
 }
 
@@ -278,40 +290,30 @@ function drawFoundry(
   ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
   c: string, d: string, v: number, layer: Layer,
 ) {
-  ctx.fillStyle = c;
-  const kind = v % 4;
-  if (kind === 0) {
-    // Furnace hall + one substantial stack.
-    ctx.fillRect(snap(x + w * 0.08), snap(b - h * 0.42), snap(w * 0.72), snap(h * 0.42));
-    ctx.fillRect(snap(x + w * 0.58), snap(b - h * 0.9), snap(w * 0.16), snap(h * 0.52));
-    ctx.fillRect(snap(x + w * 0.55), snap(b - h * 0.92), snap(w * 0.22), Math.max(4, snap(h * 0.06)));
-    ctx.fillStyle = rgba(d, 0.3);
-    ctx.fillRect(snap(x + w * 0.14), snap(b - h * 0.3), snap(w * 0.35), Math.max(4, snap(h * 0.08)));
-  } else if (kind === 1) {
-    // Storage tank with a short pipe run.
-    const tankX = x + w * 0.17, tankW = w * 0.5;
-    ctx.fillRect(snap(tankX), snap(b - h * 0.53), snap(tankW), snap(h * 0.53));
-    ctx.fillRect(snap(tankX + tankW * 0.1), snap(b - h * 0.6), snap(tankW * 0.8), snap(h * 0.08));
-    ctx.fillRect(snap(x + w * 0.67), snap(b - h * 0.3), snap(w * 0.26), Math.max(4, snap(h * 0.08)));
-    ctx.fillRect(snap(x + w * 0.84), snap(b - h * 0.3), Math.max(4, snap(w * 0.06)), snap(h * 0.22));
-  } else if (kind === 2 && layer !== 'far') {
-    // Gantry/crane silhouette — broad rather than another vertical chimney.
-    const legW = Math.max(4, snap(w * 0.07));
-    ctx.fillRect(snap(x + w * 0.18), snap(b - h * 0.64), legW, snap(h * 0.64));
-    ctx.fillRect(snap(x + w * 0.7), snap(b - h * 0.48), legW, snap(h * 0.48));
-    ctx.fillRect(snap(x + w * 0.16), snap(b - h * 0.66), snap(w * 0.64), Math.max(5, snap(h * 0.08)));
-    ctx.fillRect(snap(x + w * 0.48), snap(b - h * 0.58), 3, snap(h * 0.22));
+  ctx.fillStyle=c; const kind=v%6;
+  if(kind===0){
+    // Furnace hall and substantial stack.
+    ctx.fillRect(snap(x+w*.07),snap(b-h*.4),snap(w*.72),snap(h*.4));ctx.fillRect(snap(x+w*.58),snap(b-h*.9),snap(w*.15),snap(h*.53));ctx.fillRect(snap(x+w*.55),snap(b-h*.92),snap(w*.21),snap(h*.055));
+    ctx.fillStyle=rgba(d,.3);ctx.fillRect(snap(x+w*.14),snap(b-h*.29),snap(w*.34),snap(h*.075));
+  } else if(kind===1){
+    // Storage tank and pipe run.
+    ctx.fillRect(snap(x+w*.14),snap(b-h*.5),snap(w*.5),snap(h*.5));ctx.fillRect(snap(x+w*.19),snap(b-h*.58),snap(w*.4),snap(h*.09));ctx.fillRect(snap(x+w*.64),snap(b-h*.27),snap(w*.28),snap(h*.075));ctx.fillRect(snap(x+w*.84),snap(b-h*.27),4,snap(h*.2));
+  } else if(kind===2){
+    // Gantry/crane.
+    const leg=Math.max(4,snap(w*.065));ctx.fillRect(snap(x+w*.18),snap(b-h*.62),leg,snap(h*.62));ctx.fillRect(snap(x+w*.72),snap(b-h*.48),leg,snap(h*.48));ctx.fillRect(snap(x+w*.15),snap(b-h*.66),snap(w*.67),snap(h*.075));ctx.fillRect(snap(x+w*.5),snap(b-h*.58),3,snap(h*.23));
+  } else if(kind===3){
+    // Sawtooth factory.
+    ctx.fillRect(snap(x+w*.05),snap(b-h*.36),snap(w*.9),snap(h*.36));
+    for(let i=0;i<3;i++){const sx=x+w*(.09+i*.28);ctx.beginPath();ctx.moveTo(snap(sx),snap(b-h*.36));ctx.lineTo(snap(sx+w*.12),snap(b-h*.51));ctx.lineTo(snap(sx+w*.22),snap(b-h*.36));ctx.closePath();ctx.fill();}
+  } else if(kind===4){
+    // Pipe rack with two squat vessels.
+    ctx.fillRect(snap(x+w*.07),snap(b-h*.18),snap(w*.86),snap(h*.08));
+    for(const ox of [.18,.62]){ctx.fillRect(snap(x+w*ox),snap(b-h*.43),snap(w*.18),snap(h*.34));ctx.fillRect(snap(x+w*(ox+.03)),snap(b-h*.49),snap(w*.12),snap(h*.07));}
+    ctx.fillStyle=rgba(d,.28);ctx.fillRect(snap(x+w*.13),snap(b-h*.29),snap(w*.68),3);
   } else {
-    // Sawtooth factory roof.
-    ctx.fillRect(snap(x + w * 0.06), snap(b - h * 0.38), snap(w * 0.88), snap(h * 0.38));
-    for (let i = 0; i < 3; i++) {
-      const sx = x + w * (0.1 + i * 0.27);
-      ctx.beginPath();
-      ctx.moveTo(snap(sx), snap(b - h * 0.38));
-      ctx.lineTo(snap(sx + w * 0.11), snap(b - h * 0.52));
-      ctx.lineTo(snap(sx + w * 0.21), snap(b - h * 0.38));
-      ctx.closePath(); ctx.fill();
-    }
+    // Broad cooling tower / hopper silhouette.
+    ctx.beginPath();ctx.moveTo(snap(x+w*.22),snap(b));ctx.lineTo(snap(x+w*.32),snap(b-h*.65));ctx.lineTo(snap(x+w*.68),snap(b-h*.65));ctx.lineTo(snap(x+w*.78),snap(b));ctx.closePath();ctx.fill();
+    ctx.fillRect(snap(x+w*.28),snap(b-h*.69),snap(w*.44),snap(h*.07));ctx.fillStyle=rgba(d,.22);ctx.fillRect(snap(x+w*.4),snap(b-h*.38),snap(w*.2),3);
   }
 }
 
@@ -319,36 +321,29 @@ function drawRuins(
   ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
   c: string, d: string, v: number, layer: Layer,
 ) {
-  ctx.fillStyle = c;
-  const kind = v % 4;
-  if (kind === 0) {
-    // Broken arch with asymmetric surviving sides.
-    const colW = Math.max(6, snap(w * 0.16));
-    ctx.fillRect(snap(x + w * 0.12), snap(b - h * 0.68), colW, snap(h * 0.68));
-    ctx.fillRect(snap(x + w * 0.72), snap(b - h * 0.52), colW, snap(h * 0.52));
-    ctx.fillRect(snap(x + w * 0.12), snap(b - h * 0.68), snap(w * 0.76), Math.max(6, snap(h * 0.12)));
-    ctx.fillStyle = rgba(d, 0.18);
-    ctx.fillRect(snap(x + w * 0.36), snap(b - h * 0.46), snap(w * 0.28), snap(h * 0.46));
-  } else if (kind === 1) {
-    // Column pair and fragmentary lintel.
-    const colW = Math.max(6, snap(w * 0.14));
-    ctx.fillRect(snap(x + w * 0.22), snap(b - h * 0.72), colW, snap(h * 0.72));
-    ctx.fillRect(snap(x + w * 0.62), snap(b - h * 0.64), colW, snap(h * 0.64));
-    ctx.fillRect(snap(x + w * 0.17), snap(b - h * 0.74), snap(w * 0.56), Math.max(4, snap(h * 0.07)));
-  } else if (kind === 2) {
-    // Collapsed wall with deliberately irregular skyline.
-    ctx.fillRect(snap(x + w * 0.06), snap(b - h * 0.34), snap(w * 0.86), snap(h * 0.34));
-    ctx.fillRect(snap(x + w * 0.12), snap(b - h * 0.53), snap(w * 0.24), snap(h * 0.2));
-    ctx.fillRect(snap(x + w * 0.55), snap(b - h * 0.46), snap(w * 0.18), snap(h * 0.13));
-    ctx.fillStyle = rgba(d, 0.22);
-    ctx.fillRect(snap(x + w * 0.36), snap(b - h * 0.25), snap(w * 0.14), snap(h * 0.25));
+  ctx.fillStyle=c; const kind=v%6;
+  if(kind===0){
+    // Broken arch.
+    const cw=Math.max(6,snap(w*.15));ctx.fillRect(snap(x+w*.1),snap(b-h*.66),cw,snap(h*.66));ctx.fillRect(snap(x+w*.74),snap(b-h*.5),cw,snap(h*.5));ctx.fillRect(snap(x+w*.1),snap(b-h*.67),snap(w*.8),snap(h*.11));ctx.fillStyle=rgba(d,.18);ctx.fillRect(snap(x+w*.36),snap(b-h*.44),snap(w*.28),snap(h*.44));
+  } else if(kind===1){
+    // Column pair and broken lintel.
+    const cw=Math.max(6,snap(w*.13));ctx.fillRect(snap(x+w*.2),snap(b-h*.7),cw,snap(h*.7));ctx.fillRect(snap(x+w*.64),snap(b-h*.6),cw,snap(h*.6));ctx.fillRect(snap(x+w*.15),snap(b-h*.73),snap(w*.57),snap(h*.065));
+  } else if(kind===2){
+    // Collapsed wall.
+    ctx.fillRect(snap(x+w*.05),snap(b-h*.31),snap(w*.88),snap(h*.31));ctx.fillRect(snap(x+w*.12),snap(b-h*.5),snap(w*.22),snap(h*.2));ctx.fillRect(snap(x+w*.56),snap(b-h*.43),snap(w*.17),snap(h*.13));ctx.fillStyle=rgba(d,.2);ctx.fillRect(snap(x+w*.38),snap(b-h*.23),snap(w*.13),snap(h*.23));
+  } else if(kind===3){
+    // Broken tower.
+    ctx.fillRect(snap(x+w*.28),snap(b-h*.7),snap(w*.4),snap(h*.7));ctx.fillStyle=rgba(d,.22);ctx.fillRect(snap(x+w*.38),snap(b-h*.5),snap(w*.1),snap(h*.13));ctx.fillRect(snap(x+w*.52),snap(b-h*.29),snap(w*.08),snap(h*.1));ctx.fillRect(snap(x+w*.28),snap(b-h*.77),snap(w*.13),snap(h*.08));
+  } else if(kind===4){
+    // Fragment of an aqueduct: two surviving bays.
+    ctx.fillRect(snap(x+w*.06),snap(b-h*.52),snap(w*.88),snap(h*.12));
+    for(const ox of [.12,.56]){ctx.fillRect(snap(x+w*ox),snap(b-h*.5),snap(w*.12),snap(h*.5));ctx.fillRect(snap(x+w*(ox+.24)),snap(b-h*.42),snap(w*.11),snap(h*.42));}
+    ctx.fillStyle=rgba(d,.18);ctx.fillRect(snap(x+w*.28),snap(b-h*.34),snap(w*.2),snap(h*.34));ctx.fillRect(snap(x+w*.7),snap(b-h*.28),snap(w*.15),snap(h*.28));
   } else {
-    // Broken tower, broader than Spires and visibly incomplete.
-    ctx.fillRect(snap(x + w * 0.27), snap(b - h * 0.72), snap(w * 0.42), snap(h * 0.72));
-    ctx.fillStyle = rgba(d, 0.24);
-    ctx.fillRect(snap(x + w * 0.37), snap(b - h * 0.52), snap(w * 0.12), snap(h * 0.14));
-    ctx.fillRect(snap(x + w * 0.52), snap(b - h * 0.31), snap(w * 0.09), snap(h * 0.1));
-    ctx.fillRect(snap(x + w * 0.27), snap(b - h * 0.78), snap(w * 0.13), snap(h * 0.08));
+    // Pedestal, toppled statue/block and scattered fragments.
+    ctx.fillRect(snap(x+w*.36),snap(b-h*.32),snap(w*.28),snap(h*.13));ctx.fillRect(snap(x+w*.42),snap(b-h*.5),snap(w*.16),snap(h*.19));
+    ctx.fillRect(snap(x+w*.08),snap(b-h*.1),snap(w*.22),snap(h*.1));ctx.fillRect(snap(x+w*.72),snap(b-h*.13),snap(w*.18),snap(h*.13));
+    ctx.fillStyle=rgba(d,.22);ctx.fillRect(snap(x+w*.16),snap(b-h*.18),snap(w*.2),snap(h*.07));
   }
 }
 
@@ -356,89 +351,54 @@ function drawDesert(
   ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
   c: string, d: string, v: number, layer: Layer,
 ) {
-  ctx.fillStyle = c;
-  if (layer === 'far') {
-    // Broad stepped mesas with different shoulder heights.
-    const top = b - h * (0.38 + (v % 3) * 0.055);
-    ctx.fillRect(snap(x + w * 0.08), snap(top + h * 0.1), snap(w * 0.84), snap(b - top - h * 0.1));
-    ctx.fillRect(snap(x + w * 0.2), snap(top), snap(w * 0.53), snap(h * 0.16));
-    if (v % 2 === 0) ctx.fillRect(snap(x + w * 0.32), snap(top - h * 0.1), snap(w * 0.24), snap(h * 0.12));
-    ctx.fillStyle = rgba(d, 0.16);
-    ctx.fillRect(snap(x + w * 0.2), snap(top + h * 0.2), snap(w * 0.48), 4);
-    return;
-  }
-  const kind = v % 5;
-  if (kind === 0) {
-    // Saguaro: deliberately slender and clearly organic.
-    const trunkW = Math.max(4, snap(w * 0.1));
-    const tx = snap(x + w * 0.47);
-    ctx.fillRect(tx, snap(b - h * 0.76), trunkW, snap(h * 0.76));
-    ctx.fillRect(snap(tx - w * 0.22), snap(b - h * 0.5), snap(w * 0.23), trunkW);
-    ctx.fillRect(snap(tx - w * 0.22), snap(b - h * 0.5), trunkW, snap(h * 0.2));
-    ctx.fillRect(snap(tx + trunkW), snap(b - h * 0.38), snap(w * 0.24), trunkW);
-    ctx.fillRect(snap(tx + w * 0.21), snap(b - h * 0.54), trunkW, snap(h * 0.18));
-  } else if (kind === 1 || kind === 4) {
-    // Layered boulders: low, broad counterweight to the cactus.
-    ctx.fillRect(snap(x + w * 0.06), snap(b - h * 0.28), snap(w * 0.88), snap(h * 0.28));
-    ctx.fillRect(snap(x + w * 0.18), snap(b - h * 0.43), snap(w * 0.56), snap(h * 0.17));
-    ctx.fillRect(snap(x + w * 0.42), snap(b - h * 0.52), snap(w * 0.29), snap(h * 0.1));
-  } else if (kind === 2) {
-    // Eroded arch with a generous opening.
-    ctx.fillRect(snap(x + w * 0.1), snap(b - h * 0.54), snap(w * 0.18), snap(h * 0.54));
-    ctx.fillRect(snap(x + w * 0.72), snap(b - h * 0.46), snap(w * 0.16), snap(h * 0.46));
-    ctx.fillRect(snap(x + w * 0.1), snap(b - h * 0.54), snap(w * 0.78), snap(h * 0.13));
+  ctx.fillStyle=c; const kind=v%7;
+  if(kind===0){
+    // Slender saguaro.
+    const tw=Math.max(4,snap(w*.1)),tx=x+w*.47;ctx.fillRect(snap(tx),snap(b-h*.76),tw,snap(h*.76));ctx.fillRect(snap(tx-w*.22),snap(b-h*.5),snap(w*.23),tw);ctx.fillRect(snap(tx-w*.22),snap(b-h*.5),tw,snap(h*.2));ctx.fillRect(snap(tx+tw),snap(b-h*.38),snap(w*.24),tw);ctx.fillRect(snap(tx+w*.21),snap(b-h*.54),tw,snap(h*.18));
+  } else if(kind===1||kind===4){
+    // Layered boulders.
+    ctx.fillRect(snap(x+w*.06),snap(b-h*.27),snap(w*.88),snap(h*.27));ctx.fillRect(snap(x+w*.18),snap(b-h*.42),snap(w*.56),snap(h*.16));ctx.fillRect(snap(x+w*.43),snap(b-h*.5),snap(w*.28),snap(h*.09));
+  } else if(kind===2){
+    // Eroded arch.
+    ctx.fillRect(snap(x+w*.1),snap(b-h*.54),snap(w*.18),snap(h*.54));ctx.fillRect(snap(x+w*.72),snap(b-h*.46),snap(w*.16),snap(h*.46));ctx.fillRect(snap(x+w*.1),snap(b-h*.54),snap(w*.78),snap(h*.13));
+  } else if(kind===3){
+    // Hoodoo pair.
+    ctx.fillRect(snap(x+w*.22),snap(b-h*.58),snap(w*.18),snap(h*.58));ctx.fillRect(snap(x+w*.17),snap(b-h*.61),snap(w*.29),snap(h*.1));ctx.fillRect(snap(x+w*.61),snap(b-h*.42),snap(w*.14),snap(h*.42));ctx.fillRect(snap(x+w*.56),snap(b-h*.45),snap(w*.24),snap(h*.08));
+  } else if(kind===5){
+    // Dead twisted desert tree.
+    const tw=Math.max(3,snap(w*.07));ctx.fillRect(snap(x+w*.48),snap(b-h*.52),tw,snap(h*.52));ctx.fillRect(snap(x+w*.3),snap(b-h*.45),snap(w*.22),3);ctx.fillRect(snap(x+w*.68),snap(b-h*.35),snap(w*.16),3);ctx.fillRect(snap(x+w*.31),snap(b-h*.45),3,snap(h*.14));
   } else {
-    // Split hoodoo pair.
-    ctx.fillRect(snap(x + w * 0.22), snap(b - h * 0.58), snap(w * 0.18), snap(h * 0.58));
-    ctx.fillRect(snap(x + w * 0.17), snap(b - h * 0.61), snap(w * 0.29), snap(h * 0.1));
-    ctx.fillRect(snap(x + w * 0.61), snap(b - h * 0.42), snap(w * 0.14), snap(h * 0.42));
-    ctx.fillRect(snap(x + w * 0.56), snap(b - h * 0.45), snap(w * 0.24), snap(h * 0.08));
+    // Yucca/agave cluster, intentionally low.
+    const cx=x+w*.5,base=b-h*.06;ctx.fillRect(snap(x+w*.36),snap(base),snap(w*.28),snap(h*.06));
+    for(const [dx,hh] of [[-.22,.28],[-.1,.36],[0,.44],[.1,.34],[.22,.26]] as const){ctx.fillRect(snap(cx+w*dx),snap(b-h*hh),3,snap(h*hh));}
   }
-  ctx.fillStyle = rgba(d, 0.24);
-  ctx.fillRect(snap(x + w * 0.2), snap(b - h * 0.16), snap(w * 0.52), 3);
+  ctx.fillStyle=rgba(d,.22);ctx.fillRect(snap(x+w*.18),snap(b-h*.12),snap(w*.54),2);
 }
 
 function drawSnowyMountain(
   ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
   c: string, d: string, v: number, layer: Layer,
 ) {
-  if (layer === 'far') {
-    ctx.fillStyle = c;
-    const peak = 0.42 + (v % 3) * 0.07;
-    ctx.beginPath();
-    ctx.moveTo(snap(x), snap(b));
-    ctx.lineTo(snap(x + w * peak), snap(b - h));
-    ctx.lineTo(snap(x + w), snap(b));
-    ctx.closePath(); ctx.fill();
-    // Snow cap follows the peak rather than forming an oversized white triangle.
-    ctx.fillStyle = rgba(d, 0.68);
-    ctx.beginPath();
-    ctx.moveTo(snap(x + w * peak), snap(b - h));
-    ctx.lineTo(snap(x + w * (peak - 0.14)), snap(b - h * 0.69));
-    ctx.lineTo(snap(x + w * (peak - 0.03)), snap(b - h * 0.74));
-    ctx.lineTo(snap(x + w * (peak + 0.07)), snap(b - h * 0.65));
-    ctx.lineTo(snap(x + w * (peak + 0.17)), snap(b - h * 0.71));
-    ctx.closePath(); ctx.fill();
-    return;
-  }
-  if (v % 6 === 0) {
-    // Small chalet breaks up endless conifers.
-    ctx.fillStyle = c;
-    ctx.fillRect(snap(x + w * 0.18), snap(b - h * 0.31), snap(w * 0.64), snap(h * 0.31));
-    ctx.fillStyle = rgba(d, 0.64);
-    ctx.beginPath();
-    ctx.moveTo(snap(x + w * 0.08), snap(b - h * 0.31));
-    ctx.lineTo(snap(x + w * 0.5), snap(b - h * 0.53));
-    ctx.lineTo(snap(x + w * 0.92), snap(b - h * 0.31));
-    ctx.closePath(); ctx.fill();
-    ctx.fillStyle = rgba('#17222d', 0.5);
-    ctx.fillRect(snap(x + w * 0.44), snap(b - h * 0.18), snap(w * 0.14), snap(h * 0.18));
-  } else if (v % 4 === 1) {
-    // Pair of pines at different heights.
-    rectTree(ctx, x, b, w * 0.58, h * 0.9, c, d, false);
-    rectTree(ctx, x + w * 0.43, b, w * 0.52, h * 0.7, c, d, false);
+  ctx.fillStyle=c; const kind=v%7;
+  if(kind===0){
+    // Small chalet.
+    ctx.fillRect(snap(x+w*.18),snap(b-h*.3),snap(w*.64),snap(h*.3));ctx.fillStyle=rgba(d,.6);ctx.beginPath();ctx.moveTo(snap(x+w*.08),snap(b-h*.3));ctx.lineTo(snap(x+w*.5),snap(b-h*.52));ctx.lineTo(snap(x+w*.92),snap(b-h*.3));ctx.closePath();ctx.fill();ctx.fillStyle=rgba('#17222d',.48);ctx.fillRect(snap(x+w*.44),snap(b-h*.18),snap(w*.14),snap(h*.18));
+  } else if(kind===1){
+    rectTree(ctx,x,b,w*.58,h*.9,c,d,false);rectTree(ctx,x+w*.43,b,w*.52,h*.7,c,d,false);
+  } else if(kind===2){
+    rectTree(ctx,x,b,w,h,c,d,false);
+  } else if(kind===3){
+    // Snow-dusted rock outcrop.
+    ctx.fillRect(snap(x+w*.08),snap(b-h*.25),snap(w*.84),snap(h*.25));ctx.fillRect(snap(x+w*.24),snap(b-h*.4),snap(w*.47),snap(h*.16));ctx.fillStyle=rgba(d,.56);ctx.fillRect(snap(x+w*.24),snap(b-h*.41),snap(w*.47),snap(h*.07));
+  } else if(kind===4){
+    // Three small pines, varying height.
+    rectTree(ctx,x,b,w*.42,h*.62,c,d,false);rectTree(ctx,x+w*.3,b,w*.46,h*.82,c,d,false);rectTree(ctx,x+w*.62,b,w*.36,h*.54,c,d,false);
+  } else if(kind===5){
+    // Snow boulder cluster.
+    ctx.fillRect(snap(x+w*.13),snap(b-h*.18),snap(w*.72),snap(h*.18));ctx.fillRect(snap(x+w*.3),snap(b-h*.31),snap(w*.38),snap(h*.14));ctx.fillStyle=rgba(d,.5);ctx.fillRect(snap(x+w*.28),snap(b-h*.32),snap(w*.42),snap(h*.06));
   } else {
-    rectTree(ctx, x, b, w, h, c, d, false);
+    // Tiny mountain shrine / way marker.
+    ctx.fillRect(snap(x+w*.43),snap(b-h*.48),snap(w*.14),snap(h*.48));ctx.fillRect(snap(x+w*.3),snap(b-h*.35),snap(w*.4),snap(h*.08));ctx.fillStyle=rgba(d,.48);ctx.fillRect(snap(x+w*.39),snap(b-h*.53),snap(w*.22),snap(h*.07));
   }
 }
 
@@ -446,28 +406,26 @@ function drawTemperateForest(
   ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
   c: string, d: string, v: number, layer: Layer,
 ) {
-  if (layer === 'far') {
-    // Rolling overlapping crowns with visible gaps; no rectangular skyline wall.
-    ctx.fillStyle = c;
-    const crowns = [
-      [0.02, 0.58, 0.35, 0.3], [0.24, 0.72, 0.38, 0.42], [0.52, 0.62, 0.34, 0.34], [0.7, 0.75, 0.27, 0.44],
-    ];
-    for (const [ox, top, ww, hh] of crowns) {
-      ctx.fillRect(snap(x + w * ox), snap(b - h * top), snap(w * ww), snap(h * hh));
-    }
-    return;
-  }
-  if (v % 5 === 0) {
-    // Fallen log / understorey cluster adds a low form to the tree vocabulary.
-    ctx.fillStyle = c;
-    ctx.fillRect(snap(x + w * 0.08), snap(b - h * 0.18), snap(w * 0.82), snap(h * 0.13));
-    ctx.fillRect(snap(x + w * 0.15), snap(b - h * 0.29), snap(w * 0.23), snap(h * 0.12));
-    ctx.fillRect(snap(x + w * 0.61), snap(b - h * 0.26), snap(w * 0.18), snap(h * 0.1));
-  } else if (v % 4 === 1) {
-    rectTree(ctx, x, b, w * 0.66, h, c, d, true);
-    rectTree(ctx, x + w * 0.43, b, w * 0.58, h * 0.8, c, d, true);
+  ctx.fillStyle=c; const kind=v%7;
+  if(kind===0){
+    // Fallen log and understorey.
+    ctx.fillRect(snap(x+w*.07),snap(b-h*.17),snap(w*.84),snap(h*.12));ctx.fillRect(snap(x+w*.14),snap(b-h*.28),snap(w*.23),snap(h*.12));ctx.fillRect(snap(x+w*.62),snap(b-h*.25),snap(w*.18),snap(h*.1));
+  } else if(kind===1){
+    rectTree(ctx,x,b,w*.66,h,c,d,true);rectTree(ctx,x+w*.43,b,w*.58,h*.8,c,d,true);
+  } else if(kind===2){
+    rectTree(ctx,x,b,w,h,c,d,true);
+  } else if(kind===3){
+    // Stump with low mushrooms/ferns.
+    ctx.fillRect(snap(x+w*.4),snap(b-h*.32),snap(w*.2),snap(h*.32));ctx.fillRect(snap(x+w*.34),snap(b-h*.35),snap(w*.32),snap(h*.08));ctx.fillStyle=rgba(d,.3);for(const ox of [.16,.7]){ctx.fillRect(snap(x+w*ox),snap(b-h*.09),3,snap(h*.09));ctx.fillRect(snap(x+w*(ox-.04)),snap(b-h*.1),snap(w*.12),3);}
+  } else if(kind===4){
+    // Light-trunk grove with compact crowns.
+    ctx.fillStyle=rgba(d,.25);for(const ox of [.22,.48,.7])ctx.fillRect(snap(x+w*ox),snap(b-h*.58),3,snap(h*.58));ctx.fillStyle=c;ctx.fillRect(snap(x+w*.08),snap(b-h*.76),snap(w*.34),snap(h*.24));ctx.fillRect(snap(x+w*.34),snap(b-h*.86),snap(w*.34),snap(h*.3));ctx.fillRect(snap(x+w*.6),snap(b-h*.72),snap(w*.3),snap(h*.22));
+  } else if(kind===5){
+    // Dense shrub/fern patch.
+    ctx.fillRect(snap(x+w*.06),snap(b-h*.22),snap(w*.88),snap(h*.22));for(const ox of [.14,.3,.5,.69,.83])ctx.fillRect(snap(x+w*ox),snap(b-h*.38),3,snap(h*.22));
   } else {
-    rectTree(ctx, x, b, w, h, c, d, true);
+    // Crooked old tree with one-sided crown.
+    ctx.fillRect(snap(x+w*.46),snap(b-h*.58),snap(w*.09),snap(h*.58));ctx.fillRect(snap(x+w*.5),snap(b-h*.52),snap(w*.25),3);ctx.fillRect(snap(x+w*.17),snap(b-h*.82),snap(w*.62),snap(h*.28));ctx.fillRect(snap(x+w*.08),snap(b-h*.7),snap(w*.48),snap(h*.2));
   }
 }
 
@@ -475,49 +433,32 @@ function drawCity(
   ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
   c: string, d: string, v: number, layer: Layer,
 ) {
-  ctx.fillStyle = c;
-  const kind = v % 5;
-  let bx = x + w * 0.12, buildingW = w * 0.72, buildingH = h * 0.72;
-  if (kind === 1) { bx = x + w * 0.23; buildingW = w * 0.5; buildingH = h * 0.9; }
-  if (kind === 2) { bx = x + w * 0.08; buildingW = w * 0.84; buildingH = h * 0.48; }
-  if (kind === 3) { bx = x + w * 0.17; buildingW = w * 0.62; buildingH = h * 0.8; }
-  ctx.fillRect(snap(bx), snap(b - buildingH), snap(buildingW), snap(buildingH));
-
-  if (kind === 0 || kind === 3) {
-    // Stepped roof mass.
-    ctx.fillRect(snap(bx + buildingW * 0.18), snap(b - buildingH - h * 0.1), snap(buildingW * 0.52), snap(h * 0.11));
+  ctx.fillStyle=c; const kind=v%7;
+  let bx=x+w*.12,bw=w*.72,bh=h*.72,cols=3,rows=4;
+  if(kind===1){bx=x+w*.25;bw=w*.48;bh=h*.9;cols=2;rows=5;}
+  else if(kind===2){bx=x+w*.06;bw=w*.88;bh=h*.46;cols=4;rows=2;}
+  else if(kind===3){bx=x+w*.16;bw=w*.66;bh=h*.8;cols=4;rows=5;}
+  else if(kind===4){bx=x+w*.12;bw=w*.74;bh=h*.62;cols=3;rows=3;}
+  else if(kind===5){bx=x+w*.04;bw=w*.92;bh=h*.38;cols=5;rows=2;}
+  else if(kind===6){bx=x+w*.08;bw=w*.84;bh=h*.52;cols=4;rows=2;}
+  ctx.fillRect(snap(bx),snap(b-bh),snap(bw),snap(bh));
+  if(kind===0||kind===3){ctx.fillRect(snap(bx+bw*.18),snap(b-bh-h*.1),snap(bw*.52),snap(h*.11));}
+  if(kind===1){ctx.fillRect(snap(bx+bw*.48),snap(b-bh-h*.14),3,snap(h*.14));}
+  if(kind===2){ctx.fillRect(snap(bx+bw*.58),snap(b-bh-h*.12),snap(bw*.22),snap(h*.13));ctx.fillRect(snap(bx+bw*.62),snap(b-bh),3,snap(h*.11));ctx.fillRect(snap(bx+bw*.76),snap(b-bh),3,snap(h*.11));}
+  if(kind===4){ // balcony slab apartment
+    ctx.fillStyle=rgba(d,.2);for(const yy of [.3,.55,.8])ctx.fillRect(snap(bx+bw*.08),snap(b-bh+bh*yy),snap(bw*.84),3);ctx.fillStyle=c;
   }
-  if (kind === 1) {
-    // Antenna only on the narrow tower variant.
-    ctx.fillRect(snap(bx + buildingW * 0.48), snap(b - buildingH - h * 0.14), 3, snap(h * 0.14));
+  if(kind===5){ // rowhouse/low commercial rhythm
+    ctx.fillStyle=rgba(d,.22);for(let i=1;i<4;i++)ctx.fillRect(snap(bx+bw*i/4),snap(b-bh),2,snap(bh));ctx.fillStyle=c;
   }
-  if (kind === 2 && layer !== 'far') {
-    // Low rooftop water tank/utility silhouette.
-    ctx.fillRect(snap(bx + buildingW * 0.58), snap(b - buildingH - h * 0.13), snap(buildingW * 0.22), snap(h * 0.14));
-    ctx.fillRect(snap(bx + buildingW * 0.62), snap(b - buildingH), 3, snap(h * 0.12));
-    ctx.fillRect(snap(bx + buildingW * 0.76), snap(b - buildingH), 3, snap(h * 0.12));
+  if(kind===6){ // warehouse with rooftop units
+    ctx.fillRect(snap(bx+bw*.18),snap(b-bh-h*.08),snap(bw*.18),snap(h*.085));ctx.fillRect(snap(bx+bw*.6),snap(b-bh-h*.06),snap(bw*.15),snap(h*.065));
   }
-
-  ctx.fillStyle = rgba(d, layer === 'far' ? 0.19 : 0.38);
-  // Fixed normalized window layouts per building variant. The old grid derived row/column counts
-  // from screen-space width/height, so tiny camera-zoom changes could add/remove windows and make
-  // the facade look animated. Counts now stay constant; the entire facade scales as one object.
-  const cols = kind === 1 ? 2 : kind === 2 ? 4 : 3;
-  const rows = kind === 2 ? 2 : kind === 4 ? 3 : 4;
-  const winW = Math.max(2, snap(Math.min(4, buildingW * 0.055), 1));
-  const winH = Math.max(2, snap(Math.min(5, buildingH * 0.055), 1));
-  for (let yy = 0; yy < rows; yy++) {
-    for (let xx = 0; xx < cols; xx++) {
-      if ((xx + yy + v) % 3 === 0) continue;
-      const tx = 0.17 + (0.66 * xx) / (cols - 1);
-      const ty = 0.18 + (0.62 * yy) / (rows - 1);
-      ctx.fillRect(
-        snap(bx + buildingW * tx - winW * 0.5),
-        snap(b - buildingH + buildingH * ty - winH * 0.5),
-        winW,
-        winH,
-      );
-    }
+  ctx.fillStyle=rgba(d,layer==='far'?.18:.36);
+  const winW=Math.max(2,snap(Math.min(4,bw*.05),1)),winH=Math.max(2,snap(Math.min(5,bh*.05),1));
+  for(let yy=0;yy<rows;yy++)for(let xx=0;xx<cols;xx++){
+    if((xx+yy+v)%3===0)continue; const tx=cols===1?.5:.16+.68*xx/Math.max(1,cols-1),ty=rows===1?.5:.17+.64*yy/Math.max(1,rows-1);
+    ctx.fillRect(snap(bx+bw*tx-winW*.5),snap(b-bh+bh*ty-winH*.5),winW,winH);
   }
 }
 
@@ -525,94 +466,69 @@ function drawRuralVillage(
   ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
   c: string, d: string, v: number, layer: Layer,
 ) {
-  const kind = v % 7;
-  if (kind === 5 && layer !== 'far') {
-    // One windmill landmark. Rotor diameter is proportional to tower height, not the whole chunk.
-    ctx.fillStyle = c;
-    const towerX = x + w * 0.43;
-    ctx.fillRect(snap(towerX), snap(b - h * 0.52), snap(w * 0.14), snap(h * 0.52));
-    const hubX = x + w * 0.5, hubY = b - h * 0.58;
-    ctx.fillStyle = rgba(d, 0.46);
-    ctx.fillRect(snap(hubX - w * 0.22), snap(hubY - 2), snap(w * 0.44), 4);
-    ctx.fillRect(snap(hubX - 2), snap(hubY - h * 0.22), 4, snap(h * 0.44));
-    ctx.fillRect(snap(hubX - 3), snap(hubY - 3), 6, 6);
-    return;
+  ctx.fillStyle=c; const kind=v%10;
+  const roof=(left:number,right:number,eave:number,peakX:number,peakY:number,color:string)=>{ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(snap(left),snap(eave));ctx.lineTo(snap(peakX),snap(peakY));ctx.lineTo(snap(right),snap(eave));ctx.closePath();ctx.fill();};
+  if(kind===0){
+    // Classic single-storey gable cottage.
+    ctx.fillRect(snap(x+w*.16),snap(b-h*.34),snap(w*.68),snap(h*.34));roof(x+w*.08,x+w*.92,b-h*.34,x+w*.5,b-h*.57,rgba(d,.45));
+    ctx.fillStyle=rgba('#1d2524',.44);ctx.fillRect(snap(x+w*.45),snap(b-h*.18),snap(w*.12),snap(h*.18));ctx.fillRect(snap(x+w*.25),snap(b-h*.22),snap(w*.1),snap(h*.08));ctx.fillRect(snap(x+w*.68),snap(b-h*.22),snap(w*.1),snap(h*.08));
+  } else if(kind===1){
+    // Side-gabled farmhouse with chimney and lean-to.
+    ctx.fillRect(snap(x+w*.12),snap(b-h*.38),snap(w*.58),snap(h*.38));roof(x+w*.08,x+w*.74,b-h*.38,x+w*.36,b-h*.6,rgba(d,.44));ctx.fillRect(snap(x+w*.68),snap(b-h*.24),snap(w*.24),snap(h*.24));ctx.fillRect(snap(x+w*.22),snap(b-h*.66),snap(w*.07),snap(h*.18));
+    ctx.fillStyle=rgba('#1d2524',.42);ctx.fillRect(snap(x+w*.42),snap(b-h*.18),snap(w*.11),snap(h*.18));
+  } else if(kind===2){
+    // Haystacks + shade tree.
+    ctx.fillRect(snap(x+w*.06),snap(b-h*.2),snap(w*.32),snap(h*.2));ctx.fillRect(snap(x+w*.13),snap(b-h*.3),snap(w*.2),snap(h*.11));rectTree(ctx,x+w*.49,b,w*.46,h*.58,c,d,true);
+  } else if(kind===3){
+    // Barn.
+    ctx.fillRect(snap(x+w*.06),snap(b-h*.32),snap(w*.88),snap(h*.32));ctx.fillStyle=rgba(d,.42);ctx.beginPath();ctx.moveTo(snap(x+w*.02),snap(b-h*.32));ctx.lineTo(snap(x+w*.32),snap(b-h*.51));ctx.lineTo(snap(x+w*.68),snap(b-h*.51));ctx.lineTo(snap(x+w*.98),snap(b-h*.32));ctx.closePath();ctx.fill();ctx.fillStyle=rgba('#1d2524',.43);ctx.fillRect(snap(x+w*.42),snap(b-h*.2),snap(w*.18),snap(h*.2));
+  } else if(kind===4){
+    // Taller stone farmhouse with offset roof and chimney.
+    ctx.fillRect(snap(x+w*.19),snap(b-h*.5),snap(w*.58),snap(h*.5));roof(x+w*.13,x+w*.83,b-h*.5,x+w*.54,b-h*.68,rgba(d,.42));ctx.fillRect(snap(x+w*.25),snap(b-h*.74),snap(w*.07),snap(h*.18));ctx.fillStyle=rgba(d,.24);ctx.fillRect(snap(x+w*.31),snap(b-h*.36),snap(w*.1),snap(h*.09));ctx.fillRect(snap(x+w*.58),snap(b-h*.36),snap(w*.1),snap(h*.09));
+  } else if(kind===5){
+    // Rare windmill.
+    const tx=x+w*.45;ctx.fillRect(snap(tx),snap(b-h*.51),snap(w*.12),snap(h*.51));const hx=x+w*.51,hy=b-h*.57;ctx.fillStyle=rgba(d,.45);ctx.fillRect(snap(hx-w*.22),snap(hy-2),snap(w*.44),4);ctx.fillRect(snap(hx-2),snap(hy-h*.22),4,snap(h*.44));ctx.fillRect(snap(hx-3),snap(hy-3),6,6);
+  } else if(kind===6){
+    // Open-front stable / shed.
+    ctx.fillRect(snap(x+w*.1),snap(b-h*.27),snap(w*.78),snap(h*.27));ctx.fillStyle=rgba(d,.38);ctx.fillRect(snap(x+w*.06),snap(b-h*.35),snap(w*.86),snap(h*.09));ctx.fillStyle=rgba('#1d2524',.35);ctx.fillRect(snap(x+w*.24),snap(b-h*.22),snap(w*.2),snap(h*.22));ctx.fillRect(snap(x+w*.58),snap(b-h*.22),snap(w*.18),snap(h*.22));
+  } else if(kind===7){
+    // Orchard/copse: intentionally no building.
+    rectTree(ctx,x,b,w*.42,h*.64,c,d,true);rectTree(ctx,x+w*.3,b,w*.4,h*.72,c,d,true);rectTree(ctx,x+w*.62,b,w*.34,h*.56,c,d,true);
+  } else if(kind===8){
+    // Tiny chapel as a rare civic landmark.
+    ctx.fillRect(snap(x+w*.26),snap(b-h*.38),snap(w*.5),snap(h*.38));roof(x+w*.2,x+w*.82,b-h*.38,x+w*.5,b-h*.58,rgba(d,.44));ctx.fillRect(snap(x+w*.42),snap(b-h*.72),snap(w*.16),snap(h*.2));roof(x+w*.4,x+w*.6,b-h*.72,x+w*.5,b-h*.84,rgba(d,.44));ctx.fillStyle=rgba('#1d2524',.38);ctx.fillRect(snap(x+w*.46),snap(b-h*.2),snap(w*.1),snap(h*.2));
+  } else {
+    // Hedgerow / field boundary: deliberately low and building-free.
+    ctx.fillRect(snap(x+w*.05),snap(b-h*.12),snap(w*.9),snap(h*.12));
+    ctx.fillRect(snap(x+w*.18),snap(b-h*.22),snap(w*.18),snap(h*.12));ctx.fillRect(snap(x+w*.61),snap(b-h*.2),snap(w*.22),snap(h*.1));
+    ctx.fillStyle=rgba(d,.23);for(const ox of [.1,.31,.55,.78])ctx.fillRect(snap(x+w*ox),snap(b-h*.2),2,snap(h*.2));
   }
-  ctx.fillStyle = c;
-  if (kind === 3 || kind === 6) {
-    // Barn: low and broad, with a large central door.
-    ctx.fillRect(snap(x + w * 0.07), snap(b - h * 0.32), snap(w * 0.86), snap(h * 0.32));
-    ctx.fillStyle = rgba(d, 0.43);
-    ctx.beginPath();
-    ctx.moveTo(snap(x + w * 0.03), snap(b - h * 0.32));
-    ctx.lineTo(snap(x + w * 0.33), snap(b - h * 0.51));
-    ctx.lineTo(snap(x + w * 0.67), snap(b - h * 0.51));
-    ctx.lineTo(snap(x + w * 0.97), snap(b - h * 0.32));
-    ctx.closePath(); ctx.fill();
-    ctx.fillStyle = rgba('#1d2524', 0.44);
-    ctx.fillRect(snap(x + w * 0.42), snap(b - h * 0.2), snap(w * 0.18), snap(h * 0.2));
-    return;
-  }
-  if (kind === 2 && layer !== 'far') {
-    // Haystack + small tree keeps the village grounded in landscape, not just buildings.
-    ctx.fillStyle = c;
-    ctx.fillRect(snap(x + w * 0.1), snap(b - h * 0.22), snap(w * 0.38), snap(h * 0.22));
-    ctx.fillRect(snap(x + w * 0.17), snap(b - h * 0.31), snap(w * 0.24), snap(h * 0.11));
-    rectTree(ctx, x + w * 0.52, b, w * 0.43, h * 0.54, c, d, true);
-    return;
-  }
-  // Cottage; windows/door keep it recognizable when scaled down.
-  ctx.fillRect(snap(x + w * 0.14), snap(b - h * 0.35), snap(w * 0.72), snap(h * 0.35));
-  ctx.fillStyle = rgba(d, 0.46);
-  ctx.beginPath();
-  ctx.moveTo(snap(x + w * 0.06), snap(b - h * 0.35));
-  ctx.lineTo(snap(x + w * 0.5), snap(b - h * 0.58));
-  ctx.lineTo(snap(x + w * 0.94), snap(b - h * 0.35));
-  ctx.closePath(); ctx.fill();
-  ctx.fillStyle = rgba('#1d2524', 0.46);
-  ctx.fillRect(snap(x + w * 0.44), snap(b - h * 0.19), snap(w * 0.13), snap(h * 0.19));
-  ctx.fillRect(snap(x + w * 0.24), snap(b - h * 0.22), snap(w * 0.1), snap(h * 0.09));
-  ctx.fillRect(snap(x + w * 0.67), snap(b - h * 0.22), snap(w * 0.1), snap(h * 0.09));
 }
 
 function drawSwamp(
   ctx: CanvasRenderingContext2D, x: number, b: number, w: number, h: number,
   c: string, d: string, v: number, layer: Layer,
 ) {
-  ctx.fillStyle = c;
-  const kind = v % 5;
-  if (kind === 0) {
-    // Dead snag with a flared, irregular base.
-    const tx = snap(x + w * 0.46), trunkW = Math.max(4, snap(w * 0.1));
-    ctx.fillRect(tx, snap(b - h * 0.76), trunkW, snap(h * 0.76));
-    ctx.fillRect(snap(tx - w * 0.2), snap(b - h * 0.1), snap(w * 0.5), snap(h * 0.1));
-    ctx.fillRect(snap(tx - w * 0.25), snap(b - h * 0.54), snap(w * 0.27), 4);
-    ctx.fillRect(snap(tx + w * 0.06), snap(b - h * 0.43), snap(w * 0.27), 4);
-    ctx.fillRect(snap(tx - w * 0.22), snap(b - h * 0.54), 4, snap(h * 0.18));
-  } else if (kind === 1 || kind === 4) {
-    // Cypress crown: narrower top, heavier buttressed base.
-    ctx.fillRect(snap(x + w * 0.43), snap(b - h * 0.67), Math.max(4, snap(w * 0.11)), snap(h * 0.67));
-    ctx.fillRect(snap(x + w * 0.28), snap(b - h * 0.12), snap(w * 0.45), snap(h * 0.12));
-    ctx.fillRect(snap(x + w * 0.18), snap(b - h * 0.69), snap(w * 0.64), snap(h * 0.19));
-    ctx.fillRect(snap(x + w * 0.28), snap(b - h * 0.82), snap(w * 0.47), snap(h * 0.16));
-  } else if (kind === 2) {
-    // Willow mass with hanging strands.
-    ctx.fillRect(snap(x + w * 0.44), snap(b - h * 0.55), Math.max(4, snap(w * 0.1)), snap(h * 0.55));
-    ctx.fillRect(snap(x + w * 0.08), snap(b - h * 0.72), snap(w * 0.84), snap(h * 0.2));
-    ctx.fillRect(snap(x + w * 0.18), snap(b - h * 0.83), snap(w * 0.62), snap(h * 0.16));
-    ctx.fillStyle = rgba(d, 0.24);
-    for (let i = 0; i < 5; i++) ctx.fillRect(snap(x + w * (0.18 + i * 0.15)), snap(b - h * 0.58), 2, snap(h * (0.16 + (i % 2) * 0.08)));
+  ctx.fillStyle=c; const kind=v%7;
+  if(kind===0){
+    // Dead snag.
+    const tx=x+w*.46,tw=Math.max(4,snap(w*.09));ctx.fillRect(snap(tx),snap(b-h*.75),tw,snap(h*.75));ctx.fillRect(snap(tx-w*.2),snap(b-h*.1),snap(w*.5),snap(h*.1));ctx.fillRect(snap(tx-w*.24),snap(b-h*.53),snap(w*.27),4);ctx.fillRect(snap(tx+w*.06),snap(b-h*.42),snap(w*.27),4);
+  } else if(kind===1||kind===4){
+    // Cypress with buttressed base.
+    ctx.fillRect(snap(x+w*.44),snap(b-h*.66),Math.max(4,snap(w*.1)),snap(h*.66));ctx.fillRect(snap(x+w*.27),snap(b-h*.12),snap(w*.46),snap(h*.12));ctx.fillRect(snap(x+w*.18),snap(b-h*.68),snap(w*.64),snap(h*.18));ctx.fillRect(snap(x+w*.28),snap(b-h*.82),snap(w*.47),snap(h*.16));
+  } else if(kind===2){
+    // Willow with hanging strands.
+    ctx.fillRect(snap(x+w*.44),snap(b-h*.54),Math.max(4,snap(w*.1)),snap(h*.54));ctx.fillRect(snap(x+w*.07),snap(b-h*.7),snap(w*.86),snap(h*.2));ctx.fillRect(snap(x+w*.18),snap(b-h*.82),snap(w*.62),snap(h*.16));ctx.fillStyle=rgba(d,.24);for(let i=0;i<5;i++)ctx.fillRect(snap(x+w*(.18+i*.15)),snap(b-h*.57),2,snap(h*(.15+(i%2)*.08)));
+  } else if(kind===3){
+    // Reed island.
+    ctx.fillRect(snap(x+w*.04),snap(b-h*.12),snap(w*.92),snap(h*.12));for(let i=0;i<7;i++){const rx=x+w*(.1+i*.125);ctx.fillRect(snap(rx),snap(b-h*(.2+(i%3)*.06)),2,snap(h*(.16+(i%3)*.06)));}
+  } else if(kind===5){
+    // Fallen waterlogged trunk.
+    ctx.fillRect(snap(x+w*.07),snap(b-h*.13),snap(w*.78),snap(h*.11));ctx.fillRect(snap(x+w*.13),snap(b-h*.23),snap(w*.18),snap(h*.11));ctx.fillStyle=rgba(d,.25);ctx.fillRect(snap(x+w*.63),snap(b-h*.18),snap(w*.22),3);
   } else {
-    // Low reed/island clump prevents the swamp becoming another forest wall.
-    ctx.fillRect(snap(x + w * 0.05), snap(b - h * 0.13), snap(w * 0.9), snap(h * 0.13));
-    for (let i = 0; i < 6; i++) {
-      const rx = x + w * (0.12 + i * 0.13);
-      ctx.fillRect(snap(rx), snap(b - h * (0.22 + (i % 3) * 0.06)), 2, snap(h * (0.18 + (i % 3) * 0.06)));
-    }
-  }
-  if (layer !== 'far' && kind !== 3) {
-    ctx.fillStyle = rgba(d, 0.28);
-    for (let i = 0; i < 4; i++) ctx.fillRect(snap(x + w * (0.08 + i * 0.22)), snap(b - h * (0.06 + (i % 2) * 0.02)), 2, snap(h * 0.07));
+    // Cypress knees + cattail patch, low and distinctive.
+    for(const [ox,hh] of [[.16,.18],[.28,.28],[.43,.2],[.6,.32],[.77,.22]] as const){ctx.beginPath();ctx.moveTo(snap(x+w*(ox-.05)),snap(b));ctx.lineTo(snap(x+w*ox),snap(b-h*hh));ctx.lineTo(snap(x+w*(ox+.05)),snap(b));ctx.closePath();ctx.fill();}
+    ctx.fillStyle=rgba(d,.3);for(const ox of [.09,.52,.86]){ctx.fillRect(snap(x+w*ox),snap(b-h*.3),2,snap(h*.3));ctx.fillRect(snap(x+w*(ox-.015)),snap(b-h*.31),4,4);}
   }
 }
 
@@ -626,64 +542,30 @@ interface AssetLayout {
 }
 
 function assetLayoutForBiome(biome: BiomeId, layer: Layer, variant: number): AssetLayout {
-  const kind5=variant%5, kind4=variant%4, kind7=variant%7;
   let layout:AssetLayout;
+  const v7=variant%7,v6=variant%6,v10=variant%10;
   if(biome==='lowlands'){
-    if(layer==='far') layout={aspect:2.7,height:62};
-    else if(kind5===0) layout={aspect:2.55,height:66};
-    else if(kind5===2) layout={aspect:1.15,height:82};
-    else if(kind5===3) layout={aspect:2.35,height:56};
-    else layout={aspect:1.05,height:92};
+    const specs:AssetLayout[]=[{aspect:2.5,height:64},{aspect:1.08,height:94},{aspect:1.15,height:82},{aspect:2.3,height:56},{aspect:1.5,height:88},{aspect:2.45,height:54},{aspect:2.25,height:58}];layout=specs[v7];
   }else if(biome==='spires'){
-    if(kind5===1&&layer!=='far') layout={aspect:1.05,height:108};
-    else if(kind5===2&&layer!=='far') layout={aspect:1.28,height:94};
-    else if(kind5===4&&layer!=='far') layout={aspect:1.16,height:102};
-    else layout={aspect:kind5===3?.72:.58,height:kind5===3?100:122};
+    const specs:AssetLayout[]=[{aspect:.58,height:122},{aspect:1.08,height:106},{aspect:1.3,height:96},{aspect:1.18,height:92},{aspect:1.18,height:102},{aspect:1.12,height:108},{aspect:1.3,height:112}];layout=specs[v7];
   }else if(biome==='foundry'){
-    if(kind4===0) layout={aspect:1.45,height:86};
-    else if(kind4===1) layout={aspect:1.58,height:72};
-    else if(kind4===2&&layer!=='far') layout={aspect:1.8,height:78};
-    else layout={aspect:1.95,height:84};
+    const specs:AssetLayout[]=[{aspect:1.45,height:86},{aspect:1.58,height:74},{aspect:1.82,height:78},{aspect:1.95,height:84},{aspect:2.0,height:72},{aspect:1.18,height:88}];layout=specs[v6];
   }else if(biome==='ruins'){
-    if(kind4===0) layout={aspect:1.25,height:82};
-    else if(kind4===1) layout={aspect:1.08,height:86};
-    else if(kind4===2) layout={aspect:1.78,height:86};
-    else layout={aspect:.78,height:88};
+    const specs:AssetLayout[]=[{aspect:1.25,height:82},{aspect:1.08,height:86},{aspect:1.8,height:82},{aspect:.8,height:90},{aspect:2.05,height:84},{aspect:1.75,height:68}];
+    layout=specs[v6]; if(v6===3)layout={aspect:.8,height:90};
   }else if(biome==='desert'){
-    if(layer==='far') layout={aspect:2.65,height:70};
-    else if(kind5===0) layout={aspect:.72,height:84};
-    else if(kind5===1||kind5===4) layout={aspect:1.9,height:74};
-    else if(kind5===2) layout={aspect:1.45,height:80};
-    else layout={aspect:1.08,height:84};
+    const specs:AssetLayout[]=[{aspect:.72,height:84},{aspect:1.9,height:72},{aspect:1.46,height:80},{aspect:1.08,height:84},{aspect:1.85,height:68},{aspect:1.25,height:72},{aspect:1.55,height:60}];layout=specs[v7];
   }else if(biome==='snowy-mountains'){
-    if(layer==='far') layout={aspect:1.72,height:180};
-    else if(variant%6===0) layout={aspect:1.55,height:86};
-    else if(variant%4===1) layout={aspect:1.15,height:94};
-    else layout={aspect:.76,height:102};
+    const specs:AssetLayout[]=[{aspect:1.55,height:86},{aspect:1.15,height:94},{aspect:.76,height:102},{aspect:1.75,height:68},{aspect:1.4,height:92},{aspect:1.7,height:58},{aspect:.9,height:72}];layout=specs[v7];
   }else if(biome==='temperate-forest'){
-    if(layer==='far') layout={aspect:2.75,height:68};
-    else if(kind5===0) layout={aspect:2.15,height:76};
-    else if(variant%4===1) layout={aspect:1.48,height:98};
-    else layout={aspect:1.02,height:104};
+    const specs:AssetLayout[]=[{aspect:2.15,height:74},{aspect:1.48,height:98},{aspect:1.02,height:104},{aspect:1.3,height:72},{aspect:1.65,height:96},{aspect:2.0,height:64},{aspect:1.15,height:100}];layout=specs[v7];
   }else if(biome==='city'){
-    if(kind5===0) layout={aspect:.78,height:122};
-    else if(kind5===1) layout={aspect:.52,height:148};
-    else if(kind5===2) layout={aspect:1.45,height:78};
-    else if(kind5===3) layout={aspect:.8,height:132};
-    else layout={aspect:.92,height:112};
+    const specs:AssetLayout[]=[{aspect:.78,height:122},{aspect:.52,height:148},{aspect:1.45,height:80},{aspect:.83,height:132},{aspect:1.02,height:112},{aspect:1.8,height:76},{aspect:1.55,height:84}];layout=specs[v7];
   }else if(biome==='rural-village'){
-    if(kind7===5&&layer!=='far') layout={aspect:.95,height:104};
-    else if(kind7===3||kind7===6) layout={aspect:1.85,height:90};
-    else if(kind7===2&&layer!=='far') layout={aspect:1.65,height:86};
-    else layout={aspect:1.7,height:84};
+    const specs:AssetLayout[]=[{aspect:1.7,height:84},{aspect:1.8,height:88},{aspect:1.7,height:80},{aspect:1.9,height:88},{aspect:1.45,height:96},{aspect:.95,height:104},{aspect:1.85,height:72},{aspect:1.75,height:82},{aspect:1.15,height:94},{aspect:2.35,height:52}];layout=specs[v10];
   }else{
-    if(kind5===0) layout={aspect:1.08,height:90};
-    else if(kind5===1||kind5===4) layout={aspect:1.02,height:96};
-    else if(kind5===2) layout={aspect:1.32,height:90};
-    else layout={aspect:2.1,height:78};
+    const specs:AssetLayout[]=[{aspect:1.08,height:90},{aspect:1.02,height:96},{aspect:1.32,height:90},{aspect:2.1,height:76},{aspect:1.02,height:94},{aspect:2.0,height:58},{aspect:1.7,height:66}];layout=specs[v7];
   }
-
-  // Distance changes apparent size uniformly. Aspect ratio remains untouched.
   const layerScale=layer==='far'?.72:layer==='mid'?1:layer==='near'?1.18:1.34;
   return {...layout,height:layout.height*layerScale};
 }
