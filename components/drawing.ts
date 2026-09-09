@@ -8,6 +8,7 @@ import { drawPixelAgent } from './agentSprite';
 import { biomeHash, getBiomeAtX, mixHex, paletteForBiomeSample } from '../world/biomes';
 import type { WorldLightingState } from '../world/dayNight';
 import { lightBiomePalette } from '../world/dayNight';
+import { drawPlatformDecorations } from './platformDecorations';
 
 export const drawTagEffect = (ctx: CanvasRenderingContext2D, effect: TagEffect) => {
     const progress = 1 - (effect.life / effect.initialLife);
@@ -403,6 +404,10 @@ export const drawPlatform = (ctx: CanvasRenderingContext2D, platform: PlatformSt
     ctx.fillStyle = mixHex(face, palette.detail, 0.16);
     if (h > 15) ctx.fillRect(x + 12, y + 9, Math.max(0, w * 0.28), 2);
   }
+
+  // Small biome-specific dressing is rendered after the material and before the motion glyph.
+  // These props are visual-only and intentionally extend above the collision rectangle.
+  drawPlatformDecorations(ctx, platform, biome, palette, lighting);
 
   if (platform.motion) {
     ctx.strokeStyle = palette.motionAccent;

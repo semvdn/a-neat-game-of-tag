@@ -1,8 +1,8 @@
-Adopt continuous panorama backgrounds (Option B)
+Add biome-specific platform decorations
 
-- replace far and mid chunk-stamped scenery with continuous biome-aware panoramas
-- keep refined biome assets as sparse landmark overlays in mid/near/foreground layers
-- make sky and haze spatially biome-aware across the full viewport
-- reduce wide-camera popping with zoom-aware landmark fading and thinning instead of hard cutoffs
-- lower landmark zoom clamp so assets continue shrinking naturally when the camera pulls far out
-- enlarge descriptor cache adaptively to prevent live-window eviction during wide views
+- add deterministic non-collidable platform-top props for all ten biomes
+- include grass, shrubs, flowers, cactus, tumbleweed, pines, ferns, lamps, bins, fences, reeds, vents and stone fragments
+- scale decoration density by biome and platform width
+- keep moving-platform dressing sparse for readability
+- let city street lamps respond subtly to night lighting
+- keep all decoration state renderer-only and outside physics/policy sensing
