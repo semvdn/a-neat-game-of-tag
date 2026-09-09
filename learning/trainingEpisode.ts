@@ -576,7 +576,7 @@ function createMidgameEpisodeState(
   viewportSize: { width: number; height: number },
   terrainRuntime: TerrainRuntimeConfig
 ): EpisodeStartState {
-  const terrainKey = [terrainRuntime.branchingEnabled ? 1 : 0, terrainRuntime.movingPlatformsEnabled ? 1 : 0, terrainRuntime.branchSpawnChance.toFixed(2), terrainRuntime.movingSpawnChance.toFixed(2), terrainRuntime.movingPlatformMaxSpeed.toFixed(0), terrainRuntime.maxPlatformsPerBranch, terrainRuntime.subBranchingEnabled ? 1 : 0, terrainRuntime.maxBranchDepth, terrainRuntime.movingPlatformsInBranches ? 1 : 0].join(',');
+  const terrainKey = [terrainRuntime.branchingEnabled ? 1 : 0, terrainRuntime.movingPlatformsEnabled ? 1 : 0, terrainRuntime.branchSpawnChance.toFixed(2), terrainRuntime.movingSpawnChance.toFixed(2), terrainRuntime.movingPlatformMaxSpeed.toFixed(0), terrainRuntime.maxPlatformsPerBranch, terrainRuntime.subBranchingEnabled ? 1 : 0, terrainRuntime.maxBranchDepth, terrainRuntime.movingPlatformsInBranches ? 1 : 0, terrainRuntime.biomeWorldOffsetX || 0].join(',');
   const cacheKey = `${seed >>> 0}:${viewportSize.width}x${viewportSize.height}:${terrainKey}`;
   const cached = midgameStartCache.get(cacheKey);
   if (cached) return cloneEpisodeStart(cached);

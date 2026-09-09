@@ -80,10 +80,12 @@ function drawDesert(ctx:CanvasRenderingContext2D,x:number,b:number,w:number,h:nu
     ctx.fillStyle=c;const top=b-h*(.42+(v%3)*.08);ctx.fillRect(snap(x+w*.12),snap(top),snap(w*.7),snap(b-top));ctx.fillRect(snap(x+w*.02),snap(top+h*.12),snap(w*.92),snap(h*.18));ctx.fillStyle=rgba(d,.18);ctx.fillRect(snap(x+w*.2),snap(top+h*.18),snap(w*.5),4);return;
   }
   ctx.fillStyle=c;
-  if(v%3===0){ // cactus
+  if(v===0||v===4){ // sparse cactus landmark
     const tw=Math.max(4,snap(w*.12)),tx=snap(x+w*.47);ctx.fillRect(tx,snap(b-h*.78),tw,snap(h*.78));ctx.fillRect(snap(tx-w*.22),snap(b-h*.55),snap(w*.24),tw);ctx.fillRect(snap(tx-w*.22),snap(b-h*.55),tw,snap(h*.2));ctx.fillRect(snap(tx+tw),snap(b-h*.4),snap(w*.25),tw);ctx.fillRect(snap(tx+w*.22),snap(b-h*.55),tw,snap(h*.18));
-  } else { // eroded rock pillar / arch
-    ctx.fillRect(snap(x+w*.18),snap(b-h*.64),snap(w*.2),snap(h*.64));ctx.fillRect(snap(x+w*.62),snap(b-h*.5),snap(w*.18),snap(h*.5));ctx.fillRect(snap(x+w*.18),snap(b-h*.64),snap(w*.62),snap(h*.14));
+  } else if(v===2||v===6){ // low weathered boulder / shelf
+    ctx.fillRect(snap(x+w*.08),snap(b-h*.3),snap(w*.84),snap(h*.3));ctx.fillRect(snap(x+w*.2),snap(b-h*.43),snap(w*.56),snap(h*.15));
+  } else { // eroded rock arch
+    ctx.fillRect(snap(x+w*.14),snap(b-h*.58),snap(w*.18),snap(h*.58));ctx.fillRect(snap(x+w*.68),snap(b-h*.46),snap(w*.16),snap(h*.46));ctx.fillRect(snap(x+w*.14),snap(b-h*.58),snap(w*.7),snap(h*.13));
   }
   ctx.fillStyle=rgba(d,.3);ctx.fillRect(snap(x+w*.2),snap(b-h*.18),snap(w*.55),3);
 }
@@ -110,11 +112,18 @@ function drawCity(ctx:CanvasRenderingContext2D,x:number,b:number,w:number,h:numb
 }
 
 function drawRuralVillage(ctx:CanvasRenderingContext2D,x:number,b:number,w:number,h:number,c:string,d:string,v:number,layer:Layer){
-  if(layer==='far'&&v%3===0){ctx.fillStyle=c;ctx.fillRect(snap(x+w*.45),snap(b-h*.72),4,snap(h*.72));ctx.fillStyle=rgba(d,.35);ctx.fillRect(snap(x+w*.15),snap(b-h*.52),snap(w*.7),4);ctx.fillRect(snap(x+w*.48),snap(b-h*.82),4,snap(h*.54));return;}
-  if(v%5===0){ // windmill
-    ctx.fillStyle=c;ctx.fillRect(snap(x+w*.42),snap(b-h*.55),snap(w*.16),snap(h*.55));ctx.fillStyle=rgba(d,.48);ctx.fillRect(snap(x+w*.47),snap(b-h*.83),4,snap(h*.55));ctx.fillRect(snap(x+w*.2),snap(b-h*.58),snap(w*.6),4);return;
+  if(layer==='far'&&v===0){ // one occasional distant windmill, not a forest of poles
+    ctx.fillStyle=c;ctx.fillRect(snap(x+w*.46),snap(b-h*.7),4,snap(h*.7));ctx.fillStyle=rgba(d,.35);ctx.fillRect(snap(x+w*.18),snap(b-h*.5),snap(w*.64),4);ctx.fillRect(snap(x+w*.48),snap(b-h*.78),4,snap(h*.5));return;
   }
-  ctx.fillStyle=c;ctx.fillRect(snap(x+w*.14),snap(b-h*.38),snap(w*.72),snap(h*.38));ctx.fillStyle=rgba(d,.48);ctx.beginPath();ctx.moveTo(snap(x+w*.06),snap(b-h*.38));ctx.lineTo(snap(x+w*.5),snap(b-h*.62));ctx.lineTo(snap(x+w*.94),snap(b-h*.38));ctx.closePath();ctx.fill();ctx.fillStyle=rgba('#1d2524',.5);ctx.fillRect(snap(x+w*.43),snap(b-h*.2),snap(w*.14),snap(h*.2));
+  if(v===5){ // near/mid windmill landmark
+    ctx.fillStyle=c;ctx.fillRect(snap(x+w*.42),snap(b-h*.54),snap(w*.16),snap(h*.54));ctx.fillStyle=rgba(d,.48);ctx.fillRect(snap(x+w*.47),snap(b-h*.8),4,snap(h*.52));ctx.fillRect(snap(x+w*.22),snap(b-h*.56),snap(w*.56),4);return;
+  }
+  ctx.fillStyle=c;
+  if(v===3||v===6){ // low barn
+    ctx.fillRect(snap(x+w*.08),snap(b-h*.32),snap(w*.84),snap(h*.32));ctx.fillStyle=rgba(d,.44);ctx.beginPath();ctx.moveTo(snap(x+w*.04),snap(b-h*.32));ctx.lineTo(snap(x+w*.34),snap(b-h*.53));ctx.lineTo(snap(x+w*.66),snap(b-h*.53));ctx.lineTo(snap(x+w*.96),snap(b-h*.32));ctx.closePath();ctx.fill();ctx.fillStyle=rgba('#1d2524',.48);ctx.fillRect(snap(x+w*.43),snap(b-h*.2),snap(w*.16),snap(h*.2));return;
+  }
+  // Cottage: deliberately broader than it is tall so it reads as a building, never a platform.
+  ctx.fillRect(snap(x+w*.14),snap(b-h*.36),snap(w*.72),snap(h*.36));ctx.fillStyle=rgba(d,.48);ctx.beginPath();ctx.moveTo(snap(x+w*.06),snap(b-h*.36));ctx.lineTo(snap(x+w*.5),snap(b-h*.6));ctx.lineTo(snap(x+w*.94),snap(b-h*.36));ctx.closePath();ctx.fill();ctx.fillStyle=rgba('#1d2524',.5);ctx.fillRect(snap(x+w*.43),snap(b-h*.19),snap(w*.14),snap(h*.19));
 }
 
 function drawSwamp(ctx:CanvasRenderingContext2D,x:number,b:number,w:number,h:number,c:string,d:string,v:number,layer:Layer){
@@ -125,6 +134,28 @@ function drawSwamp(ctx:CanvasRenderingContext2D,x:number,b:number,w:number,h:num
     ctx.fillRect(snap(x+w*.43),snap(b-h*.64),Math.max(4,snap(w*.12)),snap(h*.64));ctx.fillRect(snap(x+w*.12),snap(b-h*.78),snap(w*.76),snap(h*.26));ctx.fillRect(snap(x+w*.2),snap(b-h*.58),snap(w*.62),snap(h*.18));ctx.fillStyle=rgba(d,.26);for(let i=0;i<4;i++)ctx.fillRect(snap(x+w*(.22+i*.15)),snap(b-h*.56),2,snap(h*(.14+(i%2)*.08)));
   }
   if(layer!=='far'){ctx.fillStyle=rgba(d,.36);for(let i=0;i<5;i++)ctx.fillRect(snap(x+i*w*.18),snap(b-h*(.07+(i%2)*.03)),2,snap(h*.08));}
+}
+
+function scaleFeatureForBiome(biome:BiomeId,layer:Layer,variant:number,width:number,height:number):{width:number;height:number}{
+  let w=width,h=height;
+  if(biome==='desert'){
+    if(layer==='far'){w*=2.3;h*=.8;} else if(variant===0||variant===4){w*=.68;h*=1.34;} else if(variant===2||variant===6){w*=1.55;h*=.76;} else {w*=1.48;h*=.92;}
+  } else if(biome==='snowy-mountains'){
+    if(layer==='far'){w*=2.2;h*=1.34;} else {w*=.92;h*=1.24;}
+  } else if(biome==='temperate-forest'){
+    if(layer==='far'){w*=1.8;h*=.76;} else {w*=1.42;h*=1.12;}
+  } else if(biome==='city'){
+    w*=layer==='far'?.95:1.02; h*=layer==='far'?1.38:1.32;
+  } else if(biome==='rural-village'){
+    if(layer==='far'){w*=1.62;h*=.84;} else if(variant===5){w*=1.18;h*=1.34;} else {w*=1.68;h*=.86;}
+  } else if(biome==='swamp'){
+    w*=1.22; h*=layer==='far'?.96:1.26;
+  } else if(biome==='lowlands'){
+    w*=1.16;h*=1.02;
+  } else if(biome==='spires'){
+    w*=.9;h*=1.08;
+  }
+  return {width:Math.max(12,w),height:Math.max(20,h)};
 }
 
 function drawFeatureForBiome(ctx:CanvasRenderingContext2D,biome:BiomeId,x:number,b:number,w:number,h:number,c:string,d:string,v:number,layer:Layer){
@@ -158,7 +189,7 @@ function drawLayer(ctx:CanvasRenderingContext2D,cache:BiomeBackgroundCache,layer
     if(layer==='far')drawNaturalRidge(ctx,chunkBiome,chunk,screenStartX,screenChunkWidth,baselineY,cssHeight,chunkPalette.far,chunkPalette.detail);
     for(let featureIndex=0;featureIndex<chunk.features.length;featureIndex++){
       if(cameraScale<.55&&layer==='far')continue;if(cameraScale<.48&&layer==='mid'&&featureIndex%2===1)continue;
-      const feature=chunk.features[featureIndex],featureWorldX=chunkWorldX+feature.x*BACKGROUND_CHUNK_WIDTH,screenX=cssWidth*.5+(featureWorldX-cameraCenterX)*cameraScale*parallax,featureSample=getBiomeAtX(featureWorldX,worldSeed),featurePalette=paletteForBiomeSample(featureSample),biome=dominantBiome(featureSample),width=Math.max(12,BACKGROUND_CHUNK_WIDTH*feature.width*cameraScale*parallax*(layer==='near'?1.2:1)),heightScale=layer==='far'?.38:layer==='mid'?.64:.82,height=cssHeight*feature.height*heightScale,baseY=baselineY+cssHeight*feature.offsetY,color=layer==='far'?featurePalette.far:layer==='mid'?featurePalette.mid:featurePalette.near;
+      const feature=chunk.features[featureIndex],featureWorldX=chunkWorldX+feature.x*BACKGROUND_CHUNK_WIDTH,screenX=cssWidth*.5+(featureWorldX-cameraCenterX)*cameraScale*parallax,featureSample=getBiomeAtX(featureWorldX,worldSeed),featurePalette=paletteForBiomeSample(featureSample),biome=dominantBiome(featureSample),baseWidth=Math.max(12,BACKGROUND_CHUNK_WIDTH*feature.width*cameraScale*parallax*(layer==='near'?1.2:1)),heightScale=layer==='far'?.38:layer==='mid'?.64:.82,baseHeight=cssHeight*feature.height*heightScale,scaled=scaleFeatureForBiome(biome,layer,feature.variant,baseWidth,baseHeight),width=scaled.width,height=scaled.height,baseY=baselineY+cssHeight*feature.offsetY,color=layer==='far'?featurePalette.far:layer==='mid'?featurePalette.mid:featurePalette.near;
       drawFeatureForBiome(ctx,biome,screenX-width*.5,baseY,width,height,color,featurePalette.detail,feature.variant,layer);
     }
   }
@@ -174,9 +205,9 @@ function drawAmbientDetails(ctx:CanvasRenderingContext2D,o:BackgroundDrawOptions
   } else if(biome==='temperate-forest'){
     ctx.fillStyle=rgba(p.detail,.13);for(let i=0;i<12;i++){const x=biomeHash(o.worldSeed,0x4c454146,i+sample.regionIndex*17)%Math.max(1,Math.floor(o.cssWidth));const y=o.cssHeight*(.3+biomeRandom01(o.worldSeed,0x4c454159,i+sample.regionIndex*17)*.42);ctx.fillRect(snap(x),snap(y),3,2);}
   } else if(biome==='rural-village'){
-    ctx.fillStyle=rgba(p.detail,.16);const y=snap(o.cssHeight*.81);for(let x=22;x<o.cssWidth;x+=132){ctx.fillRect(x,y,74,2);ctx.fillRect(x,y-13,3,16);ctx.fillRect(x+70,y-13,3,16);}
+    ctx.fillStyle=rgba(p.detail,.14);const y=snap(o.cssHeight*.83);for(let x=28;x<o.cssWidth;x+=164){ctx.fillRect(x,y,54,2);ctx.fillRect(x,y-11,3,14);ctx.fillRect(x+51,y-11,3,14);}
   } else if(biome==='swamp'){
-    ctx.fillStyle=rgba(p.haze,.13);ctx.fillRect(0,snap(o.cssHeight*.5),o.cssWidth,18);ctx.fillRect(0,snap(o.cssHeight*.68),o.cssWidth,12);ctx.fillStyle=rgba(p.detail,.18);for(let x=10;x<o.cssWidth;x+=47){ctx.fillRect(x,snap(o.cssHeight*.81+(x%3)*3),18,2);if((x/47)%2>.4)ctx.fillRect(x+4,snap(o.cssHeight*.76),2,28);}
+    ctx.fillStyle=rgba(p.haze,.12);ctx.fillRect(0,snap(o.cssHeight*.51),o.cssWidth,16);ctx.fillRect(0,snap(o.cssHeight*.69),o.cssWidth,10);ctx.fillStyle=rgba(p.detail,.17);for(let x=14;x<o.cssWidth;x+=58){ctx.fillRect(x,snap(o.cssHeight*.83+(x%4)*2),22,2);if((x/58)%2>.35){ctx.fillRect(x+5,snap(o.cssHeight*.77),2,24);ctx.fillRect(x+9,snap(o.cssHeight*.79),2,18);}}
   }
 }
 

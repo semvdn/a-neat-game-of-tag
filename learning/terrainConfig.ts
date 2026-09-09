@@ -1,4 +1,5 @@
 import type { TerrainRuntimeConfig, TerrainVarietyConfig } from '../types';
+import { trainingBiomeWorldOffset } from '../world/biomes';
 
 export const DEFAULT_TERRAIN_VARIETY_CONFIG: TerrainVarietyConfig = {
   trainingBranchingEnabled: true,
@@ -65,6 +66,7 @@ export function trainingTerrainRuntime(config: TerrainVarietyConfig, seed: numbe
     subBranchingEnabled: c.subBranchingEnabled,
     maxBranchDepth: c.maxBranchDepth,
     movingPlatformsInBranches: c.movingPlatformsInBranches,
+    biomeWorldOffsetX: trainingBiomeWorldOffset(seed),
   };
 }
 
@@ -82,5 +84,6 @@ export function continuousTerrainRuntime(config: TerrainVarietyConfig): TerrainR
     subBranchingEnabled: c.subBranchingEnabled,
     maxBranchDepth: c.maxBranchDepth,
     movingPlatformsInBranches: c.movingPlatformsInBranches,
+    biomeWorldOffsetX: 0,
   };
 }

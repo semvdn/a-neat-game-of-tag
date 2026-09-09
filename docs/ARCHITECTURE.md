@@ -39,12 +39,14 @@ git diff --check
 
 The build can succeed while external CSS is unavailable at runtime. Check the browser as well. For simulation/terrain edits, add focused invariant checks beyond the episode lab. Commit intended changes explicitly; preserve unrelated working-tree files.
 
-## Visual biome field (phase one)
+## Deterministic biome field
 
-The visible infinite world has a deterministic, stateless biome field driven only by world X and `GameState.worldSeed`. It is deliberately presentation-only: biome RNG is namespaced away from terrain RNG, the 23-input policy interface contains no biome identity, and active biome terrain profiles are neutral.
+The infinite world has a deterministic, stateless biome field driven by world X and `GameState.worldSeed`. Visual RNG is namespaced away from terrain/training RNG, and the 23-input policy interface contains no biome identity.
 
-Macro-regions are 12,000 world pixels with 2,000-pixel smooth transitions. Lowlands remains the gentle starting region; the other visual biomes are deterministically shuffled per world seed. Backgrounds use banded pixel skies plus far/mid/near parallax layers generated from small descriptor chunks under a 96-chunk LRU cap. Moving platforms capture a visual-biome stamp when first exposed to the visible world so their material does not change as they oscillate.
+Macro-regions are 12,000 world pixels with 2,000-pixel smooth transitions. Lowlands remains the gentle starting region; the other nine biomes are deterministically shuffled per world seed. Backgrounds use banded pixel skies plus far/mid/near parallax layers generated from small descriptor chunks under a 96-chunk LRU cap. Moving platforms capture a visual-biome stamp when first exposed to the visible world so their material does not change as they oscillate.
 
-Current visual biomes: Lowlands, Spires, Foundry, Ruins, Desert, Snowy Mountains, Temperate Forest, City, Rural Village, and Swamp.
+Mechanical biome profiles are now active in the terrain proposal layer. Width, gap, verticality, route persistence, branch likelihood/nesting, and moving-platform frequency/speed are blended through the same transition field. The existing overlap, swept-clearance, route-corridor and jump-reachability rules remain authoritative, so biome code cannot bypass terrain safety. A multi-platform branch captures the profile at its root and keeps it for the full structure.
 
-`world/biomes.ts` also contains `PLANNED_TERRAIN_BIOME_PROFILES`. Those are design targets only and are not consumed by terrain generation in this phase. `TERRAIN_BIOME_PROFILES` remains all-ones, and the forward generator's biome hook is therefore an identity transform.
+Training uses a deterministic seed-derived biome-world offset to distribute episodes across all ten mechanical biomes without exposing biome identity to the policy. Visible continuous play leaves the offset at zero so visual and mechanical geography are aligned. Cached training terrain keys include this offset.
+
+The crumble multiplier remains dormant until a real crumble mechanic and observable crumble state are implemented.

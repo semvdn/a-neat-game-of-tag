@@ -1,9 +1,10 @@
-Add six visual biomes and future terrain profiles
+Activate per-biome terrain generation and refine scenery
 
-- add Desert, Snowy Mountains, Temperate Forest, City, Rural Village, and Swamp
-- expand deterministic world sequencing to ten visual biomes with smooth transitions
-- give each new biome distinct palettes, silhouettes, ambient motifs, and platform materials
-- keep every active terrain-biome multiplier neutral so training mechanics remain unchanged
-- record separate inactive planned terrain profiles for later biome mechanics
-- preserve visual RNG isolation and the bounded 96-chunk descriptor cache
-- add renderer-derived visual sanity-check documentation and biome design notes
+- apply biome width, gap, verticality, branch, mover, speed, and route-persistence profiles
+- blend mechanical terrain parameters smoothly across biome transitions
+- keep reachability, branch corridors, swept clearance, and overlap checks authoritative
+- stratify training seeds across all ten biomes without exposing biome identity to policies
+- keep crumble weighting dormant until a crumble mechanic is observable to agents
+- refine procedural landmark density and relative scale across all biome backgrounds
+- replace repeated desert/rural motifs with larger, more natural landmark silhouettes
+- update biome architecture docs and renderer-derived ten-biome sanity sheet

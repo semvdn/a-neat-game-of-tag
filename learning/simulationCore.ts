@@ -4,7 +4,8 @@ import { getFairRespawn } from './respawn';
 import { applyPlatformRoute, canAgentsPhysicallyInteract } from './terrainRoutes';
 import { cameraRelevantAgents } from './cameraFraming';
 import { hasRunnerOnHead } from './bodyContacts';
-import { terrainRuntimeForBiomeX } from '../world/biomes';
+import type { TerrainBiomeProfile } from '../world/biomes';
+import { terrainProfileForRuntimeAtX, terrainRuntimeForBiomeX } from '../world/biomes';
 import {
   AGENT_ACCELERATION,
   AGENT_HEIGHT,
@@ -642,6 +643,7 @@ const DEFAULT_TERRAIN_RUNTIME: TerrainRuntimeConfig = {
   subBranchingEnabled: false,
   maxBranchDepth: 1,
   movingPlatformsInBranches: false,
+  biomeWorldOffsetX: 0,
 };
 
 function resolvedTerrainRuntime(value?: TerrainRuntimeConfig): TerrainRuntimeConfig {
@@ -923,6 +925,26 @@ function maybeMakeMoving(
   return platform;
 }
 
+function clampBiomeScale(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+/**
+ * Biomes bias proposal geometry, but the existing overlap/reachability placement functions remain
+ * authoritative. This keeps mechanical identity expressive without bypassing safety constraints.
+ */
+function resolveBiomeGeometry(
+  terrain: TerrainRuntimeConfig,
+  worldX: number,
+  profileOverride?: TerrainBiomeProfile
+): { profile: TerrainBiomeProfile; terrain: TerrainRuntimeConfig } {
+  if (profileOverride) return { profile: profileOverride, terrain };
+  return {
+    profile: terrainProfileForRuntimeAtX(terrain, worldX),
+    terrain: terrainRuntimeForBiomeX(terrain, worldX),
+  };
+}
+
 function generatePlatform(
   baseX: number,
   baseY: number,
@@ -932,19 +954,27 @@ function generatePlatform(
   toLeft = false,
   terrain: TerrainRuntimeConfig = DEFAULT_TERRAIN_RUNTIME,
   forceMoving = false,
-  existingPlatforms: PlatformState[] = []
+  existingPlatforms: PlatformState[] = [],
+  profileOverride?: TerrainBiomeProfile
 ): PlatformState {
   const minY = 250;
   const maxY = viewportHeight - 120;
+  const biome = resolveBiomeGeometry(terrain, baseX, profileOverride);
+  const profile = biome.profile;
+  const effectiveTerrain = biome.terrain;
 
-  // A reflected, mode-based random walk looks less like white-noise stairs. Most transitions are
-  // gentle, with occasional meaningful climbs/descents; near the vertical limits the walk bends
-  // back toward the play band instead of repeatedly clamping platforms onto the exact same line.
+  // A reflected, mode-based random walk looks less like white-noise stairs. Biomes adjust both
+  // how often a route stays near-level and the magnitude of meaningful climbs/descents. Route
+  // persistence is deliberately separate from raw vertical variation: Rural Village can stay on a
+  // coherent shelf while Snowy Mountains changes elevation aggressively.
   const mode = rng();
+  const flatThreshold = clampBiomeScale(0.42 + (profile.routePersistenceMultiplier - 1) * 0.30, 0.30, 0.53);
+  const climbThreshold = flatThreshold + (1 - flatThreshold) * 0.50;
   let deltaY: number;
-  if (mode < 0.42) deltaY = (rng() - 0.5) * 42;
-  else if (mode < 0.71) deltaY = -(30 + rng() * 50);
+  if (mode < flatThreshold) deltaY = (rng() - 0.5) * 42;
+  else if (mode < climbThreshold) deltaY = -(30 + rng() * 50);
   else deltaY = 30 + rng() * 50;
+  deltaY *= profile.verticalVariationMultiplier;
 
   if (baseY < minY + 72 && deltaY < 0) deltaY = Math.abs(deltaY) * (0.55 + rng() * 0.25);
   if (baseY > maxY - 72 && deltaY > 0) deltaY = -Math.abs(deltaY) * (0.55 + rng() * 0.25);
@@ -956,15 +986,19 @@ function generatePlatform(
   const verticalDifference = clampedY - baseY;
 
   let gapX = MIN_PLATFORM_GAP_X + rng() * (MAX_PLATFORM_GAP_X - MIN_PLATFORM_GAP_X);
-  // Uphill jumps need slightly shorter reaches; downhill/flat runs can breathe more.
+  gapX = clampBiomeScale(gapX * profile.gapMultiplier, MIN_PLATFORM_GAP_X, MAX_PLATFORM_GAP_X);
+  // Uphill jumps need slightly shorter reaches; downhill/flat runs can breathe more. These caps
+  // remain global reachability guardrails, so a biome cannot turn a statistical bias into an
+  // impossible transition.
   if (verticalDifference < -55) gapX = Math.min(gapX, 128);
   else if (verticalDifference > 55) gapX = Math.max(gapX, 105);
   else if (Math.abs(verticalDifference) < 18 && rng() < 0.35) gapX = Math.min(MAX_PLATFORM_GAP_X, gapX + 24);
 
-  let newWidth = rng() * (PLATFORM_MAX_WIDTH - PLATFORM_MIN_WIDTH) + PLATFORM_MIN_WIDTH;
+  let newWidth = (rng() * (PLATFORM_MAX_WIDTH - PLATFORM_MIN_WIDTH) + PLATFORM_MIN_WIDTH) * profile.platformWidthMultiplier;
+  newWidth = clampBiomeScale(newWidth, PLATFORM_MIN_WIDTH * 0.78, PLATFORM_MAX_WIDTH * 1.18);
   // Difficult elevation changes get a slightly more generous landing target without turning every
   // platform into the same width.
-  if (Math.abs(verticalDifference) > 70) newWidth = Math.min(PLATFORM_MAX_WIDTH, newWidth + 25);
+  if (Math.abs(verticalDifference) > 70) newWidth = Math.min(PLATFORM_MAX_WIDTH * 1.18, newWidth + 25);
 
   const stationary = placeTrunkPlatformWithoutOverlap({
     id,
@@ -976,7 +1010,7 @@ function generatePlatform(
       y: clampedY,
     },
   }, existingPlatforms, toLeft);
-  return maybeMakeMoving(stationary, viewportHeight, rng, terrain, false, forceMoving, existingPlatforms);
+  return maybeMakeMoving(stationary, viewportHeight, rng, effectiveTerrain, false, forceMoving, existingPlatforms);
 }
 
 function clampPlatformY(y: number, viewportHeight: number): number {
@@ -1136,6 +1170,7 @@ function addRoutePlatforms(
   nextPlatformId: number,
   rng: () => number,
   terrain: TerrainRuntimeConfig,
+  profile: TerrainBiomeProfile,
   forceFirstMoving = false,
   firstPlatformY?: number,
   corridorMinValue = BRANCH_MIN_PLATFORM_Y,
@@ -1143,7 +1178,7 @@ function addRoutePlatforms(
 ): { last: PlatformState; nextPlatformId: number } {
   const safeCount = Math.max(1, count);
   const span = Math.max(180, endX - startX);
-  const preferredWidth = Math.max(115, Math.min(185, span / safeCount - 90));
+  const preferredWidth = Math.max(100, Math.min(205, (span / safeCount - 90) * profile.platformWidthMultiplier));
   const routeMinY = Math.max(BRANCH_MIN_PLATFORM_Y, Math.min(viewportHeight - BRANCH_BOTTOM_MARGIN, corridorMinValue));
   const routeMaxY = Math.max(routeMinY, Math.min(viewportHeight - BRANCH_BOTTOM_MARGIN, corridorMaxValue));
   let last: PlatformState | null = null;
@@ -1152,9 +1187,9 @@ function addRoutePlatforms(
     const slotStart = startX + (span * i) / safeCount;
     const slotEnd = startX + (span * (i + 1)) / safeCount;
     const slotWidth = slotEnd - slotStart;
-    const width = Math.max(105, Math.min(preferredWidth + (rng() - 0.5) * 24, slotWidth - 54));
+    const width = Math.max(96, Math.min(preferredWidth + (rng() - 0.5) * 24, slotWidth - 54));
     const x = slotStart + Math.max(27, (slotWidth - width) * 0.5);
-    const laneJitter = Math.max(4, 12 - (depth - 1) * 2);
+    const laneJitter = Math.max(3, (12 - (depth - 1) * 2) * clampBiomeScale(profile.verticalVariationMultiplier, 0.72, 1.35));
     const routeProgress = safeCount <= 1 ? 0 : i / (safeCount - 1);
     const designedY = firstPlatformY == null
       ? laneY
@@ -1224,6 +1259,7 @@ function extendRouteTowardX(
   nextPlatformId: number,
   rng: () => number,
   terrain: TerrainRuntimeConfig,
+  profile: TerrainBiomeProfile,
   corridorMin: number,
   corridorMax: number
 ): { last: PlatformState; nextPlatformId: number } {
@@ -1233,9 +1269,9 @@ function extendRouteTowardX(
 
   // Keep connector edge gaps in the ordinary jumpable range. Connectors stay stationary so two
   // sibling endpoints do not chase one another horizontally while the parent branch is aligning.
-  const startX = currentRight + 68;
+  const startX = currentRight + clampBiomeScale(68 * profile.gapMultiplier, 58, 82);
   const usableSpan = Math.max(180, targetRight - startX);
-  const count = Math.max(1, Math.ceil(usableSpan / 255));
+  const count = Math.max(1, Math.ceil(usableSpan / clampBiomeScale(255 * profile.routePersistenceMultiplier, 220, 315)));
   const stationaryTerrain: TerrainRuntimeConfig = { ...terrain, movingPlatformsEnabled: false };
   return addRoutePlatforms(
     platforms,
@@ -1252,6 +1288,7 @@ function extendRouteTowardX(
     nextPlatformId,
     rng,
     stationaryTerrain,
+    profile,
     false,
     last.position.y,
     corridorMin,
@@ -1269,6 +1306,7 @@ function buildBranchTree(
   nextPlatformId: number,
   rng: () => number,
   terrain: TerrainRuntimeConfig,
+  profile: TerrainBiomeProfile,
   depth: number,
   parentRoutePath: string | null,
   rootGroupId: number,
@@ -1278,19 +1316,20 @@ function buildBranchTree(
 ): BranchBuildResult {
   const groupId = nextPlatformId;
   const entryRight = platformEnvelope(entryPlatform).right;
-  const mergeWidth = 240;
-  const entryGap = depth === 1 ? 92 : 76;
-  const mergeGap = depth === 1 ? 108 : 88;
+  const mergeWidth = clampBiomeScale(240 * profile.platformWidthMultiplier, 195, 300);
+  const entryGap = clampBiomeScale((depth === 1 ? 92 : 76) * profile.gapMultiplier, 68, 112);
+  const mergeGap = clampBiomeScale((depth === 1 ? 108 : 88) * profile.gapMultiplier, 76, 128);
 
   // The configured value is a per-fork ceiling. Deeper forks tend to be shorter and less regular.
   const maxRouteCount = Math.max(1, terrain.maxPlatformsPerBranch - Math.max(0, depth - 1));
   const minRouteCount = maxRouteCount >= 2 ? 2 : 1;
-  const routeCount = minRouteCount + Math.floor(rng() * (maxRouteCount - minRouteCount + 1));
+  const routeRoll = clampBiomeScale(rng() + (profile.routePersistenceMultiplier - 1) * 0.55, 0, 0.999999);
+  const routeCount = minRouteCount + Math.floor(routeRoll * (maxRouteCount - minRouteCount + 1));
 
   const canNest = terrain.subBranchingEnabled && depth < terrain.maxBranchDepth;
   let nestUpper = false;
   let nestLower = false;
-  const nestChance = depth === 1 ? 0.74 : depth === 2 ? 0.56 : 0.38;
+  const nestChance = clampBiomeScale((depth === 1 ? 0.74 : depth === 2 ? 0.56 : 0.38) * profile.branchWeightMultiplier, 0.22, 0.9);
   if (canNest && rng() < nestChance) {
     if (rng() < 0.5) nestUpper = true;
     else nestLower = true;
@@ -1308,12 +1347,16 @@ function buildBranchTree(
     return { preCount, postCount: routeCount - preCount };
   };
 
-  const [upperCommitY, lowerCommitY] = commitmentLanePair(
+  let [upperCommitY, lowerCommitY] = commitmentLanePair(
     entryPlatform.position.y,
     viewportHeight,
     corridorMin,
     corridorMax
   );
+  const commitCenter = (upperCommitY + lowerCommitY) * 0.5;
+  const commitScale = clampBiomeScale(0.9 + (profile.verticalVariationMultiplier - 1) * 0.34, 0.82, 1.22);
+  upperCommitY = clampPlatformY(commitCenter + (upperCommitY - commitCenter) * commitScale, viewportHeight);
+  lowerCommitY = clampPlatformY(commitCenter + (lowerCommitY - commitCenter) * commitScale, viewportHeight);
   const routeClearance = MIN_PLATFORM_CLEARANCE_Y + PLATFORM_HEIGHT;
   const routeSplitCenter = (upperCommitY + lowerCommitY) * 0.5;
   const routeSplitHalfGap = routeClearance * 0.5 + 4;
@@ -1337,6 +1380,8 @@ function buildBranchTree(
       recurseUpper,
       recurseLower
     );
+    upper = entryPlatform.position.y + (upper - entryPlatform.position.y) * profile.verticalVariationMultiplier;
+    lower = entryPlatform.position.y + (lower - entryPlatform.position.y) * profile.verticalVariationMultiplier;
     const remainingTransitions = Math.max(0, count - 1);
     if (remainingTransitions === 0) return [upperCommitY, lowerCommitY];
     const maxLaneDelta = remainingTransitions * 134;
@@ -1389,18 +1434,18 @@ function buildBranchTree(
 
   // Use a bounded slot pitch rather than stretching a small route count across the whole recursive
   // branch. This keeps the first commitment landing and every ordinary continuation jumpable.
-  const routePitch = Math.max(205, 248 - (depth - 1) * 10 + (rng() - 0.5) * 30);
+  const routePitch = clampBiomeScale((248 - (depth - 1) * 10 + (rng() - 0.5) * 30) * profile.gapMultiplier, 198, 282);
   const preStart = entryRight + entryGap;
   const preEnd = preStart + preCount * routePitch;
   const upperPre = addRoutePlatforms(
     platforms, preCount, preStart, preEnd, upperY, 'upper', upperPath, groupId, rootGroupId,
-    depth, viewportHeight, nextPlatformId, rng, terrain, forceMovingExposure, upperCommitY,
+    depth, viewportHeight, nextPlatformId, rng, terrain, profile, forceMovingExposure, upperCommitY,
     upperRouteCorridor[0], upperRouteCorridor[1]
   );
   nextPlatformId = upperPre.nextPlatformId;
   const lowerPre = addRoutePlatforms(
     platforms, preCount, preStart, preEnd, lowerY, 'lower', lowerPath, groupId, rootGroupId,
-    depth, viewportHeight, nextPlatformId, rng, terrain, forceMovingExposure, lowerCommitY,
+    depth, viewportHeight, nextPlatformId, rng, terrain, profile, forceMovingExposure, lowerCommitY,
     lowerRouteCorridor[0], lowerRouteCorridor[1]
   );
   nextPlatformId = lowerPre.nextPlatformId;
@@ -1411,7 +1456,7 @@ function buildBranchTree(
   if (hasNested) {
     if (nestUpper) {
       const child = buildBranchTree(
-        platforms, upperLast, viewportHeight, nextPlatformId, rng, terrain, depth + 1, upperPath,
+        platforms, upperLast, viewportHeight, nextPlatformId, rng, terrain, profile, depth + 1, upperPath,
         rootGroupId, false, upperChildCorridor[0], upperChildCorridor[1]
       );
       nextPlatformId = child.nextPlatformId;
@@ -1419,7 +1464,7 @@ function buildBranchTree(
     }
     if (nestLower) {
       const child = buildBranchTree(
-        platforms, lowerLast, viewportHeight, nextPlatformId, rng, terrain, depth + 1, lowerPath,
+        platforms, lowerLast, viewportHeight, nextPlatformId, rng, terrain, profile, depth + 1, lowerPath,
         rootGroupId, false, lowerChildCorridor[0], lowerChildCorridor[1]
       );
       nextPlatformId = child.nextPlatformId;
@@ -1432,14 +1477,14 @@ function buildBranchTree(
       const targetRight = Math.max(platformEnvelope(upperLast).right, platformEnvelope(lowerLast).right);
       const upperAligned = extendRouteTowardX(
         platforms, upperLast, targetRight, upperY, 'upper', upperPath, groupId, rootGroupId,
-        depth, viewportHeight, nextPlatformId, rng, terrain,
+        depth, viewportHeight, nextPlatformId, rng, terrain, profile,
         upperRouteCorridor[0], upperRouteCorridor[1]
       );
       nextPlatformId = upperAligned.nextPlatformId;
       upperLast = upperAligned.last;
       const lowerAligned = extendRouteTowardX(
         platforms, lowerLast, Math.max(targetRight, platformEnvelope(upperLast).right), lowerY, 'lower', lowerPath,
-        groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain,
+        groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain, profile,
         lowerRouteCorridor[0], lowerRouteCorridor[1]
       );
       nextPlatformId = lowerAligned.nextPlatformId;
@@ -1454,14 +1499,14 @@ function buildBranchTree(
       const postEnd = postStart + postCount * postPitch;
       const upperPost = addRoutePlatforms(
         platforms, postCount, postStart, postEnd, upperY, 'upper', upperPath, groupId, rootGroupId,
-        depth, viewportHeight, nextPlatformId, rng, terrain, false, upperLast.position.y,
+        depth, viewportHeight, nextPlatformId, rng, terrain, profile, false, upperLast.position.y,
         upperRouteCorridor[0], upperRouteCorridor[1]
       );
       nextPlatformId = upperPost.nextPlatformId;
       upperLast = upperPost.last;
       const lowerPost = addRoutePlatforms(
         platforms, postCount, postStart, postEnd, lowerY, 'lower', lowerPath, groupId, rootGroupId,
-        depth, viewportHeight, nextPlatformId, rng, terrain, false, lowerLast.position.y,
+        depth, viewportHeight, nextPlatformId, rng, terrain, profile, false, lowerLast.position.y,
         lowerRouteCorridor[0], lowerRouteCorridor[1]
       );
       nextPlatformId = lowerPost.nextPlatformId;
@@ -1474,7 +1519,7 @@ function buildBranchTree(
   const resolvedRouteRight = Math.max(platformEnvelope(upperLast).right, platformEnvelope(lowerLast).right);
   const mergeLeftX = resolvedRouteRight + mergeGap;
   const mergeRightX = mergeLeftX + mergeWidth;
-  const naturalMergeY = clampPlatformY((upperLast.position.y + lowerLast.position.y) / 2 + (rng() - 0.5) * 20, viewportHeight);
+  const naturalMergeY = clampPlatformY((upperLast.position.y + lowerLast.position.y) / 2 + (rng() - 0.5) * 20 * clampBiomeScale(profile.verticalVariationMultiplier, 0.75, 1.3), viewportHeight);
   // Rejoining should not secretly be the hardest upward jump in the branch. The lower route may
   // need to climb back toward the midpoint, so cap that climb while allowing the upper route's
   // descent to stay generous.
@@ -1506,6 +1551,7 @@ function appendForwardSegment(
 ): { rightmost: PlatformState; nextPlatformId: number } {
   const terrain = resolvedTerrainRuntime(terrainValue);
   const baseRight = rightmostPlatform.position.x + rightmostPlatform.width;
+  const profileAtX = terrainProfileForRuntimeAtX(terrain, baseRight);
   const terrainAtX = terrainRuntimeForBiomeX(terrain, baseRight);
   let latestBranchX = -Infinity;
   let visibleEarlyBranchCount = 0;
@@ -1530,13 +1576,13 @@ function appendForwardSegment(
   // moving platforms are disallowed inside branches, emit one guaranteed moving trunk platform
   // before a forced branch rather than letting the feature percentage become merely probabilistic.
   if (needsGuaranteedMoving && shouldBranch && !terrainAtX.movingPlatformsInBranches) {
-    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng, false, terrainAtX, true, platforms);
+    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng, false, terrainAtX, true, platforms, profileAtX);
     platforms.push(p);
     return { rightmost: p, nextPlatformId };
   }
 
   if (!shouldBranch) {
-    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng, false, terrainAtX, needsGuaranteedMoving, platforms);
+    const p = generatePlatform(baseRight, rightmostPlatform.position.y, viewportHeight, nextPlatformId++, rng, false, terrainAtX, needsGuaranteedMoving, platforms, profileAtX);
     platforms.push(p);
     return { rightmost: p, nextPlatformId };
   }
@@ -1556,7 +1602,8 @@ function appendForwardSegment(
       false,
       stationaryTerrain,
       false,
-      platforms
+      platforms,
+      profileAtX
     );
     platforms.push(branchEntry);
   }
@@ -1569,6 +1616,7 @@ function appendForwardSegment(
     nextPlatformId,
     rng,
     terrainAtX,
+    profileAtX,
     1,
     null,
     rootGroupId,

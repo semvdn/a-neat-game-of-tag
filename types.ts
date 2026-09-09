@@ -109,6 +109,12 @@ export interface TerrainRuntimeConfig {
   subBranchingEnabled: boolean;
   maxBranchDepth: number;
   movingPlatformsInBranches: boolean;
+  /**
+   * Training-only world-space offset used to stratify mechanical-biome exposure without telling
+   * the policy which biome it is in. Visible continuous play leaves this at zero so geometry and
+   * the rendered biome stay geographically aligned.
+   */
+  biomeWorldOffsetX?: number;
 }
 
 export interface PursuitDesignConfig {
@@ -226,7 +232,7 @@ export interface TagEffect {
 
 export interface GameState {
   agents: AgentState[];
-  /** Presentation-world seed. Training mechanics do not consume this during visual-biome phase one. */
+  /** Deterministic world seed shared by the visible biome field and mechanical biome profiles. */
   worldSeed?: number;
   platforms: PlatformState[];
   cameraPosition: Vector2D;
