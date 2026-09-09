@@ -318,8 +318,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     presentationCameraYRef.current = cameraCenterY;
 
     const visualWorldSeed = gameState.worldSeed ?? DEFAULT_BIOME_WORLD_SEED;
-    const lighting = resolveWorldLighting(dayNightConfig, Date.now());
-    drawBiomeBackground(ctx, biomeBackgroundCacheRef.current, { cameraCenterX, cameraCenterY, cameraScale, cssWidth, cssHeight, worldSeed: visualWorldSeed, lighting });
+    const visualTimeMs = Date.now();
+    const lighting = resolveWorldLighting(dayNightConfig, visualTimeMs);
+    drawBiomeBackground(ctx, biomeBackgroundCacheRef.current, { cameraCenterX, cameraCenterY, cameraScale, cssWidth, cssHeight, worldSeed: visualWorldSeed, lighting, visualTimeMs });
 
     ctx.save();
     ctx.translate(cssWidth / 2, cssHeight / 2);
@@ -341,7 +342,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     ctx.restore();
 
-    drawBiomeForeground(ctx, biomeBackgroundCacheRef.current, { cameraCenterX, cameraCenterY, cameraScale, cssWidth, cssHeight, worldSeed: visualWorldSeed, lighting });
+    drawBiomeForeground(ctx, biomeBackgroundCacheRef.current, { cameraCenterX, cameraCenterY, cameraScale, cssWidth, cssHeight, worldSeed: visualWorldSeed, lighting, visualTimeMs });
 
     if (showSenses) {
       // Screen-space legend: it stays readable and stationary while the world camera moves.

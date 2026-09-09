@@ -12,7 +12,7 @@ const NS_FAR=0x464152, NS_MID=0x4d4944, NS_NEAR=0x4e4541, NS_FORE=0x464f52;
 type Layer = 'far'|'mid'|'near'|'foreground';
 interface FeatureDescriptor { x:number; scale:number; variant:number; yJitter:number; flipX:boolean; biome:BiomeId; }
 interface BackgroundChunkDescriptor { chunkIndex:number; layer:Layer; ridge:number[]; features:FeatureDescriptor[]; }
-interface BackgroundDrawOptions { cameraCenterX:number; cameraCenterY:number; cameraScale:number; cssWidth:number; cssHeight:number; worldSeed:number; lighting:WorldLightingState; }
+interface BackgroundDrawOptions { cameraCenterX:number; cameraCenterY:number; cameraScale:number; cssWidth:number; cssHeight:number; worldSeed:number; lighting:WorldLightingState; visualTimeMs:number; }
 
 const parallaxByLayer={far:.13,mid:.31,near:.58} as const;
 const namespaceForLayer=(layer:Layer)=>layer==='far'?NS_FAR:layer==='mid'?NS_MID:layer==='near'?NS_NEAR:NS_FORE;
@@ -947,6 +947,185 @@ function drawLandmarkLayer(ctx:CanvasRenderingContext2D,cache:BiomeBackgroundCac
   ctx.restore();
 }
 
+const EVENT_CELL_WIDTH = 4_800;
+const EVENT_NS_BIRD = 0x42495244;
+const EVENT_NS_ANIMAL = 0x414e494d;
+const EVENT_NS_STAR = 0x53544152;
+const EVENT_NS_FIREFLY = 0x46495245;
+
+const eventRand=(seed:number,namespace:number,slot:number,key=0)=>biomeRandom01(seed,namespace^key,slot);
+const eventSlot=(timeMs:number,seconds:number)=>Math.floor(timeMs/(seconds*1000));
+const eventPhase=(timeMs:number,seconds:number,duration:number,offset01:number)=>{
+  const within=timeMs/1000-Math.floor(timeMs/(seconds*1000))*seconds;
+  const start=offset01*Math.max(0,seconds-duration);
+  return within-start;
+};
+const eventBiomeAt=(worldX:number,o:BackgroundDrawOptions)=>dominantBiome(getBiomeAtX(worldX,o.worldSeed));
+
+function drawBirdGlyph(ctx:CanvasRenderingContext2D,x:number,y:number,scale:number,flap:number,color:string,kind:number){
+  ctx.save();ctx.translate(snap(x,1),snap(y,1));
+  ctx.fillStyle=color;
+  const px=Math.max(1,Math.round(scale));
+  const wing=Math.max(2,Math.round(scale*(flap>.5?2.8:2.1)));
+  const rise=Math.round(scale*(flap>.5?1.5:.7));
+  // Two-wing pixel silhouette with a tiny body. Different kinds change tail/beak accents.
+  ctx.fillRect(-px,0,px*2,Math.max(1,px));
+  ctx.fillRect(-wing,-rise,wing,Math.max(1,px));
+  ctx.fillRect(0,-rise,wing,Math.max(1,px));
+  if(kind%3===0)ctx.fillRect(-px*2,px,px,Math.max(1,px));
+  if(kind%3===1)ctx.fillRect(px,0,px,Math.max(1,px));
+  ctx.restore();
+}
+
+function birdKindForBiome(biome:BiomeId){
+  if(biome==='city')return 1; // pigeons
+  if(biome==='snowy-mountains'||biome==='spires')return 2; // eagle/raven silhouette
+  return 0;
+}
+
+function birdEventAllowed(biome:BiomeId){
+  return biome!=='foundry';
+}
+
+function drawBirdEvents(ctx:CanvasRenderingContext2D,o:BackgroundDrawOptions){
+  if(o.lighting.daylight<.12&&o.lighting.twilight<.22)return;
+  const slotSeconds=15,duration=6.4,slot=eventSlot(o.visualTimeMs,slotSeconds),parallax=.25;
+  const halfWorld=o.cssWidth*.62/Math.max(.0001,o.cameraScale*parallax);
+  const minCell=Math.floor((o.cameraCenterX-halfWorld)/EVENT_CELL_WIDTH)-1;
+  const maxCell=Math.floor((o.cameraCenterX+halfWorld)/EVENT_CELL_WIDTH)+1;
+  for(let cell=minCell;cell<=maxCell;cell++){
+    const eventKey=slot*4099+cell;
+    if(eventRand(o.worldSeed,EVENT_NS_BIRD,eventKey,0x11)>.19)continue;
+    const phase=eventPhase(o.visualTimeMs,slotSeconds,duration,eventRand(o.worldSeed,EVENT_NS_BIRD,eventKey,0x12));
+    if(phase<0||phase>duration)continue;
+    const progress=phase/duration;
+    const baseWorldX=cell*EVENT_CELL_WIDTH+EVENT_CELL_WIDTH*(.1+eventRand(o.worldSeed,EVENT_NS_BIRD,eventKey,0x13)*.8);
+    const biome=eventBiomeAt(baseWorldX,o);if(!birdEventAllowed(biome))continue;
+    const direction=eventRand(o.worldSeed,EVENT_NS_BIRD,eventKey,0x14)>.5?1:-1;
+    const travelWorld=900+eventRand(o.worldSeed,EVENT_NS_BIRD,eventKey,0x15)*850;
+    const worldX=baseWorldX+direction*(progress-.5)*travelWorld;
+    const screenX=o.cssWidth*.5+(worldX-o.cameraCenterX)*o.cameraScale*parallax;
+    if(screenX<-80||screenX>o.cssWidth+80)continue;
+    const baseY=o.cssHeight*(.18+eventRand(o.worldSeed,EVENT_NS_BIRD,eventKey,0x16)*.26);
+    const arc=Math.sin(progress*Math.PI)*o.cssHeight*.035;
+    const count=1+Math.floor(eventRand(o.worldSeed,EVENT_NS_BIRD,eventKey,0x17)*4);
+    const palette=lightBiomePalette(paletteForBiomeSample(getBiomeAtX(worldX,o.worldSeed)),o.lighting);
+    const color=rgba(mixHex(palette.far,'#111827',.42),.5+.26*o.lighting.daylight);
+    const kind=birdKindForBiome(biome);
+    for(let i=0;i<count;i++){
+      const phaseShift=i*.7+eventRand(o.worldSeed,EVENT_NS_BIRD,eventKey,i+0x18)*.5;
+      const flap=(Math.sin((o.visualTimeMs/1000)*8+phaseShift)+1)*.5;
+      const bx=screenX-direction*i*(12+kind*2);
+      const by=baseY-arc+i*5+Math.sin(progress*8+i)*3;
+      drawBirdGlyph(ctx,bx,by,kind===2?2.1:1.6,flap,color,kind);
+    }
+  }
+}
+
+function drawShootingStar(ctx:CanvasRenderingContext2D,o:BackgroundDrawOptions){
+  if(o.lighting.night<.58)return;
+  const slotSeconds=38,slot=eventSlot(o.visualTimeMs,slotSeconds),eventKey=slot;
+  if(eventRand(o.worldSeed,EVENT_NS_STAR,eventKey,0x21)>.3)return;
+  const duration=1.7;
+  const phase=eventPhase(o.visualTimeMs,slotSeconds,duration,eventRand(o.worldSeed,EVENT_NS_STAR,eventKey,0x22));
+  if(phase<0||phase>duration)return;
+  const t=phase/duration;
+  const startX=o.cssWidth*(.12+eventRand(o.worldSeed,EVENT_NS_STAR,eventKey,0x23)*.58);
+  const startY=o.cssHeight*(.08+eventRand(o.worldSeed,EVENT_NS_STAR,eventKey,0x24)*.22);
+  const dx=o.cssWidth*(.16+eventRand(o.worldSeed,EVENT_NS_STAR,eventKey,0x25)*.12);
+  const dy=o.cssHeight*(.08+eventRand(o.worldSeed,EVENT_NS_STAR,eventKey,0x26)*.08);
+  const x=startX+dx*t,y=startY+dy*t;
+  const fade=Math.sin(Math.PI*t)*o.lighting.night;
+  ctx.save();
+  // Pixel-tail rather than an antialiased line keeps the event consistent with the arcade art.
+  for(let i=1;i<=5;i++){
+    const tailT=i/5;
+    ctx.fillStyle=rgba('#dceeff',.5*fade*(1-tailT*.62));
+    ctx.fillRect(snap(x-dx*.035*i,1),snap(y-dy*.035*i,1),i<3?3:2,i<3?2:1);
+  }
+  ctx.fillStyle=rgba('#ffffff',.92*fade);ctx.fillRect(snap(x-1,1),snap(y-1,1),3,3);
+  ctx.restore();
+}
+
+function animalVariantForBiome(biome:BiomeId){
+  if(biome==='desert')return 1; // hare/coyote-like
+  if(biome==='swamp')return 2; // boar
+  if(biome==='snowy-mountains')return 3; // goat/fox
+  if(biome==='city')return 4; // stray cat
+  return 0; // deer/fox-like
+}
+function animalAllowed(biome:BiomeId){
+  return biome==='lowlands'||biome==='desert'||biome==='snowy-mountains'||biome==='temperate-forest'||biome==='rural-village'||biome==='swamp'||biome==='ruins'||biome==='city';
+}
+function drawAnimalGlyph(ctx:CanvasRenderingContext2D,x:number,y:number,variant:number,dir:number,color:string,step:number){
+  ctx.save();ctx.translate(snap(x,1),snap(y,1));if(dir<0)ctx.scale(-1,1);ctx.fillStyle=color;
+  if(variant===4){ // cat
+    ctx.fillRect(-7,-7,11,6);ctx.fillRect(3,-10,5,5);ctx.fillRect(5,-13,2,3);ctx.fillRect(2,-13,2,3);ctx.fillRect(-10,-10,4,2);ctx.fillRect(-9,-13,2,4);
+    ctx.fillRect(-5,-2,2,4);ctx.fillRect(2,-2,2,4);
+  }else if(variant===2){ // boar
+    ctx.fillRect(-9,-8,15,7);ctx.fillRect(5,-7,6,5);ctx.fillRect(9,-6,3,2);ctx.fillRect(-6,-2,3,5);ctx.fillRect(3,-2,3,5);
+  }else if(variant===3){ // mountain goat
+    ctx.fillRect(-8,-9,13,7);ctx.fillRect(4,-13,5,7);ctx.fillRect(6,-16,2,4);ctx.fillRect(3,-16,2,4);ctx.fillRect(-6,-2,2,6);ctx.fillRect(2,-2,2,6);
+  }else if(variant===1){ // hare / coyote hybrid silhouette
+    ctx.fillRect(-8,-7,12,6);ctx.fillRect(3,-10,5,5);ctx.fillRect(5,-15,2,6);ctx.fillRect(2,-14,2,5);ctx.fillRect(-11,-8,4,2);ctx.fillRect(-5,-2+(step>.5?1:0),2,5);ctx.fillRect(2,-2+(step>.5?0:1),2,5);
+  }else{ // small deer / fox
+    ctx.fillRect(-9,-9,14,7);ctx.fillRect(4,-13,5,7);ctx.fillRect(6,-16,2,4);ctx.fillRect(-6,-2+(step>.5?1:0),2,6);ctx.fillRect(2,-2+(step>.5?0:1),2,6);ctx.fillRect(-12,-10,4,2);
+  }
+  ctx.restore();
+}
+
+function drawGroundAnimalEvents(ctx:CanvasRenderingContext2D,o:BackgroundDrawOptions){
+  const slotSeconds=24,duration=7.5,slot=eventSlot(o.visualTimeMs,slotSeconds),parallax=.54;
+  const halfWorld=o.cssWidth*.6/Math.max(.0001,o.cameraScale*parallax);
+  const minCell=Math.floor((o.cameraCenterX-halfWorld)/EVENT_CELL_WIDTH)-1,maxCell=Math.floor((o.cameraCenterX+halfWorld)/EVENT_CELL_WIDTH)+1;
+  for(let cell=minCell;cell<=maxCell;cell++){
+    const eventKey=slot*2053+cell;if(eventRand(o.worldSeed,EVENT_NS_ANIMAL,eventKey,0x31)>.115)continue;
+    const phase=eventPhase(o.visualTimeMs,slotSeconds,duration,eventRand(o.worldSeed,EVENT_NS_ANIMAL,eventKey,0x32));if(phase<0||phase>duration)continue;
+    const progress=phase/duration,dir=eventRand(o.worldSeed,EVENT_NS_ANIMAL,eventKey,0x33)>.5?1:-1;
+    const startWorld=cell*EVENT_CELL_WIDTH+EVENT_CELL_WIDTH*(.15+eventRand(o.worldSeed,EVENT_NS_ANIMAL,eventKey,0x34)*.7);
+    const biome=eventBiomeAt(startWorld,o);if(!animalAllowed(biome))continue;
+    const worldX=startWorld+dir*(progress-.5)*(520+eventRand(o.worldSeed,EVENT_NS_ANIMAL,eventKey,0x35)*420);
+    const x=o.cssWidth*.5+(worldX-o.cameraCenterX)*o.cameraScale*parallax;if(x<-50||x>o.cssWidth+50)continue;
+    const y=o.cssHeight*.83+(WORLD_REF_HEIGHT*.64-o.cameraCenterY)*o.cameraScale*.15;
+    const palette=lightBiomePalette(paletteForBiomeSample(getBiomeAtX(worldX,o.worldSeed)),o.lighting);
+    const color=rgba(mixHex(palette.near,'#10151b',.34),.52+.2*o.lighting.daylight);
+    const step=(Math.sin((o.visualTimeMs/1000)*7)+1)*.5;
+    drawAnimalGlyph(ctx,x,y,animalVariantForBiome(biome),dir,color,step);
+  }
+}
+
+function drawFireflyEvents(ctx:CanvasRenderingContext2D,o:BackgroundDrawOptions){
+  if(o.lighting.night<.22&&o.lighting.twilight<.3)return;
+  const sample=getBiomeAtX(o.cameraCenterX,o.worldSeed),biome=dominantBiome(sample);
+  if(biome!=='swamp'&&biome!=='temperate-forest')return;
+  const slotSeconds=18,slot=eventSlot(o.visualTimeMs,slotSeconds),eventKey=slot+sample.regionIndex*101;
+  if(eventRand(o.worldSeed,EVENT_NS_FIREFLY,eventKey,0x41)>.23)return;
+  const duration=8.5,phase=eventPhase(o.visualTimeMs,slotSeconds,duration,eventRand(o.worldSeed,EVENT_NS_FIREFLY,eventKey,0x42));if(phase<0||phase>duration)return;
+  const fade=Math.sin(Math.PI*Math.min(1,phase/duration));
+  ctx.save();
+  for(let i=0;i<8;i++){
+    const baseX=o.cssWidth*(.16+eventRand(o.worldSeed,EVENT_NS_FIREFLY,eventKey,i+0x43)*.68);
+    const baseY=o.cssHeight*(.57+eventRand(o.worldSeed,EVENT_NS_FIREFLY,eventKey,i+0x53)*.22);
+    const tt=o.visualTimeMs/1000;
+    const x=baseX+Math.sin(tt*(.7+i*.07)+i)*9;
+    const y=baseY+Math.cos(tt*(.55+i*.05)+i*1.7)*6;
+    const pulse=.35+.65*((Math.sin(tt*2.2+i*2.1)+1)*.5);
+    ctx.fillStyle=rgba('#d9f27c',.48*fade*pulse*(.5+o.lighting.night*.5));
+    ctx.fillRect(snap(x,1),snap(y,1),2,2);
+  }
+  ctx.restore();
+}
+
+function drawSkyEvents(ctx:CanvasRenderingContext2D,o:BackgroundDrawOptions){
+  drawShootingStar(ctx,o);
+  drawBirdEvents(ctx,o);
+}
+
+function drawGroundAndGlowEvents(ctx:CanvasRenderingContext2D,o:BackgroundDrawOptions){
+  drawGroundAnimalEvents(ctx,o);
+  drawFireflyEvents(ctx,o);
+}
+
 function drawAmbientDetailsForBiome(ctx:CanvasRenderingContext2D,o:BackgroundDrawOptions,biome:BiomeId,alpha:number,xMin:number,xMax:number){
   if(alpha<=.01)return;
   const sample=getBiomeAtX((xMin+xMax)*.5,o.worldSeed),p=lightBiomePalette(paletteForBiomeSample(sample),o.lighting);
@@ -982,11 +1161,13 @@ function drawAmbientDetails(ctx:CanvasRenderingContext2D,o:BackgroundDrawOptions
 export function drawBiomeBackground(ctx:CanvasRenderingContext2D,cache:BiomeBackgroundCache,o:BackgroundDrawOptions){
   ctx.save();ctx.imageSmoothingEnabled=false;
   drawSkyBands(ctx,o);
+  drawSkyEvents(ctx,o);
   drawContinuousPanorama(ctx,'far',o);
   drawContinuousPanorama(ctx,'mid',o);
   drawLandmarkLayer(ctx,cache,'mid',o);
   drawLandmarkLayer(ctx,cache,'near',o);
   drawAmbientDetails(ctx,o);
+  drawGroundAndGlowEvents(ctx,o);
   // Lower-screen atmospheric tint is one continuous gradient. This used to be a row of wide
   // translucent rectangles and could reveal vertical seams after several alpha layers overlapped.
   ctx.fillStyle=spatialBiomeGradient(ctx,o,.22,palette=>rgba(palette.haze,.045),90);

@@ -1,8 +1,9 @@
-Add overview win-rate graph and line-tip values
+Add rare ambient background events
 
-- add Chaser vs Runner population win-rate history to the Overview tab
-- use the evaluator's actual tagged-episode win definition and a fixed 0–100% scale
-- show each line chart's latest value directly at its endpoint
-- reserve a label gutter and separate overlapping endpoint labels with connector lines
-- format percentage tips with percent signs and species/count tips as integers
-- add current-value tip labels to topology evolution charts as well
+- add deterministic daytime bird groups with biome-aware silhouettes
+- add rare biome-specific ground-animal silhouettes behind gameplay platforms
+- add dusk/night fireflies in forest and swamp regions
+- add very rare pixel-art shooting stars under dark skies
+- schedule each event entirely inside deterministic time slots to avoid popping mid-animation
+- keep all ambient events renderer-only and outside simulation, sensing, terrain, and fitness state
+- pass one shared visual timestamp through background and foreground rendering

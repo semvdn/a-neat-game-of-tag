@@ -8,7 +8,7 @@ export const BIOME_REGION_LENGTH = 12_000;
 export const BIOME_TRANSITION_LENGTH = 5_000;
 // Offset keeps world X=0 just inside the stable Lowlands core instead of on a transition seam.
 export const BIOME_WORLD_ORIGIN_X = -BIOME_TRANSITION_LENGTH*.5;
-export const BIOME_VISUAL_VERSION = 8;
+export const BIOME_VISUAL_VERSION = 9;
 export const BIOME_TERRAIN_VERSION = 3;
 export const WORLD_GEN_VERSION = 3;
 

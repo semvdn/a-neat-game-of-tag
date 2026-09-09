@@ -62,3 +62,13 @@ heavily than buildings, and its midground no longer guarantees a landmark every 
 building vocabulary now includes multiple cottage/farmhouse forms, barn, stable, chapel, and a rare
 windmill. Spires, Foundry, Ruins, City, Forest, Desert, Snow, Lowlands, and Swamp also gained genuinely
 separate silhouette variants rather than modulo aliases of the same few shapes.
+
+
+### Ambient background events
+
+The background renderer can schedule rare, deterministic visual events from the world seed and real-time
+slot. These events never enter `GameState`, collision, policy sensing, fitness, or terrain generation.
+Daytime biomes can receive tiny flying bird groups; selected natural/ruined/city biomes can receive
+small ground-animal silhouettes; Forest and Swamp can show firefly clusters around dusk/night; and
+sufficiently dark skies can very rarely show a short pixel-art shooting star. Events are world/time
+seeded so they animate coherently rather than changing randomly on every frame.
