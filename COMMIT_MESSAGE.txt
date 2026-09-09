@@ -1,10 +1,11 @@
-Refine biome assets and platform materials
+Refine biome asset scaling and placement
 
-- redesign individual procedural landmarks for all ten biomes with clearer silhouettes and scale hierarchy
-- add broader natural forms to Lowlands, Desert, Forest, Village, and Swamp instead of repeated vertical stamps
-- diversify Spires, Foundry, Ruins, City, and Snowy Mountain architecture/landmarks
-- smooth natural far ridges and reduce snow foothill clutter so major landmarks read at gameplay scale
-- refine every biome platform material while preserving a consistent physical top edge
-- improve Lowlands and Swamp midground contrast without reducing agent readability
-- version visual-biome descriptor caches independently from mechanical world generation
-- add renderer-derived individual asset and platform material reference sheets to biome documentation
+- replace independent width/height randomization with aspect-locked motif sizing
+- use one uniform zoom/viewport scalar so assets cannot stretch across camera changes
+- distribute scenery through jittered slots instead of unconstrained random clumps
+- ground far landmarks behind ridge/foothill silhouettes
+- tighten built-environment baselines while allowing subtle natural terrain jitter
+- weight rare landmark variants such as windmills and chalets
+- reduce repetitive Spires and Rural Village density
+- regenerate renderer-derived biome scale and asset catalog sanity sheets
+- keep mechanical biome profiles and terrain generation unchanged
