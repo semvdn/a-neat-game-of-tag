@@ -1,11 +1,8 @@
-Add configurable day-night cycle and soften biome transitions
+Adopt continuous panorama backgrounds (Option B)
 
-- add a persisted real-time/custom presentation clock with 1 minute to 24 hour day periods
-- render smooth dawn, daylight, dusk, night, sun, moon, stars, scenery, and platform lighting
-- keep agents bright at night and keep the clock completely outside policy/physics state
-- widen biome transitions to 5,000 px and center them across region boundaries
-- use quintic easing for continuous visual and mechanical biome interpolation
-- progressively interleave scenery densities, landmark motifs, ambient effects, and platform materials
-- shift the biome field origin so world X=0 remains a stable Lowlands starting area
-- keep training biome offsets centered inside stable biome cores
-- bump visual, terrain, and world generation revisions and document the new systems
+- replace far and mid chunk-stamped scenery with continuous biome-aware panoramas
+- keep refined biome assets as sparse landmark overlays in mid/near/foreground layers
+- make sky and haze spatially biome-aware across the full viewport
+- reduce wide-camera popping with zoom-aware landmark fading and thinning instead of hard cutoffs
+- lower landmark zoom clamp so assets continue shrinking naturally when the camera pulls far out
+- enlarge descriptor cache adaptively to prevent live-window eviction during wide views
