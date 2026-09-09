@@ -61,6 +61,8 @@ import {
 import { Activity, Play, Pause, RotateCcw, MonitorPlay, Cpu, Minus, Plus } from 'lucide-react';
 import { DEFAULT_TERRAIN_VARIETY_CONFIG, continuousTerrainRuntime, sanitizeTerrainVarietyConfig } from './learning/terrainConfig';
 import { DEFAULT_BIOME_WORLD_SEED, stampPlatformVisualBiome } from './world/biomes';
+import type { DayNightConfig } from './world/dayNight';
+import { DAY_NIGHT_STORAGE_KEY, createDefaultDayNightConfig, resolveWorldHour, sanitizeDayNightConfig } from './world/dayNight';
 
 // Champion trails are visual telemetry only. They are sampled by distance but aged by
 // simulation time, so a stationary agent's old path still fades away.
@@ -162,6 +164,15 @@ const loadTerrainVarietyConfig = (): TerrainVarietyConfig => {
   }
 };
 
+const loadDayNightConfig = (): DayNightConfig => {
+  try {
+    const raw = localStorage.getItem(DAY_NIGHT_STORAGE_KEY);
+    return raw ? sanitizeDayNightConfig(JSON.parse(raw)) : createDefaultDayNightConfig();
+  } catch {
+    return createDefaultDayNightConfig();
+  }
+};
+
 const NETWORK_ARCHITECTURE_STORAGE_KEY = 'ai_tag_network_architecture_suite_v1';
 const loadNetworkArchitecture = (): NetworkArchitectureSuiteConfig => {
   try {
@@ -186,6 +197,7 @@ export const App: React.FC = () => {
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [visualSpeed, setVisualSpeed] = useState(1);
   const [cameraZoom, setCameraZoom] = useState(1);
+  const [dayNightConfig, setDayNightConfig] = useState<DayNightConfig>(loadDayNightConfig);
   const [isVisualPaused, setIsVisualPaused] = useState(false);
   const [isTrainingPaused, setIsTrainingPaused] = useState(false);
   const [upgradeConfig, setUpgradeConfig] = useState<UpgradeConfig>(loadUpgradeConfig);
@@ -683,6 +695,26 @@ export const App: React.FC = () => {
       payload: { terrainVarietyConfig: sanitized },
     });
   }, [terrainVarietyConfig]);
+
+  useEffect(() => {
+    localStorage.setItem(DAY_NIGHT_STORAGE_KEY, JSON.stringify(dayNightConfig));
+  }, [dayNightConfig]);
+
+  const updateDayNightConfig = useCallback((patch: Partial<DayNightConfig>) => {
+    setDayNightConfig(previous => {
+      const now = Date.now();
+      const visibleHour = resolveWorldHour(previous, now);
+      const next = sanitizeDayNightConfig({ ...previous, ...patch }, now);
+      // Entering/changing a custom cycle should not visibly jump the sky. Re-anchor it at the
+      // exact world hour currently on screen, then let the new period proceed from there.
+      if (next.mode === 'cycle' && (previous.mode !== 'cycle' || next.cycleMinutes !== previous.cycleMinutes)) {
+        next.cycleAnchorMs = now;
+        next.cycleAnchorHour = visibleHour;
+      }
+      return next;
+    });
+  }, []);
+
 
   // Background evolution is independent from the visible champion arena and always runs
   // at maximum worker throughput unless explicitly paused.
@@ -1646,6 +1678,7 @@ export const App: React.FC = () => {
               showTrails={showTrails}
               showSenses={showSenses && !exhibition}
               cameraZoom={cameraZoom}
+              dayNightConfig={dayNightConfig}
             />
           )}
         </main>
@@ -1655,6 +1688,8 @@ export const App: React.FC = () => {
           onToggleTrails={handleToggleTrails}
           showSenses={showSenses && !exhibition}
           onToggleSenses={handleToggleSenses}
+          dayNightConfig={dayNightConfig}
+          onUpdateDayNightConfig={updateDayNightConfig}
           onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
           upgradeConfig={upgradeConfig}
           sprintUpgradeActive={sprintUpgradeActive}

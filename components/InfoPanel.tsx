@@ -4,8 +4,10 @@ import React from 'react';
 import type { AgentState, TrainingFitnessConfig, UpgradeConfig, UpgradeMode, UpgradeRule, SprintUpgradeRule, SprintRoleAdvanced, TerrainVarietyConfig } from '../types';
 import { MAX_COHESION_PENALTY } from '../learning/groupCohesion';
 import { AgentStatus } from '../types';
-import { Radar, Zap, ArrowUp, SlidersHorizontal, Eye, Route, Gauge, ChevronDown } from 'lucide-react';
+import { Radar, Zap, ArrowUp, SlidersHorizontal, Eye, Route, Gauge, ChevronDown, Clock3, SunMoon } from 'lucide-react';
 import { MAX_SPEED, SPRINT_MAX_SPEED, SPRINT_ENERGY_COST_PER_SEC, MIN_RUNNER_PACE_TARGET_PX, MAX_RUNNER_PACE_TARGET_PX, MAX_RUNNER_PACE_REWARD_PER_WINDOW, MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM } from '../constants';
+import type { DayNightConfig } from '../world/dayNight';
+import { formatWorldHour, MAX_CUSTOM_DAY_MINUTES, resolveWorldHour } from '../world/dayNight';
 
 interface InfoPanelProps {
   agents: AgentState[];
@@ -13,6 +15,8 @@ interface InfoPanelProps {
   onToggleTrails: () => void;
   showSenses: boolean;
   onToggleSenses: () => void;
+  dayNightConfig: DayNightConfig;
+  onUpdateDayNightConfig: (patch: Partial<DayNightConfig>) => void;
   onOpenDiagnostics: () => void;
   upgradeConfig: UpgradeConfig;
   sprintUpgradeActive: boolean;
@@ -256,6 +260,8 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
   onToggleTrails,
   showSenses,
   onToggleSenses,
+  dayNightConfig,
+  onUpdateDayNightConfig,
   onOpenDiagnostics,
   upgradeConfig,
   sprintUpgradeActive,
@@ -271,6 +277,12 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
   const movingInBranchesAvailable =
     (terrainVarietyConfig.trainingBranchingEnabled && terrainVarietyConfig.trainingMovingPlatformsEnabled) ||
     (terrainVarietyConfig.continuousBranchingEnabled && terrainVarietyConfig.continuousMovingPlatformsEnabled);
+  const [, setWorldClockTick] = React.useState(0);
+  React.useEffect(() => {
+    const id = window.setInterval(() => setWorldClockTick(tick => (tick + 1) % 1_000_000), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const worldHour = resolveWorldHour(dayNightConfig, Date.now());
 
   return (
     <aside className="w-80 shrink-0 overflow-y-auto rounded-xl border border-gray-700/70 bg-gray-800/95 shadow-xl">
@@ -313,6 +325,65 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
               </div>
               <ToggleSwitch id="senses-toggle" label="Show agent senses" checked={showSenses} onChange={onToggleSenses} />
             </div>
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-sky-500/20 bg-sky-950/10 p-2.5">
+          <div className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+            <SunMoon className="h-3.5 w-3.5 text-sky-300" /> Day / night
+          </div>
+          <div className="rounded-md border border-gray-800 bg-black/20 p-2.5">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-[10px] text-gray-300">
+                <Clock3 className="h-3 w-3 text-sky-300" /> World time
+              </div>
+              <span className="font-mono text-[11px] font-semibold text-sky-200">{formatWorldHour(worldHour)}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-1 rounded-md border border-gray-800 bg-gray-950 p-1">
+              <button
+                type="button"
+                onClick={() => onUpdateDayNightConfig({ mode: 'realtime' })}
+                className={`rounded px-2 py-1.5 text-[9px] font-semibold transition-colors ${dayNightConfig.mode === 'realtime' ? 'bg-sky-500/25 text-sky-100' : 'text-gray-500 hover:bg-gray-900 hover:text-gray-300'}`}
+              >
+                Real time
+              </button>
+              <button
+                type="button"
+                onClick={() => onUpdateDayNightConfig({ mode: 'cycle' })}
+                className={`rounded px-2 py-1.5 text-[9px] font-semibold transition-colors ${dayNightConfig.mode === 'cycle' ? 'bg-sky-500/25 text-sky-100' : 'text-gray-500 hover:bg-gray-900 hover:text-gray-300'}`}
+              >
+                Custom cycle
+              </button>
+            </div>
+            <p className="mt-2 text-[9px] leading-relaxed text-gray-600">
+              Real time follows this device's local clock. Custom cycle keeps the current visible time when enabled, then advances a full 24-hour day over the period below.
+            </p>
+            {dayNightConfig.mode === 'cycle' && (
+              <div className="mt-2 border-t border-gray-800 pt-2">
+                <CommittedRange
+                  label="Full day duration"
+                  min={1}
+                  max={MAX_CUSTOM_DAY_MINUTES}
+                  step={1}
+                  value={dayNightConfig.cycleMinutes}
+                  valueText={value => value < 60 ? `${value.toFixed(0)} min` : `${(value / 60).toFixed(value % 60 === 0 ? 0 : 1)} h`}
+                  valueClassName="text-sky-300"
+                  onCommit={value => onUpdateDayNightConfig({ cycleMinutes: value })}
+                />
+                <div className="mt-1.5 grid grid-cols-6 gap-1">
+                  {[5, 10, 30, 60, 180, 1440].map(minutes => (
+                    <button
+                      key={minutes}
+                      type="button"
+                      onClick={() => onUpdateDayNightConfig({ cycleMinutes: minutes })}
+                      className={`rounded border px-1 py-1 text-[8px] font-mono ${Math.round(dayNightConfig.cycleMinutes) === minutes ? 'border-sky-400/40 bg-sky-500/20 text-sky-200' : 'border-gray-800 bg-gray-950 text-gray-600 hover:text-gray-300'}`}
+                    >
+                      {minutes < 60 ? `${minutes}m` : minutes === 1440 ? '24h' : `${minutes / 60}h`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </section>
 

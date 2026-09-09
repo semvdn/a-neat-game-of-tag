@@ -5,7 +5,9 @@ import { AgentStatus } from '../types';
 import { AGENT_WIDTH, AGENT_HEIGHT } from '../constants';
 import { canAgentUsePlatform } from '../learning/terrainRoutes';
 import { drawPixelAgent } from './agentSprite';
-import { getBiomeAtX, mixHex, paletteForBiomeSample } from '../world/biomes';
+import { biomeHash, getBiomeAtX, mixHex, paletteForBiomeSample } from '../world/biomes';
+import type { WorldLightingState } from '../world/dayNight';
+import { lightBiomePalette } from '../world/dayNight';
 
 export const drawTagEffect = (ctx: CanvasRenderingContext2D, effect: TagEffect) => {
     const progress = 1 - (effect.life / effect.initialLife);
@@ -285,10 +287,14 @@ export const drawAgentSenses = (
     ctx.restore();
 };
 
-export const drawPlatform = (ctx: CanvasRenderingContext2D, platform: PlatformState) => {
+export const drawPlatform = (ctx: CanvasRenderingContext2D, platform: PlatformState, lighting?: WorldLightingState) => {
   const sample = platform.visualBiome || getBiomeAtX(platform.position.x + platform.width * 0.5);
-  const palette = paletteForBiomeSample(sample);
-  const biome = sample.secondary && sample.blend >= 0.5 ? sample.secondary : sample.primary;
+  const basePalette = paletteForBiomeSample(sample);
+  const palette = lighting ? lightBiomePalette(basePalette, lighting) : basePalette;
+  // During transitions, material grammars interleave progressively instead of every platform
+  // flipping at the exact 50% boundary. The choice is deterministic for a given platform.
+  const materialSelector = biomeHash(platform.id | 0, 0x4d41544c, sample.regionIndex | 0) / 4294967296;
+  const biome = sample.secondary && materialSelector < sample.blend ? sample.secondary : sample.primary;
 
   let face = palette.platformFace;
   if (platform.structureType === 'branch-upper') face = mixHex(face, palette.haze, 0.18);

@@ -5,12 +5,15 @@ import { AGENT_HEIGHT, AGENT_WIDTH, WORLD_REF_WIDTH, WORLD_REF_HEIGHT, CAMERA_FR
 import { cameraRelevantAgents } from '../learning/cameraFraming';
 import { biomeLabel, DEFAULT_BIOME_WORLD_SEED, getBiomeAtX } from '../world/biomes';
 import { BiomeBackgroundCache, drawBiomeBackground, drawBiomeForeground } from './biomeBackground';
+import type { DayNightConfig } from '../world/dayNight';
+import { formatWorldHour, resolveWorldLighting } from '../world/dayNight';
 
 interface GameCanvasProps {
   gameState: GameState;
   showTrails: boolean;
   showSenses: boolean;
   cameraZoom: number;
+  dayNightConfig: DayNightConfig;
 }
 
 // The visual camera is deliberately separate from the 1200x800 policy/sensor frame.
@@ -88,6 +91,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   showTrails,
   showSenses,
   cameraZoom,
+  dayNightConfig,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const presentationCameraXRef = useRef<number | null>(null);
@@ -95,7 +99,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const presentationCameraScaleRef = useRef<number | null>(null);
   const lastPresentationFrameTimeRef = useRef<number | null>(null);
   const biomeBackgroundCacheRef = useRef<BiomeBackgroundCache | null>(null);
+  const [lightingTick, setLightingTick] = useState(0);
   if (!biomeBackgroundCacheRef.current) biomeBackgroundCacheRef.current = new BiomeBackgroundCache();
+
+  // Keep real-time/custom world lighting moving even when the champion simulation is paused.
+  useEffect(() => {
+    const id = window.setInterval(() => setLightingTick(tick => (tick + 1) % 1_000_000), 250);
+    return () => window.clearInterval(id);
+  }, []);
   const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 });
   const { agents, platforms, cameraPosition, tagEffects } = gameState;
 
@@ -270,14 +281,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     presentationCameraYRef.current = cameraCenterY;
 
     const visualWorldSeed = gameState.worldSeed ?? DEFAULT_BIOME_WORLD_SEED;
-    drawBiomeBackground(ctx, biomeBackgroundCacheRef.current, { cameraCenterX, cameraCenterY, cameraScale, cssWidth, cssHeight, worldSeed: visualWorldSeed });
+    const lighting = resolveWorldLighting(dayNightConfig, Date.now());
+    drawBiomeBackground(ctx, biomeBackgroundCacheRef.current, { cameraCenterX, cameraCenterY, cameraScale, cssWidth, cssHeight, worldSeed: visualWorldSeed, lighting });
 
     ctx.save();
     ctx.translate(cssWidth / 2, cssHeight / 2);
     ctx.scale(cameraScale, cameraScale);
     ctx.translate(-cameraCenterX, -cameraCenterY);
 
-    platforms.forEach(platform => drawPlatform(ctx, platform));
+    platforms.forEach(platform => drawPlatform(ctx, platform, lighting));
 
     if (showTrails) {
       agents.forEach(agent => drawAgentTrail(ctx, agent, gameState.gameTime));
@@ -292,7 +304,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     ctx.restore();
 
-    drawBiomeForeground(ctx, biomeBackgroundCacheRef.current, { cameraCenterX, cameraCenterY, cameraScale, cssWidth, cssHeight, worldSeed: visualWorldSeed });
+    drawBiomeForeground(ctx, biomeBackgroundCacheRef.current, { cameraCenterX, cameraCenterY, cameraScale, cssWidth, cssHeight, worldSeed: visualWorldSeed, lighting });
 
     if (showSenses) {
       // Screen-space legend: it stays readable and stationary while the world camera moves.
@@ -318,7 +330,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const debugBiome = getBiomeAtX(cameraCenterX, visualWorldSeed);
       ctx.fillStyle = '#7dd3fc';
       ctx.fillText(
-        `VISUAL BIOME · ${biomeLabel(debugBiome)} · region ${debugBiome.regionIndex} · cached chunks ${biomeBackgroundCacheRef.current.size}`,
+        `WORLD · ${biomeLabel(debugBiome)} · ${formatWorldHour(lighting.hour)} ${dayNightConfig.mode === 'realtime' ? 'real time' : `${dayNightConfig.cycleMinutes}m day`} · region ${debugBiome.regionIndex} · cache ${biomeBackgroundCacheRef.current.size}`,
         legendX + 7,
         legendY + 41
       );
@@ -326,7 +338,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Kept for the existing API. Capture is intentionally opt-in elsewhere; do not create
     // a data URL every animation frame because it would stall the visual simulation.
-  }, [gameState, canvasSize, showTrails, showSenses, cameraZoom]);
+  }, [gameState, canvasSize, showTrails, showSenses, cameraZoom, dayNightConfig, lightingTick]);
 
   return (
     <canvas

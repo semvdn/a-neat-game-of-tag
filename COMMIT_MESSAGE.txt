@@ -1,11 +1,11 @@
-Refine biome asset scaling and placement
+Add configurable day-night cycle and soften biome transitions
 
-- replace independent width/height randomization with aspect-locked motif sizing
-- use one uniform zoom/viewport scalar so assets cannot stretch across camera changes
-- distribute scenery through jittered slots instead of unconstrained random clumps
-- ground far landmarks behind ridge/foothill silhouettes
-- tighten built-environment baselines while allowing subtle natural terrain jitter
-- weight rare landmark variants such as windmills and chalets
-- reduce repetitive Spires and Rural Village density
-- regenerate renderer-derived biome scale and asset catalog sanity sheets
-- keep mechanical biome profiles and terrain generation unchanged
+- add a persisted real-time/custom presentation clock with 1 minute to 24 hour day periods
+- render smooth dawn, daylight, dusk, night, sun, moon, stars, scenery, and platform lighting
+- keep agents bright at night and keep the clock completely outside policy/physics state
+- widen biome transitions to 5,000 px and center them across region boundaries
+- use quintic easing for continuous visual and mechanical biome interpolation
+- progressively interleave scenery densities, landmark motifs, ambient effects, and platform materials
+- shift the biome field origin so world X=0 remains a stable Lowlands starting area
+- keep training biome offsets centered inside stable biome cores
+- bump visual, terrain, and world generation revisions and document the new systems

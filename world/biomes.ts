@@ -3,10 +3,14 @@ import type { BiomeId, BiomeSample, BiomeVisualStamp, PlatformState, TerrainRunt
 /** Visual RNG is intentionally independent from terrain/training RNG. */
 export const DEFAULT_BIOME_WORLD_SEED = 0x54414731;
 export const BIOME_REGION_LENGTH = 12_000;
-export const BIOME_TRANSITION_LENGTH = 2_000;
-export const BIOME_VISUAL_VERSION = 4;
-export const BIOME_TERRAIN_VERSION = 2;
-export const WORLD_GEN_VERSION = 2;
+// Transitions span both sides of a region boundary. 5,000 px gives each biome a long
+// stable core while letting palette, scenery and terrain mechanics hand off gradually.
+export const BIOME_TRANSITION_LENGTH = 5_000;
+// Offset keeps world X=0 just inside the stable Lowlands core instead of on a transition seam.
+export const BIOME_WORLD_ORIGIN_X = -BIOME_TRANSITION_LENGTH*.5;
+export const BIOME_VISUAL_VERSION = 5;
+export const BIOME_TERRAIN_VERSION = 3;
+export const WORLD_GEN_VERSION = 3;
 
 export interface BiomePalette {
   skyTop: string; skyBottom: string; haze: string; far: string; mid: string; near: string; detail: string;
@@ -72,7 +76,7 @@ export const VISUAL_BIOMES: Record<BiomeId, VisualBiomeDefinition> = {
 };
 
 const floorMod = (value:number, divisor:number) => ((value % divisor) + divisor) % divisor;
-const smoothstep01 = (value:number) => { const t=Math.max(0,Math.min(1,value)); return t*t*(3-2*t); };
+const smoothstep01 = (value:number) => { const t=Math.max(0,Math.min(1,value)); return t*t*t*(t*(t*6-15)+10); };
 function hash32(value:number):number { let x=value|0; x^=x>>>16; x=Math.imul(x,0x7feb352d); x^=x>>>15; x=Math.imul(x,0x846ca68b); x^=x>>>16; return x>>>0; }
 export function biomeHash(seed:number, namespace:number, index:number):number { return hash32((seed ^ Math.imul(namespace|0,0x9e3779b1) ^ Math.imul(index|0,0x85ebca6b))|0); }
 export function biomeRandom01(seed:number, namespace:number, index:number):number { return biomeHash(seed,namespace,index)/4294967296; }
@@ -85,11 +89,23 @@ function biomeCycle(seed:number):readonly BiomeId[] {
 }
 export function biomeForRegion(regionIndex:number, seed=DEFAULT_BIOME_WORLD_SEED):BiomeId { const cycle=biomeCycle(seed); return cycle[floorMod(regionIndex,cycle.length)]; }
 export function getBiomeAtX(worldX:number, seed=DEFAULT_BIOME_WORLD_SEED):BiomeSample {
-  const regionIndex=Math.floor(worldX/BIOME_REGION_LENGTH), regionStartX=regionIndex*BIOME_REGION_LENGTH;
-  const localX=worldX-regionStartX, primary=biomeForRegion(regionIndex,seed), regionT=localX/BIOME_REGION_LENGTH;
-  const transitionStart=BIOME_REGION_LENGTH-BIOME_TRANSITION_LENGTH;
-  if(localX<transitionStart) return {primary,secondary:null,blend:0,regionIndex,regionT};
-  return {primary,secondary:biomeForRegion(regionIndex+1,seed),blend:smoothstep01((localX-transitionStart)/BIOME_TRANSITION_LENGTH),regionIndex,regionT};
+  const regionIndex=Math.floor((worldX-BIOME_WORLD_ORIGIN_X)/BIOME_REGION_LENGTH), regionStartX=BIOME_WORLD_ORIGIN_X+regionIndex*BIOME_REGION_LENGTH;
+  const localX=worldX-regionStartX, current=biomeForRegion(regionIndex,seed), regionT=localX/BIOME_REGION_LENGTH;
+  const halfTransition=BIOME_TRANSITION_LENGTH*.5;
+
+  // Blend across BOTH sides of each boundary. At the boundary itself the two biomes are 50/50,
+  // so visual motifs, palette and mechanical terrain values all remain continuous as X advances.
+  if(localX<halfTransition){
+    const previous=biomeForRegion(regionIndex-1,seed);
+    const blend=smoothstep01((localX+halfTransition)/BIOME_TRANSITION_LENGTH);
+    return {primary:previous,secondary:current,blend,regionIndex,regionT};
+  }
+  if(localX>BIOME_REGION_LENGTH-halfTransition){
+    const next=biomeForRegion(regionIndex+1,seed);
+    const blend=smoothstep01((localX-(BIOME_REGION_LENGTH-halfTransition))/BIOME_TRANSITION_LENGTH);
+    return {primary:current,secondary:next,blend,regionIndex,regionT};
+  }
+  return {primary:current,secondary:null,blend:0,regionIndex,regionT};
 }
 export function toBiomeVisualStamp(sample:BiomeSample):BiomeVisualStamp { return {primary:sample.primary,secondary:sample.secondary,blend:sample.blend,regionIndex:sample.regionIndex}; }
 export function stampPlatformVisualBiome(platform:PlatformState, seed=DEFAULT_BIOME_WORLD_SEED):PlatformState { if(platform.visualBiome)return platform; const centerX=platform.position.x+platform.width*.5; return {...platform,visualBiome:toBiomeVisualStamp(getBiomeAtX(centerX,seed))}; }
@@ -127,5 +143,5 @@ export function terrainRuntimeForBiomeX(base:TerrainRuntimeConfig, worldX:number
 /** Deterministically spread training seeds across the complete mechanical-biome cycle. */
 export function trainingBiomeWorldOffset(seed:number):number {
   const regionIndex=biomeHash(seed>>>0,0x42494f4d,0)%ALL_BIOMES.length;
-  return regionIndex*BIOME_REGION_LENGTH;
+  return BIOME_WORLD_ORIGIN_X + regionIndex*BIOME_REGION_LENGTH + BIOME_REGION_LENGTH*.5;
 }

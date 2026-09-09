@@ -43,10 +43,20 @@ The build can succeed while external CSS is unavailable at runtime. Check the br
 
 The infinite world has a deterministic, stateless biome field driven by world X and `GameState.worldSeed`. Visual RNG is namespaced away from terrain/training RNG, and the 23-input policy interface contains no biome identity.
 
-Macro-regions are 12,000 world pixels with 2,000-pixel smooth transitions. Lowlands remains the gentle starting region; the other nine biomes are deterministically shuffled per world seed. Backgrounds use banded pixel skies plus far/mid/near parallax layers generated from small descriptor chunks under a 96-chunk LRU cap. Moving platforms capture a visual-biome stamp when first exposed to the visible world so their material does not change as they oscillate.
+Macro-regions are 12,000 world pixels with 5,000-pixel boundary-centered transitions. The field origin is shifted by half a transition so world X=0 begins in the stable Lowlands core rather than on a biome seam. Each handoff spans 2,500 px on either side of the region boundary using quintic easing, leaving a long stable biome core while making palette, scenery density, motif choice and terrain mechanics continuous. Lowlands remains the gentle starting region; the other nine biomes are deterministically shuffled per world seed. Backgrounds use banded pixel skies plus far/mid/near parallax layers generated from small descriptor chunks under a 96-chunk LRU cap. Moving platforms capture a visual-biome stamp when first exposed to the visible world so their material does not change as they oscillate.
 
 Mechanical biome profiles are now active in the terrain proposal layer. Width, gap, verticality, route persistence, branch likelihood/nesting, and moving-platform frequency/speed are blended through the same transition field. The existing overlap, swept-clearance, route-corridor and jump-reachability rules remain authoritative, so biome code cannot bypass terrain safety. A multi-platform branch captures the profile at its root and keeps it for the full structure.
 
 Training uses a deterministic seed-derived biome-world offset to distribute episodes across all ten mechanical biomes without exposing biome identity to the policy. Visible continuous play leaves the offset at zero so visual and mechanical geography are aligned. Cached training terrain keys include this offset.
 
 The crumble multiplier remains dormant until a real crumble mechanic and observable crumble state are implemented.
+
+
+## Day/night presentation clock
+
+The visible arena has a presentation-only world clock in `world/dayNight.ts`. It does not alter physics, policy inputs, fitness or terrain generation. `InfoPanel` exposes two persisted modes:
+
+- **Real time** follows the browser/device local clock.
+- **Custom cycle** maps a user-selected 1–1,440 real-minute period onto a full 24-hour world day. Switching into custom mode or changing its period re-anchors at the currently visible hour so the sky never jumps.
+
+`GameCanvas` refreshes lighting while the champion simulation is paused, so real-time mode still advances. Background sky bands, sun/moon/stars, parallax scenery, ambient details and platform materials receive the same smooth lighting state. Agent sprites and tag effects are deliberately not darkened, preserving gameplay readability at night.
