@@ -1,7 +1,7 @@
-Sharpen snowy peaks and resize city lanterns
+Remove background overlay seams
 
-- add narrow pointed summit components to broad snowy mountain massifs
-- deepen and brighten snow caps across upper far and mid mountain ridges
-- keep snow continuous across fixed world-space panorama nodes to avoid saw-tooth wobble
-- shrink city street lanterns to about one third of agent height with a slimmer pole and smaller glow
-- bump the visual biome cache version
+- replace segmented translucent panorama fills with one continuous gradient-filled silhouette per layer
+- remove the full ridge highlight stroke that created U-shaped contour lines through valleys
+- render snowy caps as contiguous ridge runs instead of one translucent quad per segment
+- replace tiled sky color columns with continuous horizontal biome gradients
+- replace tiled lower haze overlays with one continuous gradient fill

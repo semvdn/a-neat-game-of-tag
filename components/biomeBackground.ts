@@ -122,18 +122,36 @@ export class BiomeBackgroundCache {
   }
 }
 
+function spatialBiomeGradient(
+  ctx:CanvasRenderingContext2D,
+  o:BackgroundDrawOptions,
+  parallax:number,
+  colorForPalette:(palette:ReturnType<typeof paletteForBiomeSample>)=>string,
+  stopSpacingPx=120,
+):CanvasGradient{
+  const gradient=ctx.createLinearGradient(0,0,o.cssWidth,0);
+  const stops=Math.max(8,Math.ceil(o.cssWidth/stopSpacingPx));
+  for(let i=0;i<=stops;i++){
+    const t=i/stops;
+    const screenX=o.cssWidth*t;
+    const worldX=o.cameraCenterX+(screenX-o.cssWidth*.5)/Math.max(.0001,o.cameraScale*parallax);
+    const palette=lightBiomePalette(paletteForBiomeSample(getBiomeAtX(worldX,o.worldSeed)),o.lighting);
+    gradient.addColorStop(t,colorForPalette(palette));
+  }
+  return gradient;
+}
+
 function drawSkyBands(ctx:CanvasRenderingContext2D,o:BackgroundDrawOptions){
-  const {cssWidth,cssHeight,cameraCenterX,worldSeed,lighting,cameraScale}=o;
-  const bands=16, columns=Math.max(12,Math.ceil(cssWidth/80)), skyParallax=.16;
-  for(let col=0;col<columns;col++){
-    const x0=(cssWidth*col)/columns, x1=(cssWidth*(col+1))/columns;
-    const sampleWorldX=cameraCenterX+(((x0+x1)*.5)-cssWidth*.5)/Math.max(.0001,cameraScale*skyParallax);
-    const palette=lightBiomePalette(paletteForBiomeSample(getBiomeAtX(sampleWorldX,worldSeed)),lighting);
-    for(let i=0;i<bands;i++){
-      const t0=i/bands,t1=(i+1)/bands;
-      ctx.fillStyle=mixHex(palette.skyTop,palette.skyBottom,Math.round(t0*10)/10);
-      ctx.fillRect(Math.floor(x0),Math.floor(cssHeight*t0),Math.ceil(x1-x0)+1,Math.ceil(cssHeight*(t1-t0))+1);
-    }
+  const {cssWidth,cssHeight,cameraCenterX,worldSeed,lighting}=o;
+  const bands=16, skyParallax=.16;
+  // Each horizontal sky band is one continuous gradient. The previous implementation tiled the
+  // same band into many translucent/color-shifted columns, which made their boundaries visible
+  // once haze/panorama alpha was layered on top.
+  for(let i=0;i<bands;i++){
+    const t0=i/bands,t1=(i+1)/bands;
+    const mixAmount=Math.round(t0*10)/10;
+    ctx.fillStyle=spatialBiomeGradient(ctx,o,skyParallax,palette=>mixHex(palette.skyTop,palette.skyBottom,mixAmount),96);
+    ctx.fillRect(0,Math.floor(cssHeight*t0),cssWidth,Math.ceil(cssHeight*(t1-t0))+1);
   }
 
   // Celestial bodies follow world time instead of belonging to a particular biome.
@@ -820,73 +838,78 @@ function drawContinuousPanorama(ctx:CanvasRenderingContext2D,layer:'far'|'mid',o
     points.push({x,y:baselineY-maxHeight*units,worldX,units});
   }
 
-  // Fill one fixed-world segment at a time. Color is sampled at the segment midpoint so biome
-  // transitions remain geographically anchored as well.
-  for(let i=0;i<points.length-1;i++){
-    const a=points[i], b=points[i+1];
-    if(b.x<-80||a.x>cssWidth+80) continue;
-    const midSample=getBiomeAtX((a.worldX+b.worldX)*.5,worldSeed);
-    const midPalette=lightBiomePalette(paletteForBiomeSample(midSample),o.lighting);
-    ctx.fillStyle=layer==='far'?midPalette.far:midPalette.mid;
+  // Fill the entire silhouette ONCE with a spatial biome gradient. Drawing each world segment as
+  // a separate translucent polygon caused shared antialiased edges to double-blend or leave tiny
+  // gaps. Those artifacts appeared as U-shaped tonal seams following the landscape contour.
+  if(points.length>=2){
+    ctx.fillStyle=spatialBiomeGradient(
+      ctx,o,parallax,
+      palette=>layer==='far'?palette.far:palette.mid,
+      96,
+    );
     ctx.beginPath();
-    ctx.moveTo(snap(a.x),snap(cssHeight+2));
-    ctx.lineTo(snap(a.x),snap(a.y));
-    ctx.lineTo(snap(b.x),snap(b.y));
-    ctx.lineTo(snap(b.x),snap(cssHeight+2));
-    ctx.closePath(); ctx.fill();
+    ctx.moveTo(snap(points[0].x),snap(cssHeight+2));
+    ctx.lineTo(snap(points[0].x),snap(points[0].y));
+    for(let i=1;i<points.length;i++)ctx.lineTo(snap(points[i].x),snap(points[i].y));
+    ctx.lineTo(snap(points[points.length-1].x),snap(cssHeight+2));
+    ctx.closePath();
+    ctx.fill();
   }
 
-  // Subtle horizon highlight. Because the same fixed world nodes are reused every frame, this
-  // outline now slides rigidly with the landscape instead of being re-fitted to screen columns.
-  ctx.globalAlpha *= layer==='far' ? .28 : .22;
-  ctx.lineWidth=2;
-  for(let i=0;i<points.length-1;i++){
-    const a=points[i], b=points[i+1];
-    if(b.x<-80||a.x>cssWidth+80) continue;
-    const midSample=getBiomeAtX((a.worldX+b.worldX)*.5,worldSeed);
-    const biome=chooseBiome(midSample,.5);
-    const palette=lightBiomePalette(paletteForBiomeSample(midSample),o.lighting);
-    ctx.strokeStyle=biome==='snowy-mountains' ? rgba('#eef6ff',layer==='far'?.36:.28)
-      : biome==='city'||biome==='foundry'||biome==='spires'||biome==='ruins' ? rgba(palette.detail,.18)
-      : rgba(palette.detail,.12);
-    ctx.beginPath();ctx.moveTo(snap(a.x),snap(a.y));ctx.lineTo(snap(b.x),snap(b.y));ctx.stroke();
-    if(biome==='snowy-mountains'){
-      // A proper snow cap covers the upper massif rather than acting as a thin ridge highlight.
-      // It is still drawn as a continuous strip between fixed world nodes, so sharpening the
-      // mountains does not bring back the old saw-tooth / camera-wobble artifact.
-      const snowThreshold=layer==='far'?.34:.28;
-      const snowRange=layer==='far'?.42:.30;
-      const strength=Math.max(0,Math.min(1,((a.units+b.units)*.5-snowThreshold)/snowRange));
-      if(strength>.02){
-        const baseDepth=layer==='far'?.012:.008;
-        const extraDepth=layer==='far'?.034:.021;
-        const depth=Math.max(layer==='far'?5:3,cssHeight*(baseDepth+extraDepth*strength));
-        const daylightAlpha=layer==='far'?.34:.22;
-        const twilightAlpha=layer==='far'?.28:.18;
-        const nightAlpha=layer==='far'?.18:.12;
-        ctx.fillStyle=rgba('#f1f8ff',(daylightAlpha*o.lighting.daylight+twilightAlpha*o.lighting.twilight+nightAlpha*o.lighting.night)*(.48+.52*strength));
+  // Do not stroke the entire panorama contour. That old "horizon highlight" traced every valley
+  // and produced exactly the U-shaped line/seam pattern that became visible through the lighting
+  // overlays. The single-fill silhouette already has a clean, naturally contrasted edge.
+
+  // Snow is rendered as contiguous ridge runs rather than one translucent quad per segment. This
+  // removes another source of double-composited shared edges while preserving deeper snow on high
+  // alpine sections. Runs naturally start/stop where the world leaves the snowy biome or drops
+  // below the snow line.
+  const snowThreshold=layer==='far'?.34:.28;
+  const snowRange=layer==='far'?.42:.30;
+  const snowStrength=(index:number)=>{
+    const point=points[index];
+    const sample=getBiomeAtX(point.worldX,worldSeed);
+    const biome=chooseBiome(sample,.5);
+    if(biome!=='snowy-mountains')return 0;
+    return Math.max(0,Math.min(1,(point.units-snowThreshold)/snowRange));
+  };
+  const drawSnowRuns=(crown:boolean)=>{
+    let runStart=-1;
+    for(let i=0;i<=points.length;i++){
+      const strength=i<points.length?snowStrength(i):0;
+      const active=crown?strength>.62:strength>.02;
+      if(active&&runStart<0)runStart=i;
+      const closes=!active&&runStart>=0;
+      if(!closes)continue;
+      const runEnd=i-1;
+      if(runEnd-runStart>=1){
+        let avgStrength=0;
+        for(let j=runStart;j<=runEnd;j++)avgStrength+=snowStrength(j);
+        avgStrength/=Math.max(1,runEnd-runStart+1);
+        const daylightAlpha=crown?(layer==='far'?.26:.17):(layer==='far'?.34:.22);
+        const twilightAlpha=crown?(layer==='far'?.2:.13):(layer==='far'?.28:.18);
+        const nightAlpha=crown?(layer==='far'?.14:.09):(layer==='far'?.18:.12);
+        const lightingAlpha=daylightAlpha*o.lighting.daylight+twilightAlpha*o.lighting.twilight+nightAlpha*o.lighting.night;
+        ctx.fillStyle=rgba(crown?'#ffffff':'#f1f8ff',lightingAlpha*(crown?avgStrength:(.48+.52*avgStrength)));
         ctx.beginPath();
-        ctx.moveTo(snap(a.x),snap(a.y));
-        ctx.lineTo(snap(b.x),snap(b.y));
-        ctx.lineTo(snap(b.x),snap(b.y+depth));
-        ctx.lineTo(snap(a.x),snap(a.y+depth));
-        ctx.closePath();ctx.fill();
-
-        // A small brighter crown on the very highest sections makes the summit read snowy even
-        // against a pale daytime sky without adding separate triangular teeth.
-        if(strength>.62){
-          const crownDepth=Math.max(2,depth*.34);
-          ctx.fillStyle=rgba('#ffffff',(layer==='far'?.26:.17)*strength);
-          ctx.beginPath();
-          ctx.moveTo(snap(a.x),snap(a.y));
-          ctx.lineTo(snap(b.x),snap(b.y));
-          ctx.lineTo(snap(b.x),snap(b.y+crownDepth));
-          ctx.lineTo(snap(a.x),snap(a.y+crownDepth));
-          ctx.closePath();ctx.fill();
+        ctx.moveTo(snap(points[runStart].x),snap(points[runStart].y));
+        for(let j=runStart+1;j<=runEnd;j++)ctx.lineTo(snap(points[j].x),snap(points[j].y));
+        for(let j=runEnd;j>=runStart;j--){
+          const strengthAtPoint=snowStrength(j);
+          const baseDepth=layer==='far'?.012:.008;
+          const extraDepth=layer==='far'?.034:.021;
+          const fullDepth=Math.max(layer==='far'?5:3,cssHeight*(baseDepth+extraDepth*strengthAtPoint));
+          const depth=crown?Math.max(2,fullDepth*.34):fullDepth;
+          ctx.lineTo(snap(points[j].x),snap(points[j].y+depth));
         }
+        ctx.closePath();ctx.fill();
       }
+      runStart=-1;
     }
-  }
+  };
+  drawSnowRuns(false);
+  drawSnowRuns(true);
+
   ctx.restore();
 }
 
@@ -964,14 +987,10 @@ export function drawBiomeBackground(ctx:CanvasRenderingContext2D,cache:BiomeBack
   drawLandmarkLayer(ctx,cache,'mid',o);
   drawLandmarkLayer(ctx,cache,'near',o);
   drawAmbientDetails(ctx,o);
-  const hazeColumns=Math.max(8,Math.ceil(o.cssWidth/120));
-  for(let i=0;i<hazeColumns;i++){
-    const x0=(o.cssWidth*i)/hazeColumns, x1=(o.cssWidth*(i+1))/hazeColumns;
-    const wx=o.cameraCenterX+(((x0+x1)*.5)-o.cssWidth*.5)/Math.max(.0001,o.cameraScale*.22);
-    const p=lightBiomePalette(paletteForBiomeSample(getBiomeAtX(wx,o.worldSeed)),o.lighting);
-    ctx.fillStyle=rgba(p.haze,.045);
-    ctx.fillRect(x0,o.cssHeight*.42,Math.ceil(x1-x0)+1,o.cssHeight*.58);
-  }
+  // Lower-screen atmospheric tint is one continuous gradient. This used to be a row of wide
+  // translucent rectangles and could reveal vertical seams after several alpha layers overlapped.
+  ctx.fillStyle=spatialBiomeGradient(ctx,o,.22,palette=>rgba(palette.haze,.045),90);
+  ctx.fillRect(0,o.cssHeight*.42,o.cssWidth,o.cssHeight*.58);
   ctx.restore();
 }
 
