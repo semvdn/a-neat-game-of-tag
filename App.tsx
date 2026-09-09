@@ -63,6 +63,12 @@ import { DEFAULT_TERRAIN_VARIETY_CONFIG, continuousTerrainRuntime, sanitizeTerra
 import { DEFAULT_BIOME_WORLD_SEED, stampPlatformVisualBiome } from './world/biomes';
 import type { DayNightConfig } from './world/dayNight';
 import { DAY_NIGHT_STORAGE_KEY, createDefaultDayNightConfig, resolveWorldHour, sanitizeDayNightConfig } from './world/dayNight';
+import {
+  getMaxVisualAgentSeparation,
+  getVisualGroupSeparationRecovery,
+  VISUAL_SEPARATION_FAILSAFE_DISTANCE_PX,
+  VISUAL_SEPARATION_FAILSAFE_DURATION_MS,
+} from './learning/visualFailsafe';
 
 // Champion trails are visual telemetry only. They are sampled by distance but aged by
 // simulation time, so a stationary agent's old path still fades away.
@@ -266,6 +272,7 @@ export const App: React.FC = () => {
   const totalJumpsRef = useRef(0);
   const visualTagsRef = useRef(0);
   const visualFallsRef = useRef(0);
+  const visualSeparationFailsafeMsRef = useRef(0);
 
   const mainContainerRef = useRef<HTMLDivElement>(null);
   const platformIdCounter = useRef(10);
@@ -418,6 +425,7 @@ export const App: React.FC = () => {
     };
     recentSurvivalTimes.current = [];
     recentTimesToTag.current = [];
+    visualSeparationFailsafeMsRef.current = 0;
     setGameState(newGameState);
 
     // Seed initial baseline telemetry point
@@ -1021,6 +1029,55 @@ export const App: React.FC = () => {
           }
         }
 
+        // 4b. Visual group-separation fail-safe. Normal chase escape recovery above handles a
+        // Chaser that loses every Runner; this watchdog is deliberately broader and catches ANY
+        // pair of visual agents that remains pathologically far apart for several simulated seconds.
+        // It is presentation-only and never runs in headless training.
+        const widestVisualPair = getMaxVisualAgentSeparation(newState.agents);
+        if (widestVisualPair && widestVisualPair.distance > VISUAL_SEPARATION_FAILSAFE_DISTANCE_PX) {
+          visualSeparationFailsafeMsRef.current += deltaTime;
+        } else {
+          visualSeparationFailsafeMsRef.current = 0;
+        }
+
+        if (visualSeparationFailsafeMsRef.current >= VISUAL_SEPARATION_FAILSAFE_DURATION_MS) {
+          const groupRecovery = getVisualGroupSeparationRecovery(newState.agents, newState.platforms);
+          // If no suitable platform exists on this exact frame, remain armed and retry next tick
+          // rather than waiting another full timeout interval.
+          visualSeparationFailsafeMsRef.current = groupRecovery ? 0 : VISUAL_SEPARATION_FAILSAFE_DURATION_MS;
+          if (groupRecovery) {
+            // Teleporting invalidates recurrent visual-policy state. Reset both role models so the
+            // next decision is based only on the recovered scene rather than pre-teleport memory.
+            chaserAgent.current?.resetState();
+            evaderAgent.current?.resetState();
+            const placementById = new Map(groupRecovery.placements.map(placement => [placement.agentId, placement]));
+            newState.agents = newState.agents.map(agent => {
+              const placement = placementById.get(agent.id);
+              if (!placement) return agent;
+              const nextPosition = { ...placement.position };
+              return {
+                ...agent,
+                position: nextPosition,
+                velocity: { x: 0, y: 0 },
+                acceleration: { x: 0, y: 0 },
+                isOnGround: true,
+                supportingAgentId: null,
+                cooldownTimer: Math.max(agent.cooldownTimer || 0, NEW_CHASER_TAG_DELAY_MS),
+                lastAction: 'idle',
+                trajectory: [{ ...nextPosition, timestamp: newState.gameTime }],
+                lastPlatformId: placement.platformId,
+                activeRoutePath: placement.activeRoutePath,
+                positionAtLastTakeoff: { ...nextPosition },
+                energyAtLastTakeoff: agent.energy,
+                jumpArmed: true,
+              };
+            });
+            // Re-anchor the simulation camera near the recovery platform immediately. The separate
+            // presentation camera will then ease naturally around the regrouped bodies.
+            newState.cameraPosition.x = groupRecovery.platformCenterX - viewportSize.width * 0.5;
+          }
+        }
+
         // 5. Tag Detection & role swap through the shared visual-game rule.
         const tagTransition = resolveTagSwap(newState.agents);
         if (tagTransition) {
@@ -1180,6 +1237,7 @@ export const App: React.FC = () => {
     recentTimesToTag.current = [];
     visualTagsRef.current = 0;
     visualFallsRef.current = 0;
+    visualSeparationFailsafeMsRef.current = 0;
     actionCountsRef.current = { all: {}, chaser: {}, evader: {} };
     visualStepAccumulatorRef.current = 0;
     platformIdCounter.current = 10;

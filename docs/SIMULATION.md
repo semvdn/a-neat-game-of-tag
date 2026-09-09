@@ -377,3 +377,17 @@ Background evolution now has two safeguards for long unattended runs:
 The training header shows `awake` while the screen wake lock is active. A `↻N` badge and the diagnostics panel show how many stalled evaluator batches were automatically recovered. Recovery data is also included in the analysis JSON export.
 
 Browsers cannot keep JavaScript running if the operating system fully suspends/hibernates the computer or the browser process is explicitly discarded, but the trainer will recover outstanding evaluator work when execution resumes.
+
+## Visual separation fail-safe
+
+The persistent champion/visual arena has a presentation-only separation watchdog that is not used by
+headless training. If the maximum center-to-center distance between any two visual agents remains above
+1,800 world pixels for 5 simulated seconds, the showcase is considered fragmented.
+
+The fail-safe computes the midpoint of the widest pair, selects a sufficiently wide nearby platform
+(preferring static platforms), and regroups every agent there in their existing left-to-right order.
+Roles, Elo, energy, and timers are preserved; velocity/acceleration and recurrent visual-policy state
+are reset, trails are restarted, and short tag protection prevents the teleport itself from creating a
+free tag. If no suitable platform exists at timeout, the watchdog remains armed and retries on later
+visual ticks. This is strictly a visual recovery mechanism and does not alter training fitness or
+training episode termination.

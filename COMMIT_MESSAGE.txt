@@ -1,6 +1,9 @@
-Add a little more daytime sunlight
+Add visual group-separation fail-safe
 
-- increase daytime palette lift across sky, haze, scenery and platform materials
-- add a subtle warm solar tint during daylight without changing dawn/dusk timing
-- make the daytime sun disc slightly stronger
-- preserve night and twilight contrast and keep lighting seam-free
+- watch the maximum distance between any pair of visual agents
+- arm recovery after 1,800 px of separation persists for 5 simulated seconds
+- regroup all visual agents on a safe platform nearest the widest pair midpoint
+- preserve roles, energy and route state while clearing motion and recurrent visual-policy memory
+- add short post-teleport tag protection and re-anchor the visual simulation camera
+- retry immediately when no suitable recovery platform exists at the timeout frame
+- keep the watchdog completely outside headless training and fitness logic
