@@ -499,13 +499,24 @@ function drawCity(
   }
 
   ctx.fillStyle = rgba(d, layer === 'far' ? 0.19 : 0.38);
-  const cols = Math.max(1, Math.floor(buildingW / 16));
-  const rows = Math.max(1, Math.floor(buildingH / 20));
+  // Fixed normalized window layouts per building variant. The old grid derived row/column counts
+  // from screen-space width/height, so tiny camera-zoom changes could add/remove windows and make
+  // the facade look animated. Counts now stay constant; the entire facade scales as one object.
+  const cols = kind === 1 ? 2 : kind === 2 ? 4 : 3;
+  const rows = kind === 2 ? 2 : kind === 4 ? 3 : 4;
+  const winW = Math.max(2, snap(Math.min(4, buildingW * 0.055), 1));
+  const winH = Math.max(2, snap(Math.min(5, buildingH * 0.055), 1));
   for (let yy = 0; yy < rows; yy++) {
     for (let xx = 0; xx < cols; xx++) {
-      if ((xx + yy + v) % 3 !== 0) {
-        ctx.fillRect(snap(bx + 6 + xx * 15), snap(b - buildingH + 8 + yy * 19), 3, 4);
-      }
+      if ((xx + yy + v) % 3 === 0) continue;
+      const tx = 0.17 + (0.66 * xx) / (cols - 1);
+      const ty = 0.18 + (0.62 * yy) / (rows - 1);
+      ctx.fillRect(
+        snap(bx + buildingW * tx - winW * 0.5),
+        snap(b - buildingH + buildingH * ty - winH * 0.5),
+        winW,
+        winH,
+      );
     }
   }
 }
@@ -708,11 +719,13 @@ function drawPlacedFeature(
   layer:Layer,
   flipX=false,
 ){
-  if(!flipX){drawFeatureForBiome(ctx,biome,centerX-width*.5,baseY,width,height,color,detail,variant,layer);return;}
+  // Render the whole motif in a local pixel coordinate system, then translate that rigid image
+  // into screen space. Previously every sub-rectangle re-snapped its own absolute screen X/Y,
+  // which let windows/details cross pixel thresholds on different frames and appear to crawl.
   ctx.save();
-  ctx.translate(centerX*2,0);
-  ctx.scale(-1,1);
-  drawFeatureForBiome(ctx,biome,centerX-width*.5,baseY,width,height,color,detail,variant,layer);
+  ctx.translate(snap(centerX,1), snap(baseY,1));
+  if(flipX) ctx.scale(-1,1);
+  drawFeatureForBiome(ctx,biome,-width*.5,0,width,height,color,detail,variant,layer);
   ctx.restore();
 }
 
@@ -869,24 +882,40 @@ function drawContinuousPanorama(ctx:CanvasRenderingContext2D,layer:'far'|'mid',o
   const parallax=parallaxByLayer[layer],{cameraCenterX,cameraCenterY,cameraScale,cssWidth,cssHeight,worldSeed}=o;
   const verticalParallax=layer==='far'?.045:.09,baselineRatio=layer==='far'?.72:.79;
   const baselineY=cssHeight*baselineRatio+(WORLD_REF_HEIGHT*.64-cameraCenterY)*cameraScale*verticalParallax;
-  const segments=Math.max(28,Math.ceil(cssWidth/24));
-  const maxHeight=panoramaHeightScalePx(layer,cssHeight);
   const fitScale=Math.max(.0001,Math.min(cssWidth/1280,cssHeight/720));
   const normalizedZoom=cameraScale/fitScale;
+  // Preserve silhouette proportions when pair framing zooms out. Previously only panorama X
+  // compressed with cameraScale while Y stayed tied to viewport height, visibly distorting peaks.
+  const panoramaZoom=Math.max(.45,Math.min(1.8,normalizedZoom));
+  const maxHeight=panoramaHeightScalePx(layer,cssHeight)*panoramaZoom;
   const alpha=panoramaAlphaForLayer(layer,normalizedZoom);
+
+  // IMPORTANT: sample the panorama on a FIXED WORLD-SPACE lattice. A previous screen-space
+  // tessellation sampled different world X values every time the camera moved, so sharp mountain
+  // ridges were linearly reconstructed from a changing set of points and appeared to wave/breathe.
+  // Fixed world nodes only translate under parallax; their heights never change with camera X.
+  const worldStep=layer==='far'?180:110;
+  const halfVisibleWorld=cssWidth*.55/Math.max(.0001,cameraScale*parallax);
+  const minWorldX=cameraCenterX-halfVisibleWorld-worldStep*2;
+  const maxWorldX=cameraCenterX+halfVisibleWorld+worldStep*2;
+  const firstNode=Math.floor(minWorldX/worldStep)*worldStep;
+
   ctx.save(); ctx.globalAlpha*=alpha;
-  type Point={x:number;y:number;color:string;detail:string;sample:BiomeSample;worldX:number};
+  type Point={x:number;y:number;worldX:number};
   const points:Point[]=[];
-  for(let i=0;i<=segments;i++){
-    const x=(cssWidth*i)/segments;
-    const worldX=cameraCenterX+(x-cssWidth*.5)/Math.max(.0001,cameraScale*parallax);
+  for(let worldX=firstNode;worldX<=maxWorldX+worldStep;worldX+=worldStep){
     const sample=getBiomeAtX(worldX,worldSeed);
-    const palette=lightBiomePalette(paletteForBiomeSample(sample),o.lighting);
     const units=mixedPanoramaUnits(sample,layer,worldX,worldSeed);
-    points.push({x,y:baselineY-maxHeight*units,color:layer==='far'?palette.far:palette.mid,detail:palette.detail,sample,worldX});
+    const x=cssWidth*.5+(worldX-cameraCenterX)*cameraScale*parallax;
+    points.push({x,y:baselineY-maxHeight*units,worldX});
   }
+
+  // Fill one fixed-world segment at a time. Color is sampled at the segment midpoint so biome
+  // transitions remain geographically anchored as well.
   for(let i=0;i<points.length-1;i++){
-    const a=points[i], b=points[i+1], midSample=getBiomeAtX((a.worldX+b.worldX)*.5,worldSeed);
+    const a=points[i], b=points[i+1];
+    if(b.x<-80||a.x>cssWidth+80) continue;
+    const midSample=getBiomeAtX((a.worldX+b.worldX)*.5,worldSeed);
     const midPalette=lightBiomePalette(paletteForBiomeSample(midSample),o.lighting);
     ctx.fillStyle=layer==='far'?midPalette.far:midPalette.mid;
     ctx.beginPath();
@@ -896,27 +925,31 @@ function drawContinuousPanorama(ctx:CanvasRenderingContext2D,layer:'far'|'mid',o
     ctx.lineTo(snap(b.x),snap(cssHeight+2));
     ctx.closePath(); ctx.fill();
   }
-  // subtle horizon highlight
+
+  // Subtle horizon highlight. Because the same fixed world nodes are reused every frame, this
+  // outline now slides rigidly with the landscape instead of being re-fitted to screen columns.
   ctx.globalAlpha *= layer==='far' ? .28 : .22;
   ctx.lineWidth=2;
   for(let i=0;i<points.length-1;i++){
-    const a=points[i], b=points[i+1], midSample=getBiomeAtX((a.worldX+b.worldX)*.5,worldSeed);
-    const biome=chooseBiome(midSample, .5);
+    const a=points[i], b=points[i+1];
+    if(b.x<-80||a.x>cssWidth+80) continue;
+    const midSample=getBiomeAtX((a.worldX+b.worldX)*.5,worldSeed);
+    const biome=chooseBiome(midSample,.5);
     const palette=lightBiomePalette(paletteForBiomeSample(midSample),o.lighting);
-    ctx.strokeStyle=biome==='snowy-mountains' ? rgba('#eef6ff', layer==='far'?.36:.28)
+    ctx.strokeStyle=biome==='snowy-mountains' ? rgba('#eef6ff',layer==='far'?.36:.28)
       : biome==='city'||biome==='foundry'||biome==='spires'||biome==='ruins' ? rgba(palette.detail,.18)
       : rgba(palette.detail,.12);
-    ctx.beginPath(); ctx.moveTo(snap(a.x),snap(a.y)); ctx.lineTo(snap(b.x),snap(b.y)); ctx.stroke();
-    if(biome==='snowy-mountains' && layer==='far'){
-      const capHeight=Math.max(4, (cssHeight*.018));
-      ctx.fillStyle=rgba('#ecf6ff', .16*o.lighting.daylight + .22*o.lighting.twilight + .12*o.lighting.night);
+    ctx.beginPath();ctx.moveTo(snap(a.x),snap(a.y));ctx.lineTo(snap(b.x),snap(b.y));ctx.stroke();
+    if(biome==='snowy-mountains'&&layer==='far'){
+      const capHeight=Math.max(4,cssHeight*.018);
+      ctx.fillStyle=rgba('#ecf6ff',.16*o.lighting.daylight+.22*o.lighting.twilight+.12*o.lighting.night);
       ctx.beginPath();
       ctx.moveTo(snap(a.x),snap(a.y));
       ctx.lineTo(snap(lerp(a.x,b.x,.5)),snap(Math.min(a.y,b.y)-capHeight));
       ctx.lineTo(snap(b.x),snap(b.y));
       ctx.lineTo(snap(b.x),snap(b.y+capHeight*.35));
       ctx.lineTo(snap(a.x),snap(a.y+capHeight*.35));
-      ctx.closePath(); ctx.fill();
+      ctx.closePath();ctx.fill();
     }
   }
   ctx.restore();

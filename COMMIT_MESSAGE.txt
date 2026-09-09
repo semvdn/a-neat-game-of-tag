@@ -1,6 +1,7 @@
-Randomize platform decoration placement
+Stabilize panorama and city landmark rendering
 
-- let single biome decorations appear anywhere across the safe platform span
-- shuffle broad placement zones for multi-decoration platforms
-- preserve deterministic placement per platform/world while avoiding center bias
-- retry deterministic alternate positions when props would overlap visually
+- sample continuous panorama silhouettes on a fixed world-space lattice
+- preserve panorama vertical proportions during automatic camera zoom changes
+- render landmark motifs in local pixel coordinates and translate them as rigid objects
+- use fixed normalized city window layouts so facade details do not crawl or pop with zoom
+- bump the visual biome cache version without changing terrain or simulation behavior
