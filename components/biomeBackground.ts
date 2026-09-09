@@ -691,13 +691,20 @@ function snowyMassifUnits(layer:'far'|'mid', worldX:number, seed:number){
   for(let index=baseIndex-2; index<=baseIndex+2; index++){
     const jitter=(biomeRandom01(seed,namespace^0x31,index)-.5)*spacing*.28;
     const center=index*spacing+spacing*.5+jitter;
-    const halfWidth=spacing*(.46+biomeRandom01(seed,namespace^0x32,index)*.18);
+    const halfWidth=spacing*(.48+biomeRandom01(seed,namespace^0x32,index)*.18);
     const distance=Math.abs(worldX-center)/halfWidth;
     if(distance>=1) continue;
+
+    // Keep a broad massif base but add a much narrower cusp-like summit. The previous pure
+    // polynomial bump made every peak read as a rounded hill. The absolute-distance summit keeps
+    // the peak world-anchored while giving the upper silhouette a sharper alpine point.
     const shoulder=1-distance*distance;
-    const bump=shoulder*shoulder;
+    const broadMass=shoulder*shoulder;
+    const summitWidth=.34+biomeRandom01(seed,namespace^0x36,index)*.12;
+    const summitDistance=distance/summitWidth;
+    const summit=summitDistance<1 ? Math.pow(1-summitDistance,.72) : 0;
     const height=(layer==='far'?.46:.24)+(layer==='far'?.28:.16)*biomeRandom01(seed,namespace^0x33,index);
-    const value=bump*height;
+    const value=broadMass*height*.78 + summit*height*.42;
     if(value>dominant){ secondary=dominant; dominant=value; }
     else if(value>secondary){ secondary=value; }
   }
@@ -843,20 +850,40 @@ function drawContinuousPanorama(ctx:CanvasRenderingContext2D,layer:'far'|'mid',o
       : biome==='city'||biome==='foundry'||biome==='spires'||biome==='ruins' ? rgba(palette.detail,.18)
       : rgba(palette.detail,.12);
     ctx.beginPath();ctx.moveTo(snap(a.x),snap(a.y));ctx.lineTo(snap(b.x),snap(b.y));ctx.stroke();
-    if(biome==='snowy-mountains'&&layer==='far'){
-      // Snow follows only the upper part of a broad massif. The old renderer added a tiny
-      // triangle above EVERY panorama segment, creating a repeated saw-tooth crown.
-      const snowThreshold=.43;
-      const strength=Math.max(0,Math.min(1,((a.units+b.units)*.5-snowThreshold)/.28));
+    if(biome==='snowy-mountains'){
+      // A proper snow cap covers the upper massif rather than acting as a thin ridge highlight.
+      // It is still drawn as a continuous strip between fixed world nodes, so sharpening the
+      // mountains does not bring back the old saw-tooth / camera-wobble artifact.
+      const snowThreshold=layer==='far'?.34:.28;
+      const snowRange=layer==='far'?.42:.30;
+      const strength=Math.max(0,Math.min(1,((a.units+b.units)*.5-snowThreshold)/snowRange));
       if(strength>.02){
-        const depth=Math.max(3,cssHeight*(.007+.014*strength));
-        ctx.fillStyle=rgba('#edf7ff',(.14*o.lighting.daylight+.18*o.lighting.twilight+.1*o.lighting.night)*strength);
+        const baseDepth=layer==='far'?.012:.008;
+        const extraDepth=layer==='far'?.034:.021;
+        const depth=Math.max(layer==='far'?5:3,cssHeight*(baseDepth+extraDepth*strength));
+        const daylightAlpha=layer==='far'?.34:.22;
+        const twilightAlpha=layer==='far'?.28:.18;
+        const nightAlpha=layer==='far'?.18:.12;
+        ctx.fillStyle=rgba('#f1f8ff',(daylightAlpha*o.lighting.daylight+twilightAlpha*o.lighting.twilight+nightAlpha*o.lighting.night)*(.48+.52*strength));
         ctx.beginPath();
         ctx.moveTo(snap(a.x),snap(a.y));
         ctx.lineTo(snap(b.x),snap(b.y));
         ctx.lineTo(snap(b.x),snap(b.y+depth));
         ctx.lineTo(snap(a.x),snap(a.y+depth));
         ctx.closePath();ctx.fill();
+
+        // A small brighter crown on the very highest sections makes the summit read snowy even
+        // against a pale daytime sky without adding separate triangular teeth.
+        if(strength>.62){
+          const crownDepth=Math.max(2,depth*.34);
+          ctx.fillStyle=rgba('#ffffff',(layer==='far'?.26:.17)*strength);
+          ctx.beginPath();
+          ctx.moveTo(snap(a.x),snap(a.y));
+          ctx.lineTo(snap(b.x),snap(b.y));
+          ctx.lineTo(snap(b.x),snap(b.y+crownDepth));
+          ctx.lineTo(snap(a.x),snap(a.y+crownDepth));
+          ctx.closePath();ctx.fill();
+        }
       }
     }
   }

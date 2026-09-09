@@ -1,8 +1,7 @@
-Refine biome landmark diversity and village spacing
+Sharpen snowy peaks and resize city lanterns
 
-- make Rural Village landmarks sparser and bias placement toward orchards, hay and hedgerows
-- add multiple cottage, farmhouse, barn, stable, chapel and rare windmill silhouettes
-- expand Spires, Foundry, Ruins, City, Forest, Desert, Snow, Lowlands and Swamp landmark vocabularies
-- use biome-specific landmark count bounds and scale ranges instead of one universal placement grammar
-- thin discrete landmark density where continuous panoramas already carry strong biome identity
-- bump the visual biome cache version and add refreshed asset/scene audit sheets
+- add narrow pointed summit components to broad snowy mountain massifs
+- deepen and brighten snow caps across upper far and mid mountain ridges
+- keep snow continuous across fixed world-space panorama nodes to avoid saw-tooth wobble
+- shrink city street lanterns to about one third of agent height with a slimmer pole and smaller glow
+- bump the visual biome cache version

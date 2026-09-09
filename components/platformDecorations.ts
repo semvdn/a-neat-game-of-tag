@@ -131,25 +131,27 @@ function mushroom(ctx: CanvasRenderingContext2D, x: number, y: number, palette: 
 }
 
 function streetLamp(ctx: CanvasRenderingContext2D, x: number, y: number, palette: BiomePalette, lighting?: WorldLightingState) {
+  // Platform props should dress the world, not compete with a 40×60 agent. Keep the lantern at
+  // roughly one third of agent height and use a slim 2 px pole.
   const metal = mixHex(palette.platformShadow, '#20252b', 0.32);
   ctx.fillStyle = metal;
-  ctx.fillRect(x + 5, y - 29, 3, 29);
-  ctx.fillRect(x + 3, y - 30, 10, 3);
-  ctx.fillRect(x + 10, y - 29, 3, 5);
+  ctx.fillRect(x + 4, y - 20, 2, 20);
+  ctx.fillRect(x + 3, y - 21, 7, 2);
+  ctx.fillRect(x + 8, y - 20, 2, 4);
   const night = lighting?.night ?? 0;
   const twilight = lighting?.twilight ?? 0;
   if (night + twilight * 0.5 > 0.12) {
     ctx.save();
-    ctx.globalAlpha *= Math.min(0.56, night * 0.52 + twilight * 0.2);
+    ctx.globalAlpha *= Math.min(0.48, night * 0.44 + twilight * 0.18);
     ctx.fillStyle = '#ffd875';
-    ctx.fillRect(x + 7, y - 28, 10, 8);
+    ctx.fillRect(x + 7, y - 19, 7, 6);
     ctx.globalAlpha = 1;
     ctx.fillStyle = '#ffe7a4';
-    ctx.fillRect(x + 10, y - 27, 4, 4);
+    ctx.fillRect(x + 9, y - 18, 3, 3);
     ctx.restore();
   } else {
     ctx.fillStyle = mixHex(palette.detail, '#d7bd76', 0.35);
-    ctx.fillRect(x + 10, y - 27, 4, 4);
+    ctx.fillRect(x + 9, y - 18, 3, 3);
   }
 }
 
