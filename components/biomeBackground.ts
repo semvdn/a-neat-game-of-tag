@@ -22,6 +22,21 @@ const densityFor=(biome:BiomeId,layer:Layer)=>{const d=VISUAL_BIOMES[biome];retu
 const snap=(v:number,g=2)=>Math.round(v/g)*g;
 function rgba(hex:string,alpha:number){const h=hex.replace('#','');const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);return `rgba(${r}, ${g}, ${b}, ${alpha})`;}
 
+const midPanoramaVisibilityForBiome=(biome:BiomeId):number=>{
+  // Organic green biomes already have a far landscape plus mid/near landmark layers. A second
+  // translucent continuous silhouette sat ~1/4 viewport-height above the bottom and its rounded
+  // valleys read as U-shaped "overlay seams" rather than terrain. Remove that redundant layer in
+  // these biomes while keeping structural/desert/snow panoramas intact.
+  if(biome==='lowlands'||biome==='temperate-forest'||biome==='rural-village'||biome==='swamp')return 0;
+  return 1;
+};
+
+const midPanoramaVisibilityForSample=(sample:BiomeSample):number=>{
+  const a=midPanoramaVisibilityForBiome(sample.primary);
+  if(!sample.secondary)return a;
+  return lerp(a,midPanoramaVisibilityForBiome(sample.secondary),sample.blend);
+};
+
 function visualVariantForBiome(biome:BiomeId,layer:Layer,hash:number):number{
   // Weighted vocabularies keep signature landmarks rare and prevent modulo aliases from making
   // supposedly different variants collapse onto the same silhouette.
@@ -126,7 +141,7 @@ function spatialBiomeGradient(
   ctx:CanvasRenderingContext2D,
   o:BackgroundDrawOptions,
   parallax:number,
-  colorForPalette:(palette:ReturnType<typeof paletteForBiomeSample>)=>string,
+  colorForPalette:(palette:ReturnType<typeof paletteForBiomeSample>,sample:BiomeSample)=>string,
   stopSpacingPx=120,
 ):CanvasGradient{
   const gradient=ctx.createLinearGradient(0,0,o.cssWidth,0);
@@ -135,8 +150,9 @@ function spatialBiomeGradient(
     const t=i/stops;
     const screenX=o.cssWidth*t;
     const worldX=o.cameraCenterX+(screenX-o.cssWidth*.5)/Math.max(.0001,o.cameraScale*parallax);
-    const palette=lightBiomePalette(paletteForBiomeSample(getBiomeAtX(worldX,o.worldSeed)),o.lighting);
-    gradient.addColorStop(t,colorForPalette(palette));
+    const sample=getBiomeAtX(worldX,o.worldSeed);
+    const palette=lightBiomePalette(paletteForBiomeSample(sample),o.lighting);
+    gradient.addColorStop(t,colorForPalette(palette,sample));
   }
   return gradient;
 }
@@ -844,7 +860,11 @@ function drawContinuousPanorama(ctx:CanvasRenderingContext2D,layer:'far'|'mid',o
   if(points.length>=2){
     ctx.fillStyle=spatialBiomeGradient(
       ctx,o,parallax,
-      palette=>layer==='far'?palette.far:palette.mid,
+      (palette,sample)=>{
+        if(layer==='far')return palette.far;
+        const visibility=midPanoramaVisibilityForSample(sample);
+        return visibility>=.999 ? palette.mid : rgba(palette.mid,visibility);
+      },
       96,
     );
     ctx.beginPath();
@@ -1139,9 +1159,50 @@ function drawAmbientDetailsForBiome(ctx:CanvasRenderingContext2D,o:BackgroundDra
   } else if(biome==='temperate-forest'){
     ctx.fillStyle=rgba(p.detail,.12);for(let i=0;i<8*countFactor;i++){const wx=xMin+biomeRandom01(o.worldSeed,0x4c454146,i+sample.regionIndex*17)*span;const x=o.cssWidth*.5+(wx-o.cameraCenterX)*o.cameraScale*.46;const y=o.cssHeight*(.3+biomeRandom01(o.worldSeed,0x4c454159,i+sample.regionIndex*17)*.42);ctx.fillRect(snap(x),snap(y),3,2);}
   } else if(biome==='rural-village'){
-    ctx.fillStyle=rgba(p.detail,.12);const y=snap(o.cssHeight*.83);for(let x=28;x<o.cssWidth;x+=164){ctx.fillRect(x,y,54,2);ctx.fillRect(x,y-11,3,14);ctx.fillRect(x+51,y-11,3,14);}
+    // Fence fragments are world-anchored and local to this sample slice. The previous version
+    // redrew a full-screen fence for every biome sample, which accumulated into a fixed overlay.
+    const parallax=.52;
+    const firstPost=Math.floor(xMin/260)*260;
+    ctx.fillStyle=rgba(p.detail,.38);
+    for(let wx=firstPost;wx<=xMax+260;wx+=260){
+      if(wx<xMin-40||wx>xMax+40)continue;
+      const x=o.cssWidth*.5+(wx-o.cameraCenterX)*o.cameraScale*parallax;
+      const nextX=o.cssWidth*.5+(wx+180-o.cameraCenterX)*o.cameraScale*parallax;
+      const y=snap(o.cssHeight*.83);
+      ctx.fillRect(snap(x),y-11,3,14);
+      ctx.fillRect(snap(x),y,snap(Math.max(8,nextX-x)),2);
+    }
   } else if(biome==='swamp'){
-    ctx.fillStyle=rgba(p.haze,.11);ctx.fillRect(0,snap(o.cssHeight*.51),o.cssWidth,16);ctx.fillRect(0,snap(o.cssHeight*.69),o.cssWidth,10);ctx.fillStyle=rgba(p.detail,.16);for(let x=14;x<o.cssWidth;x+=58){ctx.fillRect(x,snap(o.cssHeight*.83+(x%4)*2),22,2);if((x/58)%2>.35){ctx.fillRect(x+5,snap(o.cssHeight*.77),2,24);ctx.fillRect(x+9,snap(o.cssHeight*.79),2,18);}}
+    // Swamp detail used to draw two full-width translucent haze bands plus the same reed pattern
+    // once per sampled world slice. That accumulated into a distinct fixed-screen overlay pattern.
+    // Keep the wetland texture sparse, local and world-anchored instead.
+    const parallax=.48;
+    const firstGlint=Math.floor(xMin/190)*190;
+    ctx.fillStyle=rgba(p.detail,.42);
+    for(let wx=firstGlint;wx<=xMax+190;wx+=190){
+      if(wx<xMin-30||wx>xMax+30)continue;
+      const key=Math.floor(wx/190)+sample.regionIndex*131;
+      const x=o.cssWidth*.5+(wx-o.cameraCenterX)*o.cameraScale*parallax;
+      const y=snap(o.cssHeight*(.78+biomeRandom01(o.worldSeed,0x53574159,key)*.07));
+      const glintWidth=12+biomeRandom01(o.worldSeed,0x5357474c,key)*24;
+      ctx.fillRect(snap(x),y,snap(glintWidth),2);
+      if(biomeRandom01(o.worldSeed,0x53575244,key)>.46){
+        const reedHeight=12+biomeRandom01(o.worldSeed,0x53575248,key)*22;
+        ctx.fillRect(snap(x+5),snap(y-reedHeight),2,snap(reedHeight));
+        if(biomeRandom01(o.worldSeed,0x53575232,key)>.5)ctx.fillRect(snap(x+10),snap(y-reedHeight*.72),2,snap(reedHeight*.72));
+      }
+    }
+    const mistSpacing=880;
+    const firstMist=Math.floor(xMin/mistSpacing)*mistSpacing;
+    ctx.fillStyle=rgba(p.haze,.3);
+    for(let wx=firstMist;wx<=xMax+mistSpacing;wx+=mistSpacing){
+      const key=Math.floor(wx/mistSpacing)+sample.regionIndex*47;
+      if(wx<xMin-240||wx>xMax+240||biomeRandom01(o.worldSeed,0x53574d53,key)>.46)continue;
+      const x=o.cssWidth*.5+(wx-o.cameraCenterX)*o.cameraScale*parallax;
+      const width=Math.max(18,(180+biomeRandom01(o.worldSeed,0x53574d57,key)*180)*o.cameraScale*parallax);
+      const y=snap(o.cssHeight*(.64+biomeRandom01(o.worldSeed,0x53574d59,key)*.08));
+      ctx.fillRect(snap(x-width*.5),y,snap(width),4);
+    }
   }
   ctx.restore();
 }
@@ -1163,6 +1224,8 @@ export function drawBiomeBackground(ctx:CanvasRenderingContext2D,cache:BiomeBack
   drawSkyBands(ctx,o);
   drawSkyEvents(ctx,o);
   drawContinuousPanorama(ctx,'far',o);
+  // The mid panorama remains active only where it reads as a real skyline/landform. In organic
+  // green biomes its spatial gradient fades fully transparent, avoiding the old U-shaped contour.
   drawContinuousPanorama(ctx,'mid',o);
   drawLandmarkLayer(ctx,cache,'mid',o);
   drawLandmarkLayer(ctx,cache,'near',o);

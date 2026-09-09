@@ -46,3 +46,15 @@ grass; Snowy Mountains small pines/snowy rocks; Temperate Forest ferns/shrubs/mu
 lamps/bins/bollards; Rural Village fence pieces/hay/shrubs; Swamp reeds/stumps/shrubs; Foundry vents
 and metal crates; Spires stone markers/fragments; and Ruins broken masonry/grass/shrubs. Props are kept
 small relative to the 40×60 agent, avoid platform edges, and moving platforms receive reduced dressing.
+
+### Green-biome panorama contour fix
+
+Organic green biomes (Lowlands, Temperate Forest, Rural Village, Swamp) deliberately omit the
+continuous mid-distance panorama silhouette. The far panorama still provides depth, while the
+mid/near procedural landmark layers provide vegetation and structures. This avoids a redundant
+semi-transparent valley contour around the lower quarter of the viewport that could read as a
+U-shaped color-overlay seam, especially under bright daytime lighting.
+
+The mid panorama fades continuously back in through biome transitions where structural/desert/snow
+skyline silhouettes are useful. Swamp mist/reeds and Rural fences are world-anchored local details;
+they must not be redrawn as full-screen overlays per sampled biome slice.

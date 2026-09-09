@@ -1,9 +1,7 @@
-Add visual group-separation fail-safe
+Remove residual green-biome U-shaped overlay artifacts
 
-- watch the maximum distance between any pair of visual agents
-- arm recovery after 1,800 px of separation persists for 5 simulated seconds
-- regroup all visual agents on a safe platform nearest the widest pair midpoint
-- preserve roles, energy and route state while clearing motion and recurrent visual-policy memory
-- add short post-teleport tag protection and re-anchor the visual simulation camera
-- retry immediately when no suitable recovery platform exists at the timeout frame
-- keep the watchdog completely outside headless training and fitness logic
+- reproduce the artifact as the organic mid-panorama valley contour near the lower quarter of the viewport
+- fade the continuous mid panorama completely out in Lowlands, Forest, Rural Village and Swamp
+- smoothly restore mid-panorama visibility through transitions into structural/desert/snow biomes
+- replace repeated full-screen Swamp haze/reed overlays with sparse world-anchored local details
+- make Rural fence details world-anchored instead of redrawing the same screen-wide pattern per sample
