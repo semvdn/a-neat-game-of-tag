@@ -42,4 +42,4 @@ Released under the [MIT License](LICENSE).
 
 ## AI use
 
-Generative AI, primarily OpenAI ChatGPT, was used extensively as a development tool throughout this project.
+Generative AI, primarily OpenAI's GPT 5.6 Sol, was used extensively as a development tool throughout this project.
