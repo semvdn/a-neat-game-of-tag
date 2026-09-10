@@ -6,27 +6,31 @@ Interesting does not mean maximum tags. A stream of catches after falls is busy 
 
 ## Exhibition operation
 
-1. Run the app, start the simulation, and import a saved full checkpoint through Diagnostics → Runs & data when using trained policies. Fresh populations initially behave poorly.
+1. The app automatically loads the curated **generation 7422** full checkpoint shipped in `public/showcase/`. Its saved display diagnostics preserve the selected showcase pair—**Chaser g7410 + Runner g4381**—and that exact pair is restored for visible playback. In studio mode, select **Start Simulation** when you want visible playback and background evolution to begin.
 2. Choose terrain, trails, preferred zoom, and playback speed in the studio. Start at 1×; watch a long continuous passage before adjusting it.
-3. Use **Exhibit** or **G** to fill the page with the arena. Senses, status panels, diagnostic windows, and gameplay sounds are suppressed. Studio overlay preferences are restored on exit.
-4. Press **F** in exhibition mode for browser fullscreen, when supported. Move the pointer to reveal the exit control; **G** or **Escape** returns to the studio. Browser fullscreen can also be exited with the browser's own controls.
-5. Training remains independently controllable. Pause it before exhibiting a curated pair, or leave it active to let retained champions change. Exhibition mode requests a screen wake lock even with training paused, where supported.
+3. Use **Exhibit** or **G** to fill the page with the arena. Exhibition state is written to the URL as `?exhibit=1`, so reloading the page returns directly to the artwork. Senses, status panels, diagnostic windows, and gameplay sounds are suppressed. Studio overlay preferences are restored on exit.
+4. A page opened with `?exhibit=1` auto-starts visible playback after the bundled checkpoint is installed. Background evolution is **paused by default**, keeping the curated g7410/g4381 display pair stable while the full evolutionary state remains the generation-7422 checkpoint. Add `&train=1` only when an installation is deliberately meant to continue evolving.
+5. Press **F** in exhibition mode for browser fullscreen, when supported. Move the pointer to reveal the exit control; **G** or **Escape** returns to the studio. Browser fullscreen can also be exited with the browser's own controls.
 
-Exhibition does not reset the world, change policy inputs, or alter game speed. It uses the same canvas and world-relative camera rules. Export checkpoints before an installation: browser storage is not an archival copy.
+Exhibition does not change policy inputs, terrain rules, visual speed, or the current world. The screen wake lock is requested in exhibition even when training is paused, where supported. Export independently trained checkpoints before an installation when they need to be archived; the bundled showcase is a repository asset, while browser checkpoint-library entries are convenience storage rather than archival copies.
 
-## Installation limits
+## Offline and unattended operation
 
-This is an exhibition view, not yet a fully unattended kiosk appliance. Reload still requires starting the simulation and restoring a checkpoint; autoplay/resume and automatic archival recovery are future work. Screen wake locks cannot prevent operating-system suspension. Test fullscreen, sleep recovery, frame rate, and memory on the actual display computer for several hours.
+The production build has no required CDN, Gemini, or other remote runtime dependency. Tailwind utilities are compiled into the checked-in/generated local `styles.css`, Vite uses relative production asset paths, and the generation-7422 showcase checkpoint is copied into `dist/showcase/`. After dependencies have been installed and the project built, the artwork can therefore run without internet access. Serve `dist/` from a local HTTP server; browser module/worker security rules make `file://` an unsuitable deployment target.
 
-The current HTML still loads Tailwind from a CDN. A network-independent installation needs locally built CSS before deployment. The JavaScript production build alone does not establish offline readiness. Avoid exposing the development server publicly.
+The kiosk entry point is the local installation URL with `?exhibit=1`. Fatal React/render errors and uncaught main-page errors trigger a bounded automatic reload in exhibition mode, with at most three attempts in a rolling minute to avoid an infinite crash loop. A reload reconstructs the visual world from the bundled showcase checkpoint. If the background training worker fails while curated exhibition training is paused, the visible champion arena can continue independently. When `train=1` is active, a worker failure requests the same bounded page recovery.
+
+The existing visual group-separation fail-safe remains a second, gameplay-level recovery path: a severely fragmented visible group is regrouped on a legal nearby platform without changing training fitness. Parallel training evaluators also retain their independent stalled-worker watchdog.
+
+A browser wake lock cannot prevent operating-system hibernation, process termination, power loss, or an administrator closing the browser. Test fullscreen, sleep/wake recovery, frame rate, GPU/CPU thermals, and memory on the actual display computer for several hours before unattended exhibition use.
 
 ## Development direction
 
-First improve the policies' reliability on ordinary terrain. Then assess branch commitment, recovery, and tactical reversals against several saved opponents. Only promote a configuration after repeated training runs and held-out evaluation agree that it improves interaction without increasing falls or losing traversal.
+Treat the current gameplay, controller schema, terrain system, and curated showcase pair as **feature-frozen for the v1 exhibition candidate**. The priority is now release validation: long uninterrupted wall-clock runs, reload/sleep-wake recovery, memory and thermal behavior, and confirming that the curated pair remains engaging across many biome transitions without pathological stalls or repeated fail-safe intervention.
 
-Curate presentation separately: tempo, trail persistence, color, negative space, and transitions between champion pairs need human viewing. Inspect a continuous 10–20 minute passage as well as short episode traces. Evaluate portrait and landscape framing on the intended wall; the current reference world is landscape and a narrow display gives more vertical negative space.
+Curate presentation separately from evolutionary fitness. Tempo, trail persistence, color, negative space, and camera framing still benefit from human viewing, but changes should be conservative and should not alter policy inputs or physics this late in the release cycle. Inspect both a continuous 20–60 minute passage and several multi-hour soak runs on the intended display computer.
 
-Future experiments should test slower champion turnover, a repertoire of complementary policy pairs, and longer validation episodes. These are hypotheses, not changes made to breeding or champion retention in this revision.
+Future experiments—slower champion turnover, repertoires of complementary policy pairs, longer validation episodes, crumble mechanics, or controller/architecture changes—belong to post-v1 research branches rather than this release-hardening line.
 
 ## Hooded pixel-agent presentation
 

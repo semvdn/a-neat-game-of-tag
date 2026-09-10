@@ -13,9 +13,9 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite and select **Start Simulation**. Fresh policies need training. Use **Diagnostics → Runs & data** to import/export full evolutionary checkpoints and analysis reports. Training and visible playback can be paused independently.
+Open the local URL printed by Vite. The repository ships with a curated **generation 7422 full checkpoint**, which is loaded automatically as the default showcase and as the evolutionary resume point. The checkpoint preserves the exact display pair selected when it was exported—**Chaser g7410 + Runner g4381**—instead of substituting the older retained generalist champions stored elsewhere in the evolutionary state. Select **Start Simulation** to begin visible playback and background evolution. Use **Diagnostics → Runs & data** to import/export other full evolutionary checkpoints and analysis reports; training and visible playback can be paused independently.
 
-For exhibition, choose **Exhibit** or press **G**. The arena fills the page, sounds and diagnostic overlays are suppressed, and controls fade. **F** toggles browser fullscreen where supported; **G** or **Escape** returns to the studio. See [artwork and installation guidance](docs/ARTWORK.md) for operation and current kiosk/offline limitations.
+For exhibition, choose **Exhibit** or press **G**. Entering exhibition writes `?exhibit=1` into the URL, so a reload returns to the same kiosk view. A page opened with `?exhibit=1` auto-loads the bundled showcase and starts visible playback with background evolution paused, preserving the curated pair. Use `?exhibit=1&train=1` only when you intentionally want evolution to continue during an installation. **F** toggles browser fullscreen where supported; **G** or **Escape** returns to the studio. See [artwork and installation guidance](docs/ARTWORK.md).
 
 ## Evaluate changes
 
@@ -59,4 +59,4 @@ npm run evaluate -- --seeds 8 --verify
 git diff --check
 ```
 
-Build output and generated lab reports are ignored. A production build currently still uses external Tailwind CSS; see the installation guide before planning a network-independent display.
+Build output and generated lab reports are ignored. `npm run build` regenerates the Tailwind utility sheet locally and produces a production bundle with no required remote runtime assets. The bundled showcase checkpoint is copied into the build as a local static asset. Serve `dist/` from a local HTTP server for an offline installation rather than opening `index.html` directly from `file://`.

@@ -1,6 +1,9 @@
 declare namespace React {
   type ReactNode = any;
   type FC<P = {}> = (props: P) => any;
+  type PropsWithChildren<P = {}> = P & { children?: ReactNode };
+  type ErrorInfo = { componentStack?: string };
+  class Component<P = {}, S = {}> { props: P; state: S; setState(value: Partial<S> | S): void; }
   interface ChangeEvent<T = any> { target: T; }
   interface MouseEvent<T = any> { target: T; }
 }
@@ -9,6 +12,7 @@ declare module 'react' {
   export default ReactDefault;
   export type ReactNode = React.ReactNode;
   export type FC<P = {}> = React.FC<P>;
+  export type SetStateAction<T> = T | ((prev: T) => T);
   export type ChangeEvent<T = any> = React.ChangeEvent<T>;
   export function useState<T>(initial: T | (() => T)): [T, (value: T | ((prev: T) => T)) => void];
   export function useEffect(effect: () => void | (() => void), deps?: any[]): void;
@@ -21,7 +25,6 @@ declare module 'react-dom/client';
 declare module 'lucide-react';
 declare module '@vitejs/plugin-react';
 declare module 'vite';
-declare module '@google/genai';
 declare namespace JSX { interface IntrinsicElements { [elemName: string]: any; } }
 declare module 'path' { const p: any; export default p; }
 declare const __dirname: string;

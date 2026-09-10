@@ -2,7 +2,7 @@
 
 See [the repository guide](../README.md), [code architecture](ARCHITECTURE.md), and [gameplay lab](EVALUATION.md). Objective v10 counts only pressure exits without an intervening tag or registered fall as successful evades.
 
-This build evolves two NEAT policies—**Chaser** and **Runner**—inside the same gameplay rules used by the visible champion arena. Training runs continuously in background workers while a retained fixed-benchmark **generalist champion** for each role is shown in the browser, so a transient co-evolutionary winner cannot automatically replace a stronger policy.
+This build evolves two NEAT policies—**Chaser** and **Runner**—inside the same gameplay rules used by the visible champion arena. When training is running, background workers evolve the populations while a retained fixed-benchmark **generalist champion** for each role is shown in the browser, so a transient co-evolutionary winner cannot automatically replace a stronger policy. The repository bootstraps from the curated generation-7422 full checkpoint; kiosk exhibition pauses evolution by default so that pair remains stable.
 
 ## Policy interface
 
@@ -293,7 +293,13 @@ The persistence controls now save **full NEAT evolutionary checkpoints**, not on
 
 Checkpoints are captured at **completed-generation boundaries**. If Save/Export is pressed while evaluator workers are halfway through the next generation, the latest complete boundary is written rather than serializing an inconsistent subset of completed worker batches. Restoring resumes that full population at the beginning of its next evaluation. Champion-only JSON created by the factorized-control builds can seed fresh populations/species/Hall-of-Fame state. The current controller uses three policy outputs (`signed horizontal drive`, `jump`, `sprint`) and the 23-input world-relative state schema. Older four-output or 25-input camera-relative checkpoints are rejected rather than silently remapped; current-schema checkpoints remain fully restorable.
 
-The full checkpoint JSON can become much larger than a champion-only file; **Export checkpoint** is therefore the most robust long-term archive path. Browser-local Save still uses local storage and can hit the browser's quota on very large, highly complex populations.
+The full checkpoint JSON can become much larger than a champion-only file; **Export checkpoint** is therefore the most robust long-term archive path. Browser-local Save uses an IndexedDB checkpoint library rather than `localStorage`, but it can still hit browser/site-storage quotas on very large, highly complex populations.
+
+## Bundled showcase checkpoint
+
+`public/showcase/neat_tag_checkpoint_gen7422.json` is the repository's curated default showcase. It is a normal full checkpoint and passes the same `world-relative-senses-v3` / `signed-horizontal-controls-v2` validation as user imports. The full evolutionary state is at **generation 7422**, while its saved UI diagnostics preserve the exact display selection present at export: **Chaser `chaser_hof_g7410` + Runner `evader_hof_g4381`**. At startup the main thread installs that saved display pair into the visible arena (falling back to retained checkpoint champions only if display diagnostics are absent), then restores the full population, Hall of Fame, innovation tracker, benchmark state, and training configuration into the worker. Normal studio training can therefore resume from generation 7422 without changing what the curated artwork initially displays.
+
+For unattended display, `?exhibit=1` starts visual playback automatically after this local checkpoint loads and keeps background evolution paused. `?exhibit=1&train=1` explicitly opts back into evolution. A missing/incompatible bundled checkpoint is surfaced as an error instead of silently pretending the fresh random policies are the curated artwork.
 
 ## Fixed cross-generation benchmark
 
@@ -377,6 +383,10 @@ Background evolution now has two safeguards for long unattended runs:
 The training header shows `awake` while the screen wake lock is active. A `↻N` badge and the diagnostics panel show how many stalled evaluator batches were automatically recovered. Recovery data is also included in the analysis JSON export.
 
 Browsers cannot keep JavaScript running if the operating system fully suspends/hibernates the computer or the browser process is explicitly discarded, but the trainer will recover outstanding evaluator work when execution resumes.
+
+### Exhibition runtime recovery
+
+The visible showcase is intentionally less dependent on the training worker than the studio. Fatal React/render errors and uncaught page errors in `?exhibit=1` request a bounded reload (maximum three attempts per rolling minute). Reloading reconstructs the curated visible agents from the bundled checkpoint. If the training worker itself fails while kiosk training is paused, the visual simulation remains usable; if exhibition was explicitly launched with `train=1`, worker failure requests the same bounded page recovery.
 
 ## Visual separation fail-safe
 

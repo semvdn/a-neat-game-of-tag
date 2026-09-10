@@ -1,7 +1,8 @@
-Remove residual green-biome U-shaped overlay artifacts
+Harden offline exhibition with bundled showcase
 
-- reproduce the artifact as the organic mid-panorama valley contour near the lower quarter of the viewport
-- fade the continuous mid panorama completely out in Lowlands, Forest, Rural Village and Swamp
-- smoothly restore mid-panorama visibility through transitions into structural/desert/snow biomes
-- replace repeated full-screen Swamp haze/reed overlays with sparse world-anchored local details
-- make Rural fence details world-anchored instead of redrawing the same screen-wide pattern per sample
+- bundle the generation-7422 checkpoint and restore its exact g7410/g4381 display pair
+- persist kiosk mode in the URL, auto-start curated playback, and pause evolution by default
+- add bounded fatal-page recovery while keeping paused exhibition independent of worker failure
+- remove Gemini/AI Studio/CDN runtime dependencies and generate Tailwind CSS locally
+- use relative production assets for offline local-server deployment
+- refresh artwork, simulation, biome, architecture, contributor, and project-direction documentation

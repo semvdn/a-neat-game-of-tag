@@ -60,6 +60,8 @@ import {
 } from './constants';
 import { Activity, Play, Pause, RotateCcw, MonitorPlay, Cpu, Minus, Plus } from 'lucide-react';
 import { DEFAULT_TERRAIN_VARIETY_CONFIG, continuousTerrainRuntime, sanitizeTerrainVarietyConfig } from './learning/terrainConfig';
+import { BUNDLED_SHOWCASE_GENERATION, loadBundledShowcaseCheckpoint } from './services/showcaseCheckpoint';
+import { exhibitionTrainingRequested, requestExhibitionRecovery } from './services/runtimeRecovery';
 import { DEFAULT_BIOME_WORLD_SEED, stampPlatformVisualBiome } from './world/biomes';
 import type { DayNightConfig } from './world/dayNight';
 import { DAY_NIGHT_STORAGE_KEY, createDefaultDayNightConfig, resolveWorldHour, sanitizeDayNightConfig } from './world/dayNight';
@@ -103,6 +105,16 @@ const formatTrainingRate = (value: number | undefined) => {
   if (safe >= 100) return safe.toFixed(0);
   if (safe >= 10) return safe.toFixed(1);
   return safe.toFixed(2);
+};
+
+const checkpointShowcasePayload = (payload: any) => {
+  const diagnostics = payload?.uiDiagnostics;
+  if (!diagnostics?.chaserChampionGenome || !diagnostics?.evaderChampionGenome) return undefined;
+  return {
+    chaserGenome: diagnostics.chaserChampionGenome,
+    evaderGenome: diagnostics.evaderChampionGenome,
+    telemetry: diagnostics.showcasePair || null,
+  };
 };
 
 const CHAMPION_WORLD_VIEWPORT = { width: 1200, height: 800 } as const;
@@ -205,7 +217,8 @@ export const App: React.FC = () => {
   const [cameraZoom, setCameraZoom] = useState(1);
   const [dayNightConfig, setDayNightConfig] = useState<DayNightConfig>(loadDayNightConfig);
   const [isVisualPaused, setIsVisualPaused] = useState(false);
-  const [isTrainingPaused, setIsTrainingPaused] = useState(false);
+  const [isTrainingPaused, setIsTrainingPaused] = useState(() => exhibition && !exhibitionTrainingRequested());
+  const [showcaseLoadState, setShowcaseLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [upgradeConfig, setUpgradeConfig] = useState<UpgradeConfig>(loadUpgradeConfig);
   const [trainingFitnessConfig, setTrainingFitnessConfig] = useState<TrainingFitnessConfig>(loadTrainingFitnessConfig);
   const [terrainVarietyConfig, setTerrainVarietyConfig] = useState<TerrainVarietyConfig>(loadTerrainVarietyConfig);
@@ -290,6 +303,12 @@ export const App: React.FC = () => {
 
   // Web Worker for Headless Accelerated Simulation
   const workerRef = useRef<Worker | null>(null);
+  const bundledShowcasePayloadRef = useRef<any>(null);
+  const showcaseRestoreRequestIdRef = useRef<number | null>(null);
+  const exhibitionRef = useRef(exhibition);
+  exhibitionRef.current = exhibition;
+  const isTrainingPausedRef = useRef(isTrainingPaused);
+  isTrainingPausedRef.current = isTrainingPaused;
   const initializedRef = useRef(false);
   const installedChampionGenerationRef = useRef({ chaser: -1, evader: -1 });
   const installedChampionGenomeIdRef = useRef<{ chaser: string | null; evader: string | null }>({ chaser: null, evader: null });
@@ -307,6 +326,44 @@ export const App: React.FC = () => {
     } catch (error) {
       console.error('Failed to read checkpoint library:', error);
       setCheckpointLibraryMessage('Checkpoint library is unavailable in this browser. Export JSON files instead.');
+    }
+  }, []);
+
+  const installFullCheckpointInVisibleArena = useCallback((payload: any): boolean => {
+    try {
+      const checkpoint = payload?.evolutionCheckpoint;
+      if (payload?.kind !== 'full-evolution-checkpoint' || !checkpoint?.championChaser || !checkpoint?.championEvader) return false;
+      const curatedShowcase = checkpointShowcasePayload(payload);
+      const chaserGenome = curatedShowcase?.chaserGenome || checkpoint.championChaser;
+      const evaderGenome = curatedShowcase?.evaderGenome || checkpoint.championEvader;
+
+      // Prefer the pair that was actually displayed when the checkpoint was exported. Full-run
+      // checkpoints keep retained generalists separately, so using championChaser/championEvader
+      // alone can silently replace a deliberately curated Hall-of-Fame showcase pair.
+      const nextChaser = new LearningAgent('chaser');
+      const nextEvader = new LearningAgent('evader');
+      nextChaser.setWeights(chaserGenome);
+      nextEvader.setWeights(evaderGenome);
+
+      chaserAgent.current?.setWeights(chaserGenome);
+      evaderAgent.current?.setWeights(evaderGenome);
+      const chaserGeneration = curatedShowcase?.telemetry?.chaserGeneration ?? chaserGenome?.generation ?? checkpoint.generalistChampions?.chaser?.generation ?? checkpoint.lastChaserMetrics?.generation ?? checkpoint.generation ?? 0;
+      const evaderGeneration = curatedShowcase?.telemetry?.runnerGeneration ?? evaderGenome?.generation ?? checkpoint.generalistChampions?.evader?.generation ?? checkpoint.lastEvaderMetrics?.generation ?? checkpoint.generation ?? 0;
+      installedChampionGenerationRef.current = { chaser: chaserGeneration, evader: evaderGeneration };
+      installedChampionGenomeIdRef.current = { chaser: chaserGenome?.id ?? null, evader: evaderGenome?.id ?? null };
+      chaserAgent.current?.setGeneration(chaserGeneration);
+      evaderAgent.current?.setGeneration(evaderGeneration);
+      if (typeof checkpoint.chaserElo === 'number') chaserElo.current = checkpoint.chaserElo;
+      if (typeof checkpoint.evaderElo === 'number') evaderElo.current = checkpoint.evaderElo;
+      if (checkpoint.upgradeConfig) setUpgradeConfig(checkpoint.upgradeConfig);
+      if (checkpoint.trainingFitnessConfig) setTrainingFitnessConfig(sanitizeTrainingFitnessConfig(checkpoint.trainingFitnessConfig));
+      if (checkpoint.terrainVarietyConfig) setTerrainVarietyConfig(sanitizeTerrainVarietyConfig(checkpoint.terrainVarietyConfig));
+      if (checkpoint.networkArchitecture) setNetworkArchitecture(sanitizeNetworkArchitectureSuite(checkpoint.networkArchitecture));
+      if (payload.uiDiagnostics) setDiagnosticsState(payload.uiDiagnostics as DiagnosticsState);
+      return true;
+    } catch (error) {
+      console.error('Failed to install full checkpoint in visible arena:', error);
+      return false;
     }
   }, []);
 
@@ -453,11 +510,41 @@ export const App: React.FC = () => {
     initializeGameState();
   }, [initializeGameState]);
 
+  // Load the curated exhibition checkpoint from a local production asset. Visible playback can
+  // still run from these champions if background evolution is unavailable or deliberately paused.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const payload = await loadBundledShowcaseCheckpoint();
+        if (cancelled) return;
+        if (!installFullCheckpointInVisibleArena(payload)) throw new Error('Bundled showcase champions are incompatible with this build.');
+        bundledShowcasePayloadRef.current = payload;
+        setShowcaseLoadState('ready');
+        setCheckpointLibraryMessage(`Bundled showcase ready · generation ${payload.generation ?? BUNDLED_SHOWCASE_GENERATION}.`);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Failed to load bundled showcase checkpoint:', error);
+        setShowcaseLoadState('error');
+        setCheckpointLibraryMessage(`Bundled showcase unavailable: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [installFullCheckpointInVisibleArena]);
+
   // --- Web Worker Setup & Communication ---
   useEffect(() => {
     try {
       const worker = new Worker(new URL('./workers/trainingWorker.ts', import.meta.url), { type: 'module' });
       workerRef.current = worker;
+
+      worker.onerror = event => {
+        console.error('Training worker failed:', event.message || event);
+        setCheckpointLibraryMessage('Background training worker stopped. The visible showcase can continue independently.');
+        if (exhibitionRef.current && !isTrainingPausedRef.current) {
+          requestExhibitionRecovery('training-worker');
+        }
+      };
 
       worker.onmessage = (event: MessageEvent) => {
         const { type, payload } = event.data;
@@ -650,15 +737,26 @@ export const App: React.FC = () => {
             setCheckpointLibraryBusy(false);
           }
         } else if (type === 'RESTORE_CHECKPOINT_RESPONSE') {
+          const isBundledShowcaseRestore = payload?.requestId != null && payload.requestId === showcaseRestoreRequestIdRef.current;
+          if (isBundledShowcaseRestore) showcaseRestoreRequestIdRef.current = null;
           if (!payload?.ok) {
             console.error('Failed to restore full evolution checkpoint:', payload?.message || 'Unknown checkpoint error');
             pendingRestoreDiagnosticsRef.current = null;
-            setCheckpointLibraryMessage(`Load failed: ${payload?.message || 'unknown checkpoint error'}`);
+            setCheckpointLibraryMessage(isBundledShowcaseRestore
+              ? `Showcase is visible, but background evolution could not resume: ${payload?.message || 'unknown checkpoint error'}`
+              : `Load failed: ${payload?.message || 'unknown checkpoint error'}`);
             setCheckpointLibraryBusy(false);
           } else {
             if (pendingRestoreDiagnosticsRef.current) setDiagnosticsState(pendingRestoreDiagnosticsRef.current);
             pendingRestoreDiagnosticsRef.current = null;
-            setCheckpointLibraryMessage('Checkpoint restored successfully.');
+            if (isBundledShowcaseRestore) {
+              // The worker now owns the full evolutionary state and the visible agents own their
+              // curated genomes; release the 20+ MB parsed bootstrap payload from the main thread.
+              bundledShowcasePayloadRef.current = null;
+            }
+            setCheckpointLibraryMessage(isBundledShowcaseRestore
+              ? `Bundled showcase restored · generation ${payload?.generation ?? BUNDLED_SHOWCASE_GENERATION}.`
+              : 'Checkpoint restored successfully.');
             setCheckpointLibraryBusy(false);
           }
         } else if (type === 'SYNC_WEIGHTS_RESPONSE') {
@@ -681,6 +779,33 @@ export const App: React.FC = () => {
       console.warn('Web Worker initialization fallback:', err);
     }
   }, []);
+
+  useEffect(() => {
+    if (showcaseLoadState !== 'ready' || !workerRef.current || !bundledShowcasePayloadRef.current) return;
+    const requestId = checkpointRequestCounterRef.current++;
+    showcaseRestoreRequestIdRef.current = requestId;
+    workerRef.current.postMessage({
+      type: 'RESTORE_CHECKPOINT',
+      payload: {
+        requestId,
+        checkpoint: bundledShowcasePayloadRef.current.evolutionCheckpoint,
+        showcase: checkpointShowcasePayload(bundledShowcasePayloadRef.current),
+      },
+    });
+  }, [showcaseLoadState]);
+
+  // A persistent exhibition URL is an unattended-kiosk entry point. It starts visual playback as
+  // soon as the local curated checkpoint is installed. Background evolution is paused by default
+  // unless the URL explicitly opts in with ?train=1. Entering Exhibit from an idle studio also
+  // preserves the curated pair; entering while an existing run is active preserves that run's
+  // current training pause/resume choice.
+  const previousExhibitionRef = useRef(exhibition);
+  useEffect(() => {
+    const enteredExhibition = exhibition && !previousExhibitionRef.current;
+    previousExhibitionRef.current = exhibition;
+    if (enteredExhibition && !isSimulating) setIsTrainingPaused(true);
+    if (exhibition && showcaseLoadState === 'ready') setIsSimulating(true);
+  }, [exhibition, showcaseLoadState, isSimulating]);
 
   useEffect(() => {
     localStorage.setItem(UPGRADE_STORAGE_KEY, JSON.stringify(upgradeConfig));
@@ -1390,35 +1515,12 @@ export const App: React.FC = () => {
     try {
       if (payload?.kind === 'full-evolution-checkpoint' && payload?.evolutionCheckpoint) {
         const checkpoint = payload.evolutionCheckpoint;
-        // Validate both champion phenotypes on temporary agents before touching either live model.
-        const nextChaser = new LearningAgent('chaser');
-        const nextEvader = new LearningAgent('evader');
-        nextChaser.setWeights(checkpoint.championChaser);
-        nextEvader.setWeights(checkpoint.championEvader);
-
-        chaserAgent.current?.setWeights(checkpoint.championChaser);
-        evaderAgent.current?.setWeights(checkpoint.championEvader);
-        const chaserGeneration = checkpoint.generalistChampions?.chaser?.generation ?? checkpoint.championChaser?.generation ?? checkpoint.lastChaserMetrics?.generation ?? 0;
-        const evaderGeneration = checkpoint.generalistChampions?.evader?.generation ?? checkpoint.championEvader?.generation ?? checkpoint.lastEvaderMetrics?.generation ?? 0;
-        installedChampionGenerationRef.current = { chaser: chaserGeneration, evader: evaderGeneration };
-        installedChampionGenomeIdRef.current = { chaser: checkpoint.championChaser?.id ?? null, evader: checkpoint.championEvader?.id ?? null };
-        chaserAgent.current?.setGeneration(chaserGeneration);
-        evaderAgent.current?.setGeneration(evaderGeneration);
-        if (typeof checkpoint.chaserElo === 'number') chaserElo.current = checkpoint.chaserElo;
-        if (typeof checkpoint.evaderElo === 'number') evaderElo.current = checkpoint.evaderElo;
-        if (checkpoint.upgradeConfig) setUpgradeConfig(checkpoint.upgradeConfig);
-        if (checkpoint.trainingFitnessConfig) {
-          setTrainingFitnessConfig(sanitizeTrainingFitnessConfig(checkpoint.trainingFitnessConfig));
-        }
-        if (checkpoint.terrainVarietyConfig) {
-          setTerrainVarietyConfig(sanitizeTerrainVarietyConfig(checkpoint.terrainVarietyConfig));
-        }
-
+        if (!installFullCheckpointInVisibleArena(payload)) return false;
         pendingRestoreDiagnosticsRef.current = payload.uiDiagnostics || null;
         const requestId = checkpointRequestCounterRef.current++;
         workerRef.current?.postMessage({
           type: 'RESTORE_CHECKPOINT',
-          payload: { requestId, checkpoint },
+          payload: { requestId, checkpoint, showcase: checkpointShowcasePayload(payload) },
         });
         return true;
       }
@@ -1578,7 +1680,7 @@ export const App: React.FC = () => {
     transformOrigin: 'top left',
   };
 
-  if (isLoading || !gameState) {
+  if (isLoading || !gameState || showcaseLoadState === 'loading') {
     return (
       <div
         className="flex items-center justify-center bg-gray-950 text-cyan-400 font-mono"

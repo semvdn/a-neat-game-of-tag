@@ -2,7 +2,7 @@
 
 The infinite world now uses the same deterministic biome field for presentation and terrain-generation bias. A biome is derived from world X + world seed; the policy is **not** given a biome ID. Instead, agents experience the geometry and platform motion that the biome produces.
 
-Macro-regions are 12,000 world pixels with a 2,000-pixel `smoothstep` transition. Lowlands remains the first region and the remaining nine biomes are deterministically shuffled per world seed. Mechanical profile values are interpolated through the same transition, so terrain changes gradually rather than at a hard boundary.
+Macro-regions are 12,000 world pixels with a **5,000-pixel boundary-centered transition**. The field origin is shifted by half a transition so world X=0 starts inside the stable Lowlands core. Each handoff spans 2,500 px on either side of the macro-region boundary and uses quintic smootherstep easing. Lowlands remains the first region and the remaining nine biomes are deterministically shuffled per world seed. Mechanical profile values are interpolated through the same field, so terrain changes gradually rather than at a hard boundary.
 
 ## Active terrain identities
 

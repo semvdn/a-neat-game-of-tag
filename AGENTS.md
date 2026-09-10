@@ -31,6 +31,9 @@ Read `README.md` before substantial changes. For recurring task-specific workflo
 - `components/GameCanvas.tsx` / `components/drawing.ts` — presentation camera and senses rendering.
 - `components/InfoPanel.tsx` — compact live controls/status.
 - `components/PerformanceDiagnostics.tsx` — diagnostics, architecture tools, checkpoint/run management.
+- `services/showcaseCheckpoint.ts` / `public/showcase/` — validated bundled exhibition checkpoint.
+- `services/runtimeRecovery.ts` / `components/ArtworkErrorBoundary.tsx` — bounded kiosk/runtime recovery.
+- `styles.css` / `scripts/build-styles.mjs` — locally generated Tailwind utility sheet; no runtime CDN dependency.
 
 ## Change workflow
 
@@ -40,7 +43,7 @@ Read `README.md` before substantial changes. For recurring task-specific workflo
 4. Run at least:
    - `tsc -p tsconfig.check.json --noEmit`
    - `git diff --check`
-5. If dependencies are installed, also run `npm run build`. Do not claim the production build passed if dependencies/network prevented it.
+5. If dependencies are installed, also run `npm run build`. The build regenerates `styles.css`; do not hand-edit the generated sheet. Do not claim the production build passed if dependencies/network prevented it.
 6. For terrain or simulation changes, add/run a focused deterministic stress check. Temporary test scripts are fine, but remove scratch files before shipping unless they are intentionally useful repo tests.
 7. Review `git diff` for stale terminology/schema numbers and accidental generated files.
 8. **Create a real Git commit.** A commit-message text file is not a substitute for `git commit`.

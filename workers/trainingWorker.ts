@@ -3388,6 +3388,20 @@ self.onmessage = (event: MessageEvent) => {
         if (timerId) clearTimeout(timerId);
         // In-flight evaluator results are invalidated by restoreEvolutionCheckpoint().
         restoreEvolutionCheckpoint(payload?.checkpoint as EvolutionCheckpoint);
+
+        // UI exports can carry the exact pair that was being shown at save time. Restore it as a
+        // presentation choice without changing the retained generalists or breeding population.
+        // This keeps a curated Hall-of-Fame pairing stable across reloads and kiosk restarts.
+        if (payload?.showcase?.chaserGenome && payload?.showcase?.evaderGenome) {
+          const restoredShowcaseChaser = new LearningAgent('chaser', payload.showcase.chaserGenome as NeatGenomeData);
+          const restoredShowcaseEvader = new LearningAgent('evader', payload.showcase.evaderGenome as NeatGenomeData);
+          showcaseChaser = restoredShowcaseChaser;
+          showcaseEvader = restoredShowcaseEvader;
+          showcaseChaser.setGeneration(payload.showcase.telemetry?.chaserGeneration ?? payload.showcase.chaserGenome.generation ?? chaserPopulation.generation);
+          showcaseEvader.setGeneration(payload.showcase.telemetry?.runnerGeneration ?? payload.showcase.evaderGenome.generation ?? evaderPopulation.generation);
+          showcasePairTelemetry = payload.showcase.telemetry ? { ...payload.showcase.telemetry } : null;
+        }
+
         emitTelemetry(true);
         self.postMessage({
           type: 'RESTORE_CHECKPOINT_RESPONSE',

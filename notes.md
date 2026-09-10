@@ -1,13 +1,9 @@
-- we could allow the NEAT system to also evolve certain agent physical property trade offs like sprint speed vs energy cost or total energy stores vs refill speed.
+# Post-v1 research directions
 
-- Design and implement more elaborate animations for the agents, i would like a pixelart stick-figure look so it looks like an arcade action game.
+The original visual-biome, sprite-animation, topology-plot and exhibition-quality goals have been implemented in the current codebase and are no longer open tasks. Remaining ideas are deliberately deferred research directions rather than v1 completion blockers.
 
-- add crumbling platforms and other interesting platform types.
-
-- add dynamic backgrounds and changing biomes that influence the world generation and biome specific platforms and other special modifiers.
-
-- remove the topology complexity graph and try create a more informative set of plots showing how the agent models changed over time and put them in the topology tab.
-
-- Could we use transformer models for this task?
-
-- once the models have become quite compotent to the point where it could be reasonably hung on a wall, i would like to switch from using NEAT to train the models to a type of training that could run in just the single visual instance and allow them to very slowly get better based on only the info from that one simulation.
+- Explore whether selected physical trade-offs can evolve without creating degenerate strategies, for example sprint speed versus energy cost or total energy versus recovery rate.
+- Consider crumbling platforms and other platform mechanics only after defining an observable state representation and regression coverage; hidden biome physics should not be introduced.
+- Test whether transformer/recurrent alternatives add meaningful behavior relative to NEAT rather than increasing complexity for its own sake.
+- Once the installation behavior is stable over long runs, investigate an optional ultra-slow online adaptation mode driven only by the single visible simulation. Keep this separate from the validated NEAT training/evaluation path until it has its own reproducible protocol.
+- Continue curatorial experiments with complementary champion repertoires, turnover cadence, and long-form viewing, without folding aesthetic preference directly into breeding fitness.

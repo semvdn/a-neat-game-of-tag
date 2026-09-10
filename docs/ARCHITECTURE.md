@@ -11,7 +11,8 @@
 | Parallel evaluation | `workers/episodeWorker.ts` | Batched calls to the same episode runner |
 | Visible world | `App.tsx` | Continuous shared-physics stepping and champion installation |
 | Presentation | `components/GameCanvas.tsx`, `components/drawing.ts` | Observational camera and drawing |
-| Exhibition lifecycle | `hooks/useExhibitionMode.ts` | Presentation mode, fullscreen shortcut, fading exit controls |
+| Exhibition lifecycle | `hooks/useExhibitionMode.ts`, `services/runtimeRecovery.ts` | Persistent kiosk URL, fullscreen shortcut, fading controls, bounded fatal recovery |
+| Showcase bootstrap | `services/showcaseCheckpoint.ts`, `public/showcase/` | Curated local checkpoint used by the visible arena and evolutionary resume path |
 | Offline evaluation | `evaluation/`, `scripts/lab.mjs`, `scripts/*training.mjs`, `scripts/train-experiment.mjs` | Fixed-policy comparisons, actual worker evolution and reproducibility checks |
 
 The episode runner accepts the two controller operations it actually needs: action decoding and state reset. This lets diagnostic fixtures use the real simulation without inheriting genome construction or faking an entire agent class. Production controllers retain their existing API and policy schema.
@@ -37,7 +38,14 @@ npm run evaluate -- --seeds 8 --verify
 git diff --check
 ```
 
-The build can succeed while external CSS is unavailable at runtime. Check the browser as well. For simulation/terrain edits, add focused invariant checks beyond the episode lab. Commit intended changes explicitly; preserve unrelated working-tree files.
+`npm run build` first regenerates `styles.css` from the utility classes present in the source using local Tailwind, then Vite emits only local/relative runtime assets. Still smoke-test the browser because static type/build checks do not exercise canvas rendering, fullscreen, wake-lock behavior, or checkpoint bootstrap. For simulation/terrain edits, add focused invariant checks beyond the episode lab. Commit intended changes explicitly; preserve unrelated working-tree files.
+
+
+## Exhibition bootstrap and failure boundary
+
+The shipped generation-7422 full checkpoint is a versioned repository asset, not browser state. `services/showcaseCheckpoint.ts` validates it with the same full-checkpoint compatibility gate used for imported runs. Visible bootstrap prefers the exact pair stored in the checkpoint's UI diagnostics—Chaser g7410 + Runner g4381—and falls back to the retained generalist champions only when no saved display pair exists. The full generation-7422 evolutionary state is restored separately into the training worker, together with that display-pair override, so studio training can continue from the curated run without silently replacing the initial artwork with older retained generalists.
+
+`?exhibit=1` is the persistent kiosk entry point. It auto-starts the visible arena and leaves training paused unless `train=1` is also present. `ArtworkErrorBoundary` plus `runtimeRecovery.ts` provide bounded reload recovery for fatal page errors; repeated failures are capped to prevent a permanent reload loop. Worker failure is non-fatal to a paused curated exhibition because visible policies execute on the main thread.
 
 ## Deterministic biome field
 
