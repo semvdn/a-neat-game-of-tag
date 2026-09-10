@@ -11,7 +11,12 @@
     "evaluate": "node scripts/lab.mjs",
     "experiment:train": "node scripts/train-experiment.mjs",
     "experiment:compare": "node scripts/compare-training.mjs",
-    "styles": "node scripts/build-styles.mjs"
+    "styles": "node scripts/build-styles.mjs",
+    "demo:extract": "node scripts/extract-showcase.mjs",
+    "demo:dev": "npm run styles && npm run demo:extract && vite --config vite.demo.config.ts",
+    "build:demo": "npm run styles && npm run demo:extract && vite build --config vite.demo.config.ts",
+    "preview:demo": "vite preview --config vite.demo.config.ts",
+    "configure:github": "node scripts/configure-github.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.40.0",

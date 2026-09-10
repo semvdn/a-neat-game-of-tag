@@ -1,8 +1,1 @@
-Harden offline exhibition with bundled showcase
-
-- bundle the generation-7422 checkpoint and restore its exact g7410/g4381 display pair
-- persist kiosk mode in the URL, auto-start curated playback, and pause evolution by default
-- add bounded fatal-page recovery while keeping paused exhibition independent of worker failure
-- remove Gemini/AI Studio/CDN runtime dependencies and generate Tailwind CSS locally
-- use relative production assets for offline local-server deployment
-- refresh artwork, simulation, biome, architecture, contributor, and project-direction documentation
+Add lightweight GitHub Pages showcase

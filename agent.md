@@ -43,7 +43,7 @@ Read `README.md` before substantial changes. For recurring task-specific workflo
 4. Run at least:
    - `tsc -p tsconfig.check.json --noEmit`
    - `git diff --check`
-5. If dependencies are installed, also run `npm run build`. The build regenerates `styles.css`; do not hand-edit the generated sheet. Do not claim the production build passed if dependencies/network prevented it.
+5. If dependencies are installed, also run `npm run build` and, for presentation/deployment changes, `npm run build:demo`. These builds regenerate `styles.css`; do not hand-edit the generated sheet. Do not claim a production build passed if dependencies/network prevented it.
 6. For terrain or simulation changes, add/run a focused deterministic stress check. Temporary test scripts are fine, but remove scratch files before shipping unless they are intentionally useful repo tests.
 7. Review `git diff` for stale terminology/schema numbers and accidental generated files.
 8. **Create a real Git commit.** A commit-message text file is not a substitute for `git commit`.

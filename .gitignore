@@ -25,3 +25,5 @@ dist-ssr
 
 .evaluation-cache/
 evaluations/
+
+dist-demo

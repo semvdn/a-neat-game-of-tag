@@ -2,20 +2,50 @@
 
 An evolving game of tag intended to become a generative artwork: three autonomous bodies pursue, evade, and exchange roles across an infinite procedural landscape. Separate Chaser and Runner NEAT populations train in background workers; retained champions inhabit the continuous visible world.
 
-The aim is engaging interaction and readable movement over long viewing periods. High fitness or frequent tags alone do not establish an interesting painting.
+[**▶ Open the live GitHub Pages demo**](https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPOSITORY/)
 
-## Run
+[![Tag Agents gameplay](docs/media/gameplay.gif)](https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPOSITORY/)
 
-Requires Node.js 22 or newer and npm.
+The public demo is deliberately lightweight: it ships the curated **Chaser g7410 + Runner g4381** pair and the visual simulation, but not the training worker, population checkpoint, experiment controls, or checkpoint-management UI. The full research application remains available in this repository.
+
+The aim remains engaging interaction and readable movement over long viewing periods. High fitness or frequent tags alone do not establish an interesting painting.
+
+> Publishing this repository for the first time? Run `npm run configure:github -- OWNER/REPOSITORY` once after creating the GitHub repo to replace the two placeholder links above with the real repository and Pages URLs.
+
+## Clone and run the full app locally
+
+Requires **Node.js 22 or newer**, npm, and a modern desktop browser.
 
 ```sh
+git clone https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY.git
+cd YOUR_REPOSITORY
 npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. The repository ships with a curated **generation 7422 full checkpoint**, which is loaded automatically as the default showcase and as the evolutionary resume point. The checkpoint preserves the exact display pair selected when it was exported—**Chaser g7410 + Runner g4381**—instead of substituting the older retained generalist champions stored elsewhere in the evolutionary state. Select **Start Simulation** to begin visible playback and background evolution. Use **Diagnostics → Runs & data** to import/export other full evolutionary checkpoints and analysis reports; training and visible playback can be paused independently.
+Open the local URL printed by Vite. The full studio ships with the curated **generation 7422 full evolution checkpoint**, loaded automatically as the default showcase and evolutionary resume point. It preserves the exact display pair selected when exported—**Chaser g7410 + Runner g4381**—rather than substituting the older retained generalists stored elsewhere in the checkpoint.
 
-For exhibition, choose **Exhibit** or press **G**. Entering exhibition writes `?exhibit=1` into the URL, so a reload returns to the same kiosk view. A page opened with `?exhibit=1` auto-loads the bundled showcase and starts visible playback with background evolution paused, preserving the curated pair. Use `?exhibit=1&train=1` only when you intentionally want evolution to continue during an installation. **F** toggles browser fullscreen where supported; **G** or **Escape** returns to the studio. See [artwork and installation guidance](docs/ARTWORK.md).
+Select **Start Simulation** to begin visible playback and background evolution. Visible playback and training can be paused independently. Use **Diagnostics → Runs & data** to import/export other full evolutionary checkpoints and analysis reports.
+
+For a local installation/kiosk, choose **Exhibit** or open `?exhibit=1`. That mode auto-loads the bundled showcase and starts visible playback with background evolution paused. Add `&train=1` only when you intentionally want evolution to continue during an installation. **F** toggles browser fullscreen where supported; **G** or **Escape** returns to the studio. See [artwork and installation guidance](docs/ARTWORK.md).
+
+## Run the lightweight web demo locally
+
+```sh
+npm install
+npm run demo:dev
+```
+
+The demo starts on port 3001 and auto-runs the curated pair. Its controls are intentionally limited to presentation settings: playback speed, zoom, trails, senses, day/night mode, reset, pause and fullscreen.
+
+Build the exact static site used by GitHub Pages with:
+
+```sh
+npm run build:demo
+npm run preview:demo
+```
+
+Deployment is already wired in [.github/workflows/pages.yml](.github/workflows/pages.yml). After selecting **GitHub Actions** as the Pages source in repository settings, every push to `main` rebuilds and deploys `dist-demo/`. See the [GitHub Pages setup guide](docs/GITHUB_PAGES.md).
 
 ## Evaluate changes
 
@@ -42,6 +72,7 @@ Current checkpoints use `world-relative-senses-v3` and `signed-horizontal-contro
 
 ## Documentation
 
+- [GitHub Pages showcase and deployment](docs/GITHUB_PAGES.md)
 - [Solid Runner contacts, universal landings and group-cohesion training](docs/SOLID_GROUP.md)
 - [Artwork direction and exhibition operation](docs/ARTWORK.md)
 - [Gameplay laboratory and experiment protocol](docs/EVALUATION.md)
@@ -53,10 +84,11 @@ Current checkpoints use `world-relative-senses-v3` and `signed-horizontal-contro
 ## Validate
 
 ```sh
-npx tsc -p tsconfig.check.json --noEmit
+npm run lint
 npm run build
+npm run build:demo
 npm run evaluate -- --seeds 8 --verify
 git diff --check
 ```
 
-Build output and generated lab reports are ignored. `npm run build` regenerates the Tailwind utility sheet locally and produces a production bundle with no required remote runtime assets. The bundled showcase checkpoint is copied into the build as a local static asset. Serve `dist/` from a local HTTP server for an offline installation rather than opening `index.html` directly from `file://`.
+Build output and generated lab reports are ignored. Both production targets regenerate the Tailwind utility sheet locally and require no remote runtime assets. The full build carries the restorable evolution checkpoint; the Pages build carries only the compact showcase pair. Serve either build from HTTP rather than opening its `index.html` directly from `file://`.

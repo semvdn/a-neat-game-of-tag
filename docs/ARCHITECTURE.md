@@ -12,7 +12,8 @@
 | Visible world | `App.tsx` | Continuous shared-physics stepping and champion installation |
 | Presentation | `components/GameCanvas.tsx`, `components/drawing.ts` | Observational camera and drawing |
 | Exhibition lifecycle | `hooks/useExhibitionMode.ts`, `services/runtimeRecovery.ts` | Persistent kiosk URL, fullscreen shortcut, fading controls, bounded fatal recovery |
-| Showcase bootstrap | `services/showcaseCheckpoint.ts`, `public/showcase/` | Curated local checkpoint used by the visible arena and evolutionary resume path |
+| Studio showcase bootstrap | `services/showcaseCheckpoint.ts`, `public/showcase/` | Full curated checkpoint used by the visible arena and evolutionary resume path |
+| Web showcase | `demo/`, `scripts/extract-showcase.mjs`, `vite.demo.config.ts` | Training-free Pages entry point built from the curated display pair and shared simulation/rendering modules |
 | Offline evaluation | `evaluation/`, `scripts/lab.mjs`, `scripts/*training.mjs`, `scripts/train-experiment.mjs` | Fixed-policy comparisons, actual worker evolution and reproducibility checks |
 
 The episode runner accepts the two controller operations it actually needs: action decoding and state reset. This lets diagnostic fixtures use the real simulation without inheriting genome construction or faking an entire agent class. Production controllers retain their existing API and policy schema.
@@ -32,14 +33,24 @@ Read `AGENTS.md` and the relevant `skills/` entry. Trace both visible and headle
 Validation commands:
 
 ```sh
-npx tsc -p tsconfig.check.json --noEmit
+npm run lint
 npm run build
+npm run build:demo
 npm run evaluate -- --seeds 8 --verify
 git diff --check
 ```
 
 `npm run build` first regenerates `styles.css` from the utility classes present in the source using local Tailwind, then Vite emits only local/relative runtime assets. Still smoke-test the browser because static type/build checks do not exercise canvas rendering, fullscreen, wake-lock behavior, or checkpoint bootstrap. For simulation/terrain edits, add focused invariant checks beyond the episode lab. Commit intended changes explicitly; preserve unrelated working-tree files.
 
+
+
+## GitHub Pages presentation boundary
+
+`demo/main.tsx` is a separate browser entry point for the public showcase. It imports the same `GameCanvas`, policy phenotype, sensing, physics, terrain, camera, biome and visual-failsafe modules as the studio, but it never imports `App.tsx`, `workers/trainingWorker.ts`, `PerformanceDiagnostics` or `checkpointStore`. This is a deployment/presentation boundary rather than a second simulation implementation.
+
+`scripts/extract-showcase.mjs` derives `demo/public/showcase/showcase_pair_gen7422.json` from the full checkpoint. The derived asset contains only the curated Chaser/Runner genomes plus the visible runtime configuration required by the arena, reducing the public model payload from the full population checkpoint to roughly 62 KB. `vite.demo.config.ts` gives the demo its own public directory, so the 21 MB full checkpoint is not copied into `dist-demo/`.
+
+`.github/workflows/pages.yml` builds only `dist-demo/` for GitHub Pages. See [the Pages guide](GITHUB_PAGES.md) for first-time setup and local commands.
 
 ## Exhibition bootstrap and failure boundary
 
