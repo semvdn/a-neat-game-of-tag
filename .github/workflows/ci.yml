@@ -28,7 +28,7 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Build full studio
+      - name: Build full application
         run: npm run build
 
       - name: Build lightweight showcase

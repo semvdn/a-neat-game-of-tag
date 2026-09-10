@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "A NEAT Game of Tag"
+type: software
+authors:
+  - family-names: "van den Nieuwendijk"
+    given-names: "Sem"
+repository-code: "https://github.com/semvdn/a-neat-game-of-tag"
+url: "https://semvdn.github.io/a-neat-game-of-tag/"
+version: 1.0.0
+date-released: 2026-09-10
+license: MIT
+abstract: "An exploration of evolving pursuit and evasion behaviour with NeuroEvolution of Augmenting Topologies in an infinite procedural platform world."
+keywords:
+  - NEAT
+  - neuroevolution
+  - evolutionary algorithms
+  - multi-agent systems
+  - game AI
+  - procedural generation

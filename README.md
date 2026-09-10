@@ -19,7 +19,7 @@ Requires **Node.js 22 or newer**, npm, and a modern desktop browser. An `.nvmrc`
 ```sh
 git clone https://github.com/semvdn/a-neat-game-of-tag.git
 cd a-neat-game-of-tag
-npm install
+npm ci
 npm run dev
 ```
 
