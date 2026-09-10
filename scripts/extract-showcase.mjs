@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourcePath = path.join(root, 'public', 'showcase', 'neat_tag_checkpoint_gen7422.json');
 const outputPath = path.join(root, 'demo', 'public', 'showcase', 'showcase_pair_gen7422.json');
+const CURRENT_POLICY_ACTION_SCHEMA = 'signed-horizontal-controls-v3';
 
 if (!fs.existsSync(sourcePath)) {
   throw new Error(`Missing bundled full checkpoint: ${path.relative(root, sourcePath)}`);
@@ -34,12 +35,12 @@ const showcase = {
   chaser: {
     id: chaserGenome.id,
     generation: diagnostics.showcasePair?.chaserGeneration ?? chaserGenome.generation ?? 0,
-    genome: chaserGenome,
+    genome: { ...chaserGenome, actionSchema: CURRENT_POLICY_ACTION_SCHEMA },
   },
   runner: {
     id: runnerGenome.id,
     generation: diagnostics.showcasePair?.runnerGeneration ?? runnerGenome.generation ?? 0,
-    genome: runnerGenome,
+    genome: { ...runnerGenome, actionSchema: CURRENT_POLICY_ACTION_SCHEMA },
   },
   activeUpgrades: {
     sprint: Boolean(diagnostics.sprintUpgradeActive),
@@ -51,7 +52,7 @@ const showcase = {
   showcaseMetrics: diagnostics.showcasePair ?? null,
   schema: {
     state: checkpoint.stateSchema ?? 'world-relative-senses-v3',
-    action: checkpoint.actionSchema ?? 'signed-horizontal-controls-v2',
+    action: CURRENT_POLICY_ACTION_SCHEMA,
   },
 };
 

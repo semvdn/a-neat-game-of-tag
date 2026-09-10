@@ -40,7 +40,7 @@ import type {
 import { AgentStatus } from '../types';
 import { DEFAULT_BIOME_WORLD_SEED, stampPlatformVisualBiome } from '../world/biomes';
 import { createDefaultDayNightConfig, type DayNightConfig } from '../world/dayNight';
-import type { NeatGenomeData, PolicyActionSchema } from '../learning/neat';
+import { CURRENT_POLICY_ACTION_SCHEMA, type NeatGenomeData, type PolicyActionSchema } from '../learning/neat';
 
 const VIEWPORT = { width: 1200, height: 800 } as const;
 const SHOWCASE_URL = './showcase/showcase_pair_gen7422.json';
@@ -178,9 +178,11 @@ const DemoApp: React.FC = () => {
         }
         const chaser = new LearningAgent('chaser');
         const runner = new LearningAgent('evader');
-        const actionSchema = next.schema?.action ?? next.chaser.genome.actionSchema ?? 'signed-horizontal-controls-v2';
-        chaser.setWeights(next.chaser.genome, actionSchema);
-        runner.setWeights(next.runner.genome, next.schema?.action ?? next.runner.genome.actionSchema ?? actionSchema);
+        if (next.schema?.action !== CURRENT_POLICY_ACTION_SCHEMA) {
+          throw new Error('Showcase asset uses an unsupported policy action schema.');
+        }
+        chaser.setWeights(next.chaser.genome);
+        runner.setWeights(next.runner.genome);
         chaser.setGeneration(next.chaser.generation);
         runner.setGeneration(next.runner.generation);
         chaserAgent.current = chaser;

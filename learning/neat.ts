@@ -1,7 +1,8 @@
 import { POLICY_OUTPUT_SPACE, STATE_VECTOR_SIZE } from '../constants';
 
 export type NeatRole = 'chaser' | 'evader' | 'general';
-export type PolicyActionSchema = 'signed-horizontal-controls-v2' | 'signed-horizontal-controls-v3';
+export const CURRENT_POLICY_ACTION_SCHEMA = 'signed-horizontal-controls-v3' as const;
+export type PolicyActionSchema = typeof CURRENT_POLICY_ACTION_SCHEMA;
 export type NodeGeneType = 'input' | 'hidden' | 'output';
 
 export interface NodeGene {
@@ -26,7 +27,7 @@ export interface NeatGenomeData {
   id: string;
   role: NeatRole;
   generation: number;
-  /** Controller decoder semantics. Missing means the historical v2 decoder for backward compatibility. */
+  /** Controller decoder semantics for this genome. Missing metadata uses the current schema. */
   actionSchema?: PolicyActionSchema;
   nodes: NodeGene[];
   connections: ConnectionGene[];
@@ -639,7 +640,7 @@ export function createGenomeWithArchitecture(
     }
   }
   addInitialRecurrentConnections(connections, tracker, nodes, arch.initialRecurrentConnections, arch.initialWeightScale);
-  return { id, role, generation, actionSchema: 'signed-horizontal-controls-v3', nodes, connections, fitness: 0 };
+  return { id, role, generation, actionSchema: CURRENT_POLICY_ACTION_SCHEMA, nodes, connections, fitness: 0 };
 }
 
 export function createMinimalGenome(
@@ -1109,6 +1110,7 @@ export function crossover(a: NeatGenomeData, b: NeatGenomeData, childId: string,
         id: childId,
         role: fitter.role,
         generation,
+        actionSchema: CURRENT_POLICY_ACTION_SCHEMA,
         nodes: childNodes,
         connections: safeConnections,
       };
@@ -1121,7 +1123,7 @@ export function crossover(a: NeatGenomeData, b: NeatGenomeData, childId: string,
     id: childId,
     role: fitter.role,
     generation,
-    actionSchema: fitter.actionSchema ?? 'signed-horizontal-controls-v2',
+    actionSchema: CURRENT_POLICY_ACTION_SCHEMA,
     nodes: childNodes,
     connections: safeConnections,
     fitness: 0,

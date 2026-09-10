@@ -2,15 +2,15 @@ import assert from 'node:assert/strict';
 import { LearningAgent } from '../learning/agent.ts';
 import { STATE_VECTOR_SIZE } from '../constants.ts';
 
-function neutralGenome(actionSchema) {
+function neutralGenome(actionSchema = 'signed-horizontal-controls-v3') {
   const nodes = [];
   for (let i = 0; i < STATE_VECTOR_SIZE; i++) nodes.push({ id: i, type: 'input', bias: 0, depth: 0 });
   for (let i = 0; i < 3; i++) nodes.push({ id: STATE_VECTOR_SIZE + i, type: 'output', bias: 0, depth: 1 });
   return {
-    id: actionSchema ? `neutral_${actionSchema}` : 'neutral_legacy',
+    id: `neutral_${actionSchema}`,
     role: 'chaser',
     generation: 1,
-    ...(actionSchema ? { actionSchema } : {}),
+    actionSchema,
     nodes,
     connections: [],
   };
@@ -18,19 +18,16 @@ function neutralGenome(actionSchema) {
 
 export function verifyPolicyDecoders() {
   const state = new Array(STATE_VECTOR_SIZE).fill(0);
+  const current = new LearningAgent('chaser', neutralGenome());
+  assert.equal(current.getActionSchema(), 'signed-horizontal-controls-v3');
+  assert.equal(current.chooseAction(state).horizontalDrive, 0, 'Neutral activation must decode to neutral horizontal control');
+  assert.equal(JSON.parse(current.exportJson()).actionSchema, 'signed-horizontal-controls-v3');
 
-  // Historical genomes did not carry a per-genome schema marker. They must continue to use the
-  // exact v2 decoder so the generation-7422 showcase and old checkpoints remain reproducible.
-  const legacy = new LearningAgent('chaser', neutralGenome());
-  assert.equal(legacy.getActionSchema(), 'signed-horizontal-controls-v2');
-  assert.equal(legacy.chooseAction(state).horizontalDrive, -1, 'Legacy v2 neutral activation must preserve its historical full-left decode');
+  assert.throws(
+    () => new LearningAgent('chaser', neutralGenome('signed-horizontal-controls-v2')),
+    /Unsupported policy action schema/,
+    'Legacy controller schemas must be rejected rather than silently decoded',
+  );
 
-  // New genomes are explicitly v3 and use the phenotype's native symmetric activation. A neutral
-  // network therefore means neutral horizontal control rather than an artificial directional bias.
-  const corrected = new LearningAgent('chaser', neutralGenome('signed-horizontal-controls-v3'));
-  assert.equal(corrected.getActionSchema(), 'signed-horizontal-controls-v3');
-  assert.equal(corrected.chooseAction(state).horizontalDrive, 0, 'v3 neutral activation must decode to neutral horizontal control');
-  assert.equal(JSON.parse(corrected.exportJson()).actionSchema, 'signed-horizontal-controls-v3');
-
-  console.log('Policy decoder regressions passed: legacy v2 compatibility and symmetric v3 control');
+  console.log('Policy decoder regressions passed: symmetric v3 control and legacy-schema rejection');
 }

@@ -56,11 +56,11 @@ let pairs = [['traverse', 'traverse'], ['traverse', 'idle'], ['run', 'traverse']
 if (args.includes('--checkpoint')) {
   const payload = JSON.parse(await readFile(option('--checkpoint'), 'utf8'));
   const cp = payload.evolutionCheckpoint || payload;
-  assert(cp.stateSchema === 'world-relative-senses-v3' && ['signed-horizontal-controls-v2', 'signed-horizontal-controls-v3'].includes(cp.actionSchema), 'Incompatible checkpoint schema');
+  assert(cp.stateSchema === 'world-relative-senses-v3' && cp.actionSchema === 'signed-horizontal-controls-v3' && cp.horizontalControlResolution === 'signed-axis-v3-symmetric', 'Incompatible checkpoint schema');
   const chaser = new LearningAgent('chaser');
   const runner = new LearningAgent('evader');
-  chaser.setWeights(cp.championChaser, cp.actionSchema);
-  runner.setWeights(cp.championEvader, cp.actionSchema);
+  chaser.setWeights(cp.championChaser);
+  runner.setWeights(cp.championEvader);
   const u = cp.upgradeConfig;
   const sprintOptions = (role, key) => u?.sprint?.[role]?.[key];
   baseOptions = {

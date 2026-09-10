@@ -155,21 +155,17 @@ The jump signal behaves like a button with hysteresis: it must cross a high thre
 
 Sprint scales acceleration and maximum speed while consuming stamina. Holding sprint also blocks stamina regeneration, which gives the controller a reason to learn when to release it.
 
-### Horizontal decoder compatibility
+### Horizontal control
 
-The NEAT phenotype uses a symmetric activation in approximately `[-1, 1]`. New genomes now use the **`signed-horizontal-controls-v3`** decoder, which feeds that value directly into horizontal drive:
+The NEAT phenotype uses a symmetric activation in approximately `[-1, 1]`. The **`signed-horizontal-controls-v3`** decoder feeds the first output directly into horizontal drive:
 
 ```text
 horizontalDrive = clamp(output0, -1, 1)
 ```
 
-This makes a zero neural activation genuinely neutral and gives left/right control symmetric ranges.
+A zero neural activation is therefore genuinely neutral, with symmetric ranges for leftward and rightward control. Current genomes and checkpoints carry this schema explicitly; incompatible controller schemas are rejected rather than translated at load time.
 
-The bundled generation-7422 showcase was trained under the historical **`signed-horizontal-controls-v2`** decoder, which remapped the same network output as `2 × output0 - 1`. Those existing genomes are deliberately kept on v2 when loaded so their evolved behaviour remains reproducible. Untagged historical genomes are also interpreted as v2 for backward compatibility.
-
-Freshly created genomes are explicitly marked v3, and that schema is inherited through cloning and crossover. A resumed v2 checkpoint therefore keeps its original controller semantics, while a new run starts with the corrected symmetric controller. Changing decoder semantics is treated as a policy-schema change rather than silently modifying an old checkpoint.
-
-Jump and sprint continue to clamp negative activations to zero and positive activations to at most one.
+Jump and sprint clamp negative activations to zero and positive activations to at most one.
 
 ## Why this architecture fits the problem
 
