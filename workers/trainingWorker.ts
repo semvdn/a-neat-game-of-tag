@@ -1180,7 +1180,9 @@ function evaluateShowcasePair(chaserGenome: NeatGenomeData, runnerGenome: NeatGe
   let branches = 0;
   let matches = 0;
   for (let i = 0; i < modes.length; i++) {
-    const result = runTrainingEpisode(chaserController, runnerController, (0x5a17c9e3 ^ Math.imul(generation + 1, 0x9e3779b1) ^ Math.imul(i + 1, 0x85ebca6b)) >>> 0, {
+    // Keep showcase comparisons on a fixed scenario panel. Generation-dependent seeds made
+    // unchanged historical pairs periodically swap rank for purely stochastic reasons.
+    const result = runTrainingEpisode(chaserController, runnerController, (0x5a17c9e3 ^ Math.imul(i + 1, 0x85ebca6b)) >>> 0, {
       trackChaserActions: false,
       trackEvaderActions: false,
       viewportSize,
@@ -3055,10 +3057,15 @@ function emitTelemetry(force = false) {
       totalJumps,
       lastChaserNeatMetrics: lastChaserMetrics,
       lastEvaderNeatMetrics: lastEvaderMetrics,
-      chaserChampionGenome: showcaseChaser.getWeights(),
-      evaderChampionGenome: showcaseEvader.getWeights(),
-      chaserChampionGeneration: showcasePairTelemetry?.chaserGeneration ?? (retainedChaserGeneralist?.telemetry.generation ?? championChaser.getGeneration()),
-      evaderChampionGeneration: showcasePairTelemetry?.runnerGeneration ?? (retainedEvaderGeneralist?.telemetry.generation ?? championEvader.getGeneration()),
+      // The champion arena must show the retained role-wise champions. The curated showcase pair
+      // is a separate export/demo concept and may intentionally include an older Hall-of-Fame
+      // policy; feeding it through the champion fields caused visibly weak models to reappear.
+      chaserChampionGenome: retainedChaserGeneralist ? cloneGenome(retainedChaserGeneralist.genome) : championChaser.getWeights(),
+      evaderChampionGenome: retainedEvaderGeneralist ? cloneGenome(retainedEvaderGeneralist.genome) : championEvader.getWeights(),
+      chaserChampionGeneration: retainedChaserGeneralist?.telemetry.generation ?? championChaser.getGeneration(),
+      evaderChampionGeneration: retainedEvaderGeneralist?.telemetry.generation ?? championEvader.getGeneration(),
+      showcaseChaserGenome: showcaseChaser.getWeights(),
+      showcaseEvaderGenome: showcaseEvader.getWeights(),
       showcasePair: showcasePairTelemetry ? { ...showcasePairTelemetry } : null,
       chaserGeneralistChampion: cloneGeneralistTelemetry(retainedChaserGeneralist?.telemetry || null),
       evaderGeneralistChampion: cloneGeneralistTelemetry(retainedEvaderGeneralist?.telemetry || null),

@@ -448,8 +448,12 @@ export interface DiagnosticsState {
   evaderNeatHistory?: NeatGenerationMetrics[];
   lastChaserNeatMetrics?: NeatGenerationMetrics | null;
   lastEvaderNeatMetrics?: NeatGenerationMetrics | null;
+  /** Retained role-wise champions used by the live champion arena. */
   chaserChampionGenome?: NeatGenomeData | null;
   evaderChampionGenome?: NeatGenomeData | null;
+  /** Separately curated pair reserved for demo/export selection. */
+  showcaseChaserGenome?: NeatGenomeData | null;
+  showcaseEvaderGenome?: NeatGenomeData | null;
   performanceHistory: PerformanceDataPoint[];
   totalTags: number;
   totalFalls: number;

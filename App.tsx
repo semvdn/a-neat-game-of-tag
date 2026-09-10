@@ -109,10 +109,12 @@ const formatTrainingRate = (value: number | undefined) => {
 
 const checkpointShowcasePayload = (payload: any) => {
   const diagnostics = payload?.uiDiagnostics;
-  if (!diagnostics?.chaserChampionGenome || !diagnostics?.evaderChampionGenome) return undefined;
+  const chaserGenome = diagnostics?.showcaseChaserGenome || diagnostics?.chaserChampionGenome;
+  const evaderGenome = diagnostics?.showcaseEvaderGenome || diagnostics?.evaderChampionGenome;
+  if (!chaserGenome || !evaderGenome) return undefined;
   return {
-    chaserGenome: diagnostics.chaserChampionGenome,
-    evaderGenome: diagnostics.evaderChampionGenome,
+    chaserGenome,
+    evaderGenome,
     telemetry: diagnostics.showcasePair || null,
   };
 };
@@ -238,6 +240,8 @@ export const App: React.FC = () => {
     lastEvaderNeatMetrics: null,
     chaserChampionGenome: null,
     evaderChampionGenome: null,
+    showcaseChaserGenome: null,
+    showcaseEvaderGenome: null,
     performanceHistory: [],
     totalTags: 0,
     totalFalls: 0,
@@ -337,9 +341,9 @@ export const App: React.FC = () => {
       const chaserGenome = curatedShowcase?.chaserGenome || checkpoint.championChaser;
       const evaderGenome = curatedShowcase?.evaderGenome || checkpoint.championEvader;
 
-      // Prefer the pair that was actually displayed when the checkpoint was exported. Full-run
-      // checkpoints keep retained generalists separately, so using championChaser/championEvader
-      // alone can silently replace a deliberately curated Hall-of-Fame showcase pair.
+      // A full checkpoint may carry a separately curated demo/export pair. The live champion
+      // arena itself follows retained role-wise champions; loading a showcase explicitly is the
+      // one place where the curated Hall-of-Fame pair should take precedence.
       const nextChaser = new LearningAgent('chaser');
       const nextEvader = new LearningAgent('evader');
       nextChaser.setWeights(chaserGenome);
@@ -652,6 +656,8 @@ export const App: React.FC = () => {
               lastEvaderNeatMetrics: evaderMetric || prev.lastEvaderNeatMetrics,
               chaserChampionGenome: payload.chaserChampionGenome || prev.chaserChampionGenome,
               evaderChampionGenome: payload.evaderChampionGenome || prev.evaderChampionGenome,
+              showcaseChaserGenome: payload.showcaseChaserGenome || prev.showcaseChaserGenome,
+              showcaseEvaderGenome: payload.showcaseEvaderGenome || prev.showcaseEvaderGenome,
               hallOfFame: payload.hallOfFame || prev.hallOfFame,
               lastCrossGenerationBenchmark: benchmarkMetric || (benchmarkRevisionChanged ? null : prev.lastCrossGenerationBenchmark),
               benchmarkHistory: appendUnique(benchmarkRevisionChanged ? [] : prev.benchmarkHistory, benchmarkMetric),
@@ -1431,7 +1437,7 @@ export const App: React.FC = () => {
     setDiagnosticsState(prev => ({
       ...prev,
       chaserNeatHistory: [], evaderNeatHistory: [], lastChaserNeatMetrics: null, lastEvaderNeatMetrics: null,
-      chaserChampionGenome: null, evaderChampionGenome: null, performanceHistory: [], totalTags: 0, totalFalls: 0,
+      chaserChampionGenome: null, evaderChampionGenome: null, showcaseChaserGenome: null, showcaseEvaderGenome: null, performanceHistory: [], totalTags: 0, totalFalls: 0,
       totalChaserFalls: 0, totalChaserEscapes: 0, totalRunnerFalls: 0,
       totalSuccessfulJumps: 0, actionDistribution: {}, chaserActionDistribution: {}, evaderActionDistribution: {}, generation: 0,
       chaserElo: INITIAL_ELO, evaderElo: INITIAL_ELO,
@@ -1467,6 +1473,8 @@ export const App: React.FC = () => {
       lastEvaderNeatMetrics: null,
       chaserChampionGenome: null,
       evaderChampionGenome: null,
+      showcaseChaserGenome: null,
+      showcaseEvaderGenome: null,
       performanceHistory: [],
       totalTags: 0,
       totalFalls: 0,

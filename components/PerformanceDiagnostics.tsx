@@ -704,7 +704,7 @@ export const PerformanceDiagnostics: React.FC<PerformanceDiagnosticsProps> = ({
             <div className="grid md:grid-cols-3 gap-3">
               <MetricCard label="Retained Chaser" value={retainedChaser ? `g${retainedChaser.generation}` : '—'} hint={retainedChaser ? `pursuit ${fmt(retainedChaser.contemporaryPursuitScore)} · benchmark ${retainedChaser.benchmark.meanFitness.toFixed(1)}` : 'best validated generalist so far'} />
               <MetricCard label="Retained Runner" value={retainedRunner ? `g${retainedRunner.generation}` : '—'} hint={retainedRunner ? `${((retainedRunner.contemporaryPaceCompletion ?? 0) * 100).toFixed(0)}% contemporary pace · ${((retainedRunner.benchmark.paceCompletion ?? 0) * 100).toFixed(0)}% benchmark pace` : 'best validated generalist so far'} />
-              <MetricCard label="Showcase pair" value={showcase ? `g${showcase.chaserGeneration} / g${showcase.runnerGeneration}` : '—'} hint={showcase ? `${(showcase.cleanTagsPerEpisode ?? showcase.tagsPerEpisode).toFixed(2)} clean tags/ep · ${(showcase.runnerPaceCompletion * 100).toFixed(0)}% Runner pace` : 'readable retained pair used by the champion view'} />
+              <MetricCard label="Showcase pair" value={showcase ? `g${showcase.chaserGeneration} / g${showcase.runnerGeneration}` : '—'} hint={showcase ? `${(showcase.cleanTagsPerEpisode ?? showcase.tagsPerEpisode).toFixed(2)} clean tags/ep · ${(showcase.runnerPaceCompletion * 100).toFixed(0)}% Runner pace · demo/export only` : 'candidate demo/export pair; separate from the champion arena'} />
             </div>
 
             <div className="grid lg:grid-cols-2 gap-4">

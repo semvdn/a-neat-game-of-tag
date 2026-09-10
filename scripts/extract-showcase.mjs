@@ -18,8 +18,8 @@ if (payload?.kind !== 'full-evolution-checkpoint' || !checkpoint) {
   throw new Error('Expected a full NEAT evolution checkpoint.');
 }
 
-const chaserGenome = diagnostics.chaserChampionGenome ?? checkpoint.championChaser;
-const runnerGenome = diagnostics.evaderChampionGenome ?? checkpoint.championEvader;
+const chaserGenome = diagnostics.showcaseChaserGenome ?? diagnostics.chaserChampionGenome ?? checkpoint.championChaser;
+const runnerGenome = diagnostics.showcaseEvaderGenome ?? diagnostics.evaderChampionGenome ?? checkpoint.championEvader;
 if (!chaserGenome?.nodes || !chaserGenome?.connections || !runnerGenome?.nodes || !runnerGenome?.connections) {
   throw new Error('Checkpoint does not contain a compatible showcase pair.');
 }

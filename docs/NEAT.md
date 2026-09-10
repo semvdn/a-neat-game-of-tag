@@ -61,11 +61,11 @@ The lower-quartile component makes selection care about weak matchups instead of
 
 ## Validation is separate from breeding
 
-After common-panel evaluation, only the strongest few genomes are re-tested against held-out current opponents and historical policies. **Held-out validation does not change breeding fitness.** It is used to decide retained/generalist champions and the visible showcase, not to rewrite the evolutionary competition that produced the generation.
+After common-panel evaluation, only the strongest few genomes are re-tested against held-out current opponents and historical policies. **Held-out validation does not change breeding fitness.** It is used to decide retained/generalist champions, not to rewrite the evolutionary competition that produced the generation.
 
 This separation prevents leakage: if validation results fed back into the same generation's fitness, the held-out set would no longer be held out.
 
-The worker also freezes a cross-generation benchmark bank and keeps retained generalist champions separate from transient generation champions. This reduces the chance that a temporary rock-paper-scissors winner automatically replaces a policy that is reliable across a broader opponent set.
+The worker also freezes a cross-generation benchmark bank and keeps retained generalist champions separate from transient generation champions. The live champion arena follows those retained role-wise champions. A separately curated showcase pair may draw from the Hall of Fame for demo/export purposes, but it cannot replace what the champion arena displays. Showcase pair evaluation uses a fixed scenario panel so unchanged historical candidates do not oscillate in and out merely because the generation number changed the test seeds.
 
 ## Key files
 
