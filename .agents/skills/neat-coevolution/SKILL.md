@@ -1,6 +1,6 @@
 ---
 name: neat-coevolution
-description: Use when changing NEAT evolution, opponent sampling, species management, champion retention, network architecture, fitness aggregation, or role co-evolution in this Tag Agents repository.
+description: Use when changing NEAT evolution, opponent sampling, species management, champion retention, network architecture, fitness aggregation, or role co-evolution in this A NEAT Game of Tag repository.
 ---
 
 # NEAT co-evolution workflow

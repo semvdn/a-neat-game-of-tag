@@ -240,7 +240,7 @@ The normal sidebar intentionally shows only live role/action/stamina/Elo informa
 
 ## Coding-agent guidance
 
-The repository now includes both `AGENTS.md` (the cross-agent autodiscovery convention) and the requested `agent.md` copy. Project-local Agent Skills live under `skills/*/SKILL.md`. They capture the recurring workflows for NEAT co-evolution, procedural terrain, training diagnostics, UI telemetry, and release/Git packaging. Agents should read the relevant skill before making substantial changes and must make a real Git commit before packaging a handoff ZIP.
+The repository now includes `AGENTS.md` as the cross-agent autodiscovery entry point. Project-local Agent Skills live under `.agents/skills/*/SKILL.md`. They capture the recurring workflows for NEAT co-evolution, procedural terrain, training diagnostics, UI telemetry, and release/Git packaging. Agents should read the relevant skill before making substantial changes and must make a real Git commit before packaging a handoff ZIP.
 
 ## Important files
 

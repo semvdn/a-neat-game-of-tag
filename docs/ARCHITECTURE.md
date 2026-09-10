@@ -28,19 +28,16 @@ Successful-evade telemetry now means a pressure exit with no intervening tag or 
 
 Landing detection sweeps the feet to the platform top and checks horizontal overlap at impact. It chooses the earliest physical surface independently of platform array order. Grazing edge contacts finish at impact; ordinary landings preserve horizontal travel. Revision `solid-group-v12` also sweeps moving surfaces relative to the body, makes every route physically landable, and refreshes checkpoint validation through the existing objective-migration path. Upward passage through platforms remains one-way. `bodyContacts.ts` resolves solid Runner pairs after terrain steps; `groupCohesion.ts` defines world-distance bands used by bounded episode fitness. See [solid-group rules](SOLID_GROUP.md).
 
-Read `AGENTS.md` and the relevant `skills/` entry. Trace both visible and headless paths for gameplay changes. Keep reproduction fitness, held-out validation, retained champions, and presentation curation separate. Move code when it isolates a real responsibility; avoid broad rewrites of the worker while changing learning behavior.
+Read `AGENTS.md` and the relevant `.agents/skills/` entry. Trace both visible and headless paths for gameplay changes. Keep reproduction fitness, held-out validation, retained champions, and presentation curation separate. Move code when it isolates a real responsibility; avoid broad rewrites of the worker while changing learning behavior.
 
 Validation commands:
 
 ```sh
-npm run lint
-npm run build
-npm run build:demo
-npm run evaluate -- --seeds 8 --verify
+npm run check
 git diff --check
 ```
 
-`npm run build` first regenerates `styles.css` from the utility classes present in the source using local Tailwind, then Vite emits only local/relative runtime assets. Still smoke-test the browser because static type/build checks do not exercise canvas rendering, fullscreen, wake-lock behavior, or checkpoint bootstrap. For simulation/terrain edits, add focused invariant checks beyond the episode lab. Commit intended changes explicitly; preserve unrelated working-tree files.
+`npm run check` runs TypeScript validation, both production builds, and the deterministic 8-seed regression suite. `npm run build` first regenerates `styles.css` from the utility classes present in the source using local Tailwind, then Vite emits only local/relative runtime assets. Still smoke-test the browser because static type/build checks do not exercise canvas rendering, fullscreen, wake-lock behavior, or checkpoint bootstrap. For simulation/terrain edits, add focused invariant checks beyond the episode lab. Commit intended changes explicitly; preserve unrelated working-tree files.
 
 
 

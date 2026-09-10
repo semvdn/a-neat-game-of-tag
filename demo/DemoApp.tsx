@@ -422,7 +422,7 @@ const DemoApp: React.FC = () => {
     return (
       <div className="w-screen h-screen bg-gray-950 text-gray-100 flex items-center justify-center p-6 font-sans">
         <div className="max-w-lg rounded-2xl border border-red-500/30 bg-gray-900 p-6 shadow-2xl">
-          <h1 className="text-xl font-bold text-red-300">Tag Agents showcase could not start</h1>
+          <h1 className="text-xl font-bold text-red-300">A NEAT Game of Tag could not start</h1>
           <p className="mt-3 text-sm leading-relaxed text-gray-400">{loadError}</p>
           <button onClick={() => window.location.reload()} className="mt-5 rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-200 hover:bg-gray-800">Reload</button>
         </div>
@@ -455,8 +455,8 @@ const DemoApp: React.FC = () => {
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/35 backdrop-blur-[1px]">
           <div className="text-center px-6 drop-shadow-2xl">
             <div className="text-[11px] uppercase tracking-[0.45em] text-cyan-200/90">Neuroevolution showcase</div>
-            <h1 className="mt-3 text-4xl sm:text-6xl font-black tracking-tight text-white">TAG AGENTS</h1>
-            <p className="mt-3 text-sm sm:text-base text-gray-300">Emergent pursuit and evasion through NEAT</p>
+            <h1 className="mt-3 text-4xl sm:text-6xl font-black tracking-tight text-white">A NEAT GAME OF TAG</h1>
+            <p className="mt-3 text-sm sm:text-base text-gray-300">Evolving pursuit and evasion with NeuroEvolution of Augmenting Topologies</p>
             <p className="mt-2 font-mono text-[11px] text-gray-400">Checkpoint {asset.sourceCheckpointGeneration.toLocaleString()} · Chaser g{asset.chaser.generation} · Runner g{asset.runner.generation}</p>
           </div>
         </div>
@@ -464,7 +464,7 @@ const DemoApp: React.FC = () => {
 
       {asset && (
         <div className="pointer-events-none absolute left-4 top-4 z-10 rounded-lg border border-cyan-500/20 bg-black/55 px-3 py-2 backdrop-blur shadow-lg">
-          <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-200">Tag Agents</div>
+          <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-200">A NEAT Game of Tag</div>
           <div className="mt-1 font-mono text-[10px] text-gray-400">g{asset.chaser.generation} chase · g{asset.runner.generation} evade</div>
         </div>
       )}

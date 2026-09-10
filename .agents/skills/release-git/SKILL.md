@@ -1,6 +1,6 @@
 ---
 name: release-git
-description: Use at the end of any codebase modification when validating, committing, and packaging a downloadable Tag Agents repository with trustworthy Git history.
+description: Use at the end of any codebase modification when validating, committing, and packaging a downloadable A NEAT Game of Tag repository with trustworthy Git history.
 ---
 
 # Release and Git workflow

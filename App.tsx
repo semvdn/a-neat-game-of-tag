@@ -1686,7 +1686,7 @@ export const App: React.FC = () => {
         className="flex items-center justify-center bg-gray-950 text-cyan-400 font-mono"
         style={scaledViewportStyle}
       >
-        Loading Artwork...
+        Loading A NEAT Game of Tag…
       </div>
     );
   }
@@ -1700,14 +1700,14 @@ export const App: React.FC = () => {
       <header style={exhibition ? { display: "none" } : undefined} className="flex flex-wrap items-center gap-3 bg-gray-900/80 backdrop-blur border border-gray-800 px-5 py-3 rounded-xl shadow-lg">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-cyan-600 to-emerald-500 flex items-center justify-center text-white font-bold shadow-md shadow-cyan-500/20">
-            AI
+            N
           </div>
           <div>
             <h1 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-teal-300 to-emerald-400">
-              NEAT Multi-Agent Tag Studio
+              A NEAT Game of Tag
             </h1>
             <p className="text-xs text-gray-400">
-              Persistent Champion Arena + Independent Background NEAT Evolution
+              Evolving pursuit and evasion with NeuroEvolution of Augmenting Topologies
             </p>
           </div>
         </div>

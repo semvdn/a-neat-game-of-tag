@@ -1,6 +1,0 @@
-{
-  "name": "Tag Agents",
-  "description": "A digital artwork and neuroevolution testbed where autonomous agents learn to play tag on an infinite procedural platformer using NEAT, with speciation, structural mutation, dual populations, reproducible evaluation, and performance diagnostics.",
-  "requestFramePermissions": [],
-  "majorCapabilities": []
-}

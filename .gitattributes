@@ -1,0 +1,5 @@
+# Large generated/model assets should not dominate GitHub diffs or language statistics.
+public/showcase/*.json -diff linguist-generated=true
+demo/public/showcase/*.json -diff linguist-generated=true
+styles.css linguist-generated=true
+docs/media/*.gif binary

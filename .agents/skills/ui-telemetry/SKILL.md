@@ -1,6 +1,6 @@
 ---
 name: ui-telemetry
-description: Use when editing the sidebar, diagnostics, charts, telemetry labels, status panels, controls, or analysis-facing UI in this Tag Agents repository.
+description: Use when editing the sidebar, diagnostics, charts, telemetry labels, status panels, controls, or analysis-facing UI in this A NEAT Game of Tag repository.
 ---
 
 # UI and telemetry workflow

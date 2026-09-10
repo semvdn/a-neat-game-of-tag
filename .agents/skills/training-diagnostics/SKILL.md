@@ -1,6 +1,6 @@
 ---
 name: training-diagnostics
-description: Use when analyzing exported Tag Agents experiment/analysis JSON, diagnosing learned behavior, comparing experiment conditions, or deciding the next training-system change.
+description: Use when analyzing exported A NEAT Game of Tag experiment/analysis JSON, diagnosing learned behavior, comparing experiment conditions, or deciding the next training-system change.
 ---
 
 # Training diagnostics workflow

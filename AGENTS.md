@@ -1,10 +1,10 @@
-# Coding-agent instructions for NEAT Tag Agents
+# Coding-agent instructions for A NEAT Game of Tag
 
 ## Project goal
 
 This repository evolves Chaser and Runner NEAT policies for an infinite platforming game of tag. The visible champion arena and headless training must stay behaviorally aligned. The main objective is interesting, robust pursuit and evasion across procedural terrain without reward exploits, camera-dependent policy behavior, or brittle one-off champion selection.
 
-Read `README.md` before substantial changes. For recurring task-specific workflows, read the relevant file under `skills/*/SKILL.md` before editing.
+Read `README.md` before substantial changes. For recurring task-specific workflows, read the relevant file under `.agents/skills/*/SKILL.md` before editing.
 
 ## Non-negotiable invariants
 
@@ -68,11 +68,11 @@ The default UI should emphasize only metrics that change a training decision: ge
 
 ## Skill index
 
-- `skills/neat-coevolution/SKILL.md` — NEAT/co-evolution changes and selection/retention safeguards.
-- `skills/procedural-terrain/SKILL.md` — branches, moving platforms, overlap/reachability/route invariants.
-- `skills/training-diagnostics/SKILL.md` — experiment-report analysis and deciding what to change next.
-- `skills/ui-telemetry/SKILL.md` — compact telemetry and UI-control sanity checks.
-- `skills/release-git/SKILL.md` — validation, real commits, and ZIP handoff verification.
+- `.agents/skills/neat-coevolution/SKILL.md` — NEAT/co-evolution changes and selection/retention safeguards.
+- `.agents/skills/procedural-terrain/SKILL.md` — branches, moving platforms, overlap/reachability/route invariants.
+- `.agents/skills/training-diagnostics/SKILL.md` — experiment-report analysis and deciding what to change next.
+- `.agents/skills/ui-telemetry/SKILL.md` — compact telemetry and UI-control sanity checks.
+- `.agents/skills/release-git/SKILL.md` — validation, real commits, and ZIP handoff verification.
 
 ## Instruction/skill format references
 

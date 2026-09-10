@@ -1,20 +1,33 @@
-# NEAT Tag Agents
+# A NEAT Game of Tag
 
-An evolving game of tag intended to become a generative artwork: three autonomous bodies pursue, evade, and exchange roles across an infinite procedural landscape. Separate Chaser and Runner NEAT populations train in background workers; retained champions inhabit the continuous visible world.
+*Evolving pursuit and evasion with NeuroEvolution of Augmenting Topologies*
+
+[![Validate project](https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY/actions/workflows/ci.yml)
+
+**Status:** v1.0 feature-frozen; current work focuses on evaluation, soak testing, and presentation rather than adding new gameplay systems.
+
+An interactive neuroevolution project in which autonomous Chaser and Runner policies co-evolve to play tag across an infinite procedural platform world. The project combines a shared real-time/headless simulation, custom NEAT evolution, multi-agent evaluation, procedural terrain, diagnostic tooling, and a lightweight browser showcase.
 
 [**▶ Open the live GitHub Pages demo**](https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPOSITORY/)
 
-[![Tag Agents gameplay](docs/media/gameplay.gif)](https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPOSITORY/)
+[![A NEAT Game of Tag gameplay](docs/media/gameplay.gif)](https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPOSITORY/)
 
-The public demo is deliberately lightweight: it ships the curated **Chaser g7410 + Runner g4381** pair and the visual simulation, but not the training worker, population checkpoint, experiment controls, or checkpoint-management UI. The full research application remains available in this repository.
+The public demo is deliberately lightweight: it ships the curated **Chaser g7410 + Runner g4381** pair and the visual simulation, but not the training worker, population checkpoint, experiment controls, or checkpoint-management UI. The full research application remains in this repository.
 
-The aim remains engaging interaction and readable movement over long viewing periods. High fitness or frequent tags alone do not establish an interesting painting.
+> Publishing this repository for the first time? Run `npm run configure:github -- OWNER/REPOSITORY` once after creating the GitHub repo to replace the placeholder repository and Pages links.
 
-> Publishing this repository for the first time? Run `npm run configure:github -- OWNER/REPOSITORY` once after creating the GitHub repo to replace the two placeholder links above with the real repository and Pages URLs.
+## What this project demonstrates
+
+- **Neuroevolution and NEAT:** topology mutation, speciation, recurrent connections, champion retention, and separate co-evolving Chaser/Runner populations.
+- **Multi-agent learning design:** common opponent panels, Hall-of-Fame opponents, deterministic evaluation, role-specific fitness, and safeguards against reward exploits.
+- **Simulation engineering:** one shared gameplay core for both visible play and headless training, including platform physics, route-aware pursuit, moving platforms, respawn, body contacts, and failure handling.
+- **Procedural systems:** deterministic infinite terrain, branching routes, ten visual/mechanical biomes, day/night presentation, and seeded evaluation worlds.
+- **ML observability:** topology inspection, compact training telemetry, checkpointing, held-out evaluation, experiment reports, and reproducibility checks.
+- **Production-oriented presentation:** an offline exhibition mode plus a separate tree-shaken GitHub Pages showcase that reuses the exact simulation and trained policies without shipping the training infrastructure.
 
 ## Clone and run the full app locally
 
-Requires **Node.js 22 or newer**, npm, and a modern desktop browser.
+Requires **Node.js 22 or newer**, npm, and a modern desktop browser. An `.nvmrc` is included, so nvm users can run `nvm use` before installing dependencies.
 
 ```sh
 git clone https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY.git
@@ -45,7 +58,7 @@ npm run build:demo
 npm run preview:demo
 ```
 
-Deployment is already wired in [.github/workflows/pages.yml](.github/workflows/pages.yml). After selecting **GitHub Actions** as the Pages source in repository settings, every push to `main` rebuilds and deploys `dist-demo/`. See the [GitHub Pages setup guide](docs/GITHUB_PAGES.md).
+Deployment is wired in [.github/workflows/pages.yml](.github/workflows/pages.yml). After selecting **GitHub Actions** as the Pages source in repository settings, every push to `main` rebuilds and deploys `dist-demo/`. See the [GitHub Pages setup guide](docs/GITHUB_PAGES.md).
 
 ## Evaluate changes
 
@@ -79,16 +92,13 @@ Current checkpoints use `world-relative-senses-v3` and `signed-horizontal-contro
 - [Reproducible production-worker training experiments](docs/TRAINING_EXPERIMENTS.md)
 - [Architecture and contributor workflow](docs/ARCHITECTURE.md)
 - [Detailed simulation, training, and checkpoint reference](docs/SIMULATION.md)
-- [Agent instructions](AGENTS.md) and [task-specific skills](skills/README.md)
+- [Agent instructions](AGENTS.md) and [task-specific skills](.agents/skills/README.md)
 
 ## Validate
 
 ```sh
-npm run lint
-npm run build
-npm run build:demo
-npm run evaluate -- --seeds 8 --verify
+npm run check
 git diff --check
 ```
 
-Build output and generated lab reports are ignored. Both production targets regenerate the Tailwind utility sheet locally and require no remote runtime assets. The full build carries the restorable evolution checkpoint; the Pages build carries only the compact showcase pair. Serve either build from HTTP rather than opening its `index.html` directly from `file://`.
+`npm run check` performs TypeScript validation, both production builds, and the deterministic 8-seed regression suite. Build output and generated lab reports are ignored. Both production targets regenerate the Tailwind utility sheet locally and require no remote runtime assets. The full build carries the restorable evolution checkpoint; the Pages build carries only the compact showcase pair. Serve either build from HTTP rather than opening its `index.html` directly from `file://`.
