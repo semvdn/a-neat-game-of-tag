@@ -1,6 +1,6 @@
 import { DEFAULT_TRAINING_FITNESS_CONFIG, sanitizeTrainingFitnessConfig } from './learning/trainingFitnessConfig';
 import { resolveRunnerContacts } from './learning/bodyContacts';
-import { useExhibitionMode } from './hooks/useExhibitionMode';
+import { useShowcaseMode } from './hooks/useShowcaseMode';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { InfoPanel } from './components/InfoPanel';
@@ -61,7 +61,7 @@ import {
 import { Activity, Play, Pause, RotateCcw, MonitorPlay, Cpu, Minus, Plus } from 'lucide-react';
 import { DEFAULT_TERRAIN_VARIETY_CONFIG, continuousTerrainRuntime, sanitizeTerrainVarietyConfig } from './learning/terrainConfig';
 import { BUNDLED_SHOWCASE_GENERATION, loadBundledShowcaseCheckpoint } from './services/showcaseCheckpoint';
-import { exhibitionTrainingRequested, requestExhibitionRecovery } from './services/runtimeRecovery';
+import { showcaseTrainingRequested, requestShowcaseRecovery } from './services/runtimeRecovery';
 import { DEFAULT_BIOME_WORLD_SEED, stampPlatformVisualBiome } from './world/biomes';
 import type { DayNightConfig } from './world/dayNight';
 import { DAY_NIGHT_STORAGE_KEY, createDefaultDayNightConfig, resolveWorldHour, sanitizeDayNightConfig } from './world/dayNight';
@@ -202,7 +202,7 @@ const loadNetworkArchitecture = (): NetworkArchitectureSuiteConfig => {
 };
 
 export const App: React.FC = () => {
-  const { exhibition, setExhibition, controlsVisible, revealControls } = useExhibitionMode();
+  const { showcase, setShowcase, controlsVisible, revealControls } = useShowcaseMode();
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSimulating, setIsSimulating] = useState(false);
@@ -217,7 +217,7 @@ export const App: React.FC = () => {
   const [cameraZoom, setCameraZoom] = useState(1);
   const [dayNightConfig, setDayNightConfig] = useState<DayNightConfig>(loadDayNightConfig);
   const [isVisualPaused, setIsVisualPaused] = useState(false);
-  const [isTrainingPaused, setIsTrainingPaused] = useState(() => exhibition && !exhibitionTrainingRequested());
+  const [isTrainingPaused, setIsTrainingPaused] = useState(() => showcase && !showcaseTrainingRequested());
   const [showcaseLoadState, setShowcaseLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [upgradeConfig, setUpgradeConfig] = useState<UpgradeConfig>(loadUpgradeConfig);
   const [trainingFitnessConfig, setTrainingFitnessConfig] = useState<TrainingFitnessConfig>(loadTrainingFitnessConfig);
@@ -305,8 +305,8 @@ export const App: React.FC = () => {
   const workerRef = useRef<Worker | null>(null);
   const bundledShowcasePayloadRef = useRef<any>(null);
   const showcaseRestoreRequestIdRef = useRef<number | null>(null);
-  const exhibitionRef = useRef(exhibition);
-  exhibitionRef.current = exhibition;
+  const showcaseRef = useRef(showcase);
+  showcaseRef.current = showcase;
   const isTrainingPausedRef = useRef(isTrainingPaused);
   isTrainingPausedRef.current = isTrainingPaused;
   const initializedRef = useRef(false);
@@ -510,7 +510,7 @@ export const App: React.FC = () => {
     initializeGameState();
   }, [initializeGameState]);
 
-  // Load the curated exhibition checkpoint from a local production asset. Visible playback can
+  // Load the curated showcase checkpoint from a local production asset. Visible playback can
   // still run from these champions if background evolution is unavailable or deliberately paused.
   useEffect(() => {
     let cancelled = false;
@@ -541,8 +541,8 @@ export const App: React.FC = () => {
       worker.onerror = event => {
         console.error('Training worker failed:', event.message || event);
         setCheckpointLibraryMessage('Background training worker stopped. The visible showcase can continue independently.');
-        if (exhibitionRef.current && !isTrainingPausedRef.current) {
-          requestExhibitionRecovery('training-worker');
+        if (showcaseRef.current && !isTrainingPausedRef.current) {
+          requestShowcaseRecovery('training-worker');
         }
       };
 
@@ -794,18 +794,18 @@ export const App: React.FC = () => {
     });
   }, [showcaseLoadState]);
 
-  // A persistent exhibition URL is an unattended-kiosk entry point. It starts visual playback as
+  // A persistent showcase URL is a distraction-free presentation entry point. It starts visual playback as
   // soon as the local curated checkpoint is installed. Background evolution is paused by default
-  // unless the URL explicitly opts in with ?train=1. Entering Exhibit from an idle studio also
+  // unless the URL explicitly opts in with ?train=1. Entering Showcase from an idle full app also
   // preserves the curated pair; entering while an existing run is active preserves that run's
   // current training pause/resume choice.
-  const previousExhibitionRef = useRef(exhibition);
+  const previousShowcaseRef = useRef(showcase);
   useEffect(() => {
-    const enteredExhibition = exhibition && !previousExhibitionRef.current;
-    previousExhibitionRef.current = exhibition;
-    if (enteredExhibition && !isSimulating) setIsTrainingPaused(true);
-    if (exhibition && showcaseLoadState === 'ready') setIsSimulating(true);
-  }, [exhibition, showcaseLoadState, isSimulating]);
+    const enteredShowcase = showcase && !previousShowcaseRef.current;
+    previousShowcaseRef.current = showcase;
+    if (enteredShowcase && !isSimulating) setIsTrainingPaused(true);
+    if (showcase && showcaseLoadState === 'ready') setIsSimulating(true);
+  }, [showcase, showcaseLoadState, isSimulating]);
 
   useEffect(() => {
     localStorage.setItem(UPGRADE_STORAGE_KEY, JSON.stringify(upgradeConfig));
@@ -892,7 +892,7 @@ export const App: React.FC = () => {
     };
 
     const requestWakeLock = async () => {
-      if (cancelled || !isSimulating || (isTrainingPaused && !exhibition) || document.visibilityState !== 'visible') return;
+      if (cancelled || !isSimulating || (isTrainingPaused && !showcase) || document.visibilityState !== 'visible') return;
       if (wakeLockRef.current) return;
       const wakeLockApi = (navigator as any).wakeLock;
       if (!wakeLockApi?.request) return;
@@ -922,7 +922,7 @@ export const App: React.FC = () => {
       }
     };
 
-    if (isSimulating && (!isTrainingPaused || exhibition)) void requestWakeLock();
+    if (isSimulating && (!isTrainingPaused || showcase)) void requestWakeLock();
     else void releaseWakeLock();
     document.addEventListener('visibilitychange', onVisibilityChange);
 
@@ -931,7 +931,7 @@ export const App: React.FC = () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       void releaseWakeLock();
     };
-  }, [isSimulating, isTrainingPaused, exhibition]);
+  }, [isSimulating, isTrainingPaused, showcase]);
 
   // Main-thread health monitor. A healthy trainer emits telemetry several times per second. If
   // telemetry goes quiet while the page is visible, ask the training worker to recover any stalled
@@ -1105,11 +1105,11 @@ export const App: React.FC = () => {
             activeUpgrades
           );
 
-          if (physics.jumped && !exhibition) playDynamicJumpSound(physics.jumpVelocity);
+          if (physics.jumped && !showcase) playDynamicJumpSound(physics.jumpVelocity);
           if (physics.fell) {
             fallenBodyIds.add(agent.id);
             visualFallsRef.current++;
-            if (!exhibition) playFallSound();
+            if (!showcase) playFallSound();
           }
 
           return physics.agent;
@@ -1224,7 +1224,7 @@ export const App: React.FC = () => {
           if (newTagger) newTagger.elo = chaserElo.current;
           if (oldTagger) oldTagger.elo = evaderElo.current;
 
-          if (!exhibition) playTagSound();
+          if (!showcase) playTagSound();
           const effectLife = 500;
           newState.tagEffects.push({
             position: { ...tagTransition.position },
@@ -1291,14 +1291,14 @@ export const App: React.FC = () => {
         // Attach only the live policy input vector needed by the optional senses overlay.
         newState.agents = newState.agents.map(agent => ({
           ...agent,
-          stateVector: showSenses && !exhibition ? getAgentStateVector(agent, newState, viewportSize) : undefined,
+          stateVector: showSenses && !showcase ? getAgentStateVector(agent, newState, viewportSize) : undefined,
           rewardBreakdown: undefined,
         }));
 
         return newState;
       });
     },
-    [isSimulating, viewportSize, sprintUpgradeActive, controlledJumpUpgradeActive, upgradeConfig, terrainVarietyConfig, showSenses, exhibition]
+    [isSimulating, viewportSize, sprintUpgradeActive, controlledJumpUpgradeActive, upgradeConfig, terrainVarietyConfig, showSenses, showcase]
   );
 
   const updateSimulation = useCallback(
@@ -1341,7 +1341,7 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (exhibition) return;
+      if (showcase) return;
       if (event.key.toLowerCase() !== 's' || event.repeat) return;
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
@@ -1352,7 +1352,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [exhibition]);
+  }, [showcase]);
 
 
   const handleResetChampionGame = useCallback(() => {
@@ -1693,11 +1693,11 @@ export const App: React.FC = () => {
 
   return (
     <div
-      className={`flex flex-col overflow-hidden bg-gray-950 font-sans ${exhibition ? "" : "p-4 gap-3"}`}
-      onPointerMove={exhibition ? revealControls : undefined}
-      style={exhibition ? { width: '100vw', height: '100vh', cursor: controlsVisible ? 'default' : 'none' } : scaledViewportStyle}
+      className={`flex flex-col overflow-hidden bg-gray-950 font-sans ${showcase ? "" : "p-4 gap-3"}`}
+      onPointerMove={showcase ? revealControls : undefined}
+      style={showcase ? { width: '100vw', height: '100vh', cursor: controlsVisible ? 'default' : 'none' } : scaledViewportStyle}
     >
-      <header style={exhibition ? { display: "none" } : undefined} className="flex flex-wrap items-center gap-3 bg-gray-900/80 backdrop-blur border border-gray-800 px-5 py-3 rounded-xl shadow-lg">
+      <header style={showcase ? { display: "none" } : undefined} className="flex flex-wrap items-center gap-3 bg-gray-900/80 backdrop-blur border border-gray-800 px-5 py-3 rounded-xl shadow-lg">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-cyan-600 to-emerald-500 flex items-center justify-center text-white font-bold shadow-md shadow-cyan-500/20">
             N
@@ -1790,7 +1790,7 @@ export const App: React.FC = () => {
             </button>
           </div>
 
-          <button onClick={() => setExhibition(true)} className="px-3 py-2 rounded-lg border border-gray-700 text-cyan-200" title="Exhibition mode (G). F toggles fullscreen; Escape returns to the studio.">Exhibit</button>
+          <button onClick={() => setShowcase(true)} className="px-3 py-2 rounded-lg border border-gray-700 text-cyan-200" title="Showcase mode (G). F toggles fullscreen; Escape returns to the full app.">Showcase</button>
           {/* Diagnostics Button */}
           <button
             onClick={() => setIsDiagnosticsOpen(true)}
@@ -1807,7 +1807,7 @@ export const App: React.FC = () => {
 
       <div className="flex flex-1 gap-4 min-h-0">
         <main
-          className={`flex-grow bg-[#1a202c] overflow-hidden relative ${exhibition ? "" : "rounded-xl border border-gray-800 shadow-2xl"}`}
+          className={`flex-grow bg-[#1a202c] overflow-hidden relative ${showcase ? "" : "rounded-xl border border-gray-800 shadow-2xl"}`}
         >
           {!isSimulating && (
             <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center gap-4">
@@ -1826,7 +1826,7 @@ export const App: React.FC = () => {
               </div>
             </div>
           )}
-          {isSimulating && !exhibition && (
+          {isSimulating && !showcase && (
             <div className="absolute top-3 left-3 z-[5] pointer-events-none rounded-lg border border-cyan-500/25 bg-black/65 backdrop-blur px-3 py-2 text-[11px] text-gray-400 shadow-lg">
               <div className="font-semibold text-cyan-200">Champion arena · continuous game</div>
               <div className="font-mono mt-0.5">Chaser G{installedChampionGenerationRef.current.chaser} · Runner G{installedChampionGenerationRef.current.evader}</div>
@@ -1836,17 +1836,17 @@ export const App: React.FC = () => {
             <GameCanvas
               gameState={gameState}
               showTrails={showTrails}
-              showSenses={showSenses && !exhibition}
+              showSenses={showSenses && !showcase}
               cameraZoom={cameraZoom}
               dayNightConfig={dayNightConfig}
             />
           )}
         </main>
-        {!exhibition && <InfoPanel
+        {!showcase && <InfoPanel
           agents={gameState.agents}
             showTrails={showTrails}
           onToggleTrails={handleToggleTrails}
-          showSenses={showSenses && !exhibition}
+          showSenses={showSenses && !showcase}
           onToggleSenses={handleToggleSenses}
           dayNightConfig={dayNightConfig}
           onUpdateDayNightConfig={updateDayNightConfig}
@@ -1862,10 +1862,10 @@ export const App: React.FC = () => {
         />}
       </div>
 
-      {exhibition && <button onClick={() => setExhibition(false)} onFocus={revealControls} aria-label="Return to studio" style={{ opacity: controlsVisible ? 1 : 0 }} className="fixed top-4 right-4 z-50 px-3 py-2 rounded-lg bg-black/70 text-gray-300 text-xs focus:!opacity-100">Return to studio · G / Esc</button>}
+      {showcase && <button onClick={() => setShowcase(false)} onFocus={revealControls} aria-label="Return to full app" style={{ opacity: controlsVisible ? 1 : 0 }} className="fixed top-4 right-4 z-50 px-3 py-2 rounded-lg bg-black/70 text-gray-300 text-xs focus:!opacity-100">Return to full app · G / Esc</button>}
       {/* Full Screen Interactive Performance Diagnostics Suite */}
       <PerformanceDiagnostics
-        isOpen={isDiagnosticsOpen && !exhibition}
+        isOpen={isDiagnosticsOpen && !showcase}
         onClose={() => setIsDiagnosticsOpen(false)}
         diagnostics={diagnosticsState}
         visualSpeed={visualSpeed}

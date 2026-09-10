@@ -31,8 +31,8 @@ Read `README.md` before substantial changes. For recurring task-specific workflo
 - `components/GameCanvas.tsx` / `components/drawing.ts` — presentation camera and senses rendering.
 - `components/InfoPanel.tsx` — compact live controls/status.
 - `components/PerformanceDiagnostics.tsx` — diagnostics, architecture tools, checkpoint/run management.
-- `services/showcaseCheckpoint.ts` / `public/showcase/` — validated bundled exhibition checkpoint.
-- `services/runtimeRecovery.ts` / `components/ArtworkErrorBoundary.tsx` — bounded kiosk/runtime recovery.
+- `services/showcaseCheckpoint.ts` / `public/showcase/` — validated bundled showcase checkpoint.
+- `services/runtimeRecovery.ts` / `components/SimulationErrorBoundary.tsx` — bounded showcase/runtime recovery.
 - `styles.css` / `scripts/build-styles.mjs` — locally generated Tailwind utility sheet; no runtime CDN dependency.
 
 ## Change workflow

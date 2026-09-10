@@ -3391,7 +3391,7 @@ self.onmessage = (event: MessageEvent) => {
 
         // UI exports can carry the exact pair that was being shown at save time. Restore it as a
         // presentation choice without changing the retained generalists or breeding population.
-        // This keeps a curated Hall-of-Fame pairing stable across reloads and kiosk restarts.
+        // This keeps a curated Hall-of-Fame pairing stable across reloads and showcase restarts.
         if (payload?.showcase?.chaserGenome && payload?.showcase?.evaderGenome) {
           const restoredShowcaseChaser = new LearningAgent('chaser', payload.showcase.chaserGenome as NeatGenomeData);
           const restoredShowcaseEvader = new LearningAgent('evader', payload.showcase.evaderGenome as NeatGenomeData);
