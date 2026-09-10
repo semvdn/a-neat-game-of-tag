@@ -23,14 +23,15 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. The app comes with a pre-evolved **generation 7422 checkpoint**, loaded automatically as the default showcase and evolutionary resume point. 
+Open the local URL printed by Vite. The app comes with a pre-evolved **generation 7422 checkpoint**, loaded automatically as the default showcase and evolutionary resume point.
 
 ## Documentation
 
-The public documentation is intentionally limited to the three mechanisms that define the project:
+The public documentation is intentionally limited to the core mechanisms that define the project:
 
 - [**World and platform generation**](docs/WORLD.md) — the infinite rolling world, branches, moving platforms, biome biases and terrain-safety invariants.
-- [**NEAT and co-evolution setup**](docs/NEAT.md) — policy observations/actions, topology evolution, speciation, opponent leagues and champion validation.
+- [**Agent senses and neural-network architecture**](docs/SENSES_AND_NETWORK.md) — the 23 world-relative observations, semantic platform sensing, 16→12 starting network, recurrent memory and action decoding.
+- [**NEAT and co-evolution setup**](docs/NEAT.md) — topology evolution, speciation, opponent leagues and champion validation.
 - [**Reward function and shaping**](docs/REWARD_SHAPING.md) — competitive events, safe-progress shaping, pursuit/escape signals and anti-exploit constraints.
 
 Implementation guidance for coding agents are in [AGENTS.md](AGENTS.md) and `.agents/skills/`.

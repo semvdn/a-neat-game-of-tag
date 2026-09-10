@@ -26,8 +26,6 @@ Ordinary terrain is generated as a constrained random walk. For each new trunk p
 
 The proposal is then corrected by global constraints. Large upward jumps shorten the permitted gap, difficult elevation changes receive somewhat wider landing targets, and the vertical walk reflects away from the top and bottom of the playable band rather than accumulating against an edge.
 
-The important design choice is that **randomness proposes terrain; it does not get the final say**. Safety and reachability rules remain authoritative after the random choice.
-
 ## Branches and route commitment
 
 Branch structures create explicit route choices. A branch starts from a stable entry platform, splits into upper and lower routes, and later rejoins at a merge platform. Routes can recursively contain sub-branches up to the configured depth.
@@ -38,7 +36,7 @@ Nested branches inherit route paths such as `g12U/g18L`. These paths are useful 
 
 The merge platform is placed after considering the complete swept bounds of both routes. Its height is also limited so that returning from the lower route does not secretly create the hardest upward jump in the branch.
 
-This branch system is solving two competing problems: giving the agents meaningful route decisions while ensuring procedural recursion cannot accidentally create impossible or visually ambiguous terrain.
+This branch system is solving two competing problems: giving the agents meaningful route decisions while ensuring procedural recursion cannot accidentally create impossible terrain.
 
 ## Moving platforms
 
@@ -83,7 +81,7 @@ Training derives a deterministic biome-world offset from the episode seed so epi
 
 Terrain generation is seed-driven and kept separate from presentation randomness. That is essential for evolutionary comparison: two candidate policies can be evaluated on the same terrain and start conditions instead of receiving different difficulty by chance.
 
-The renderer adds scenery, lighting and ambient events on top of the mechanical world, but those systems do not enter `GameState`, policy sensing, collision or fitness. The distinction keeps the demo visually rich without allowing presentation state to become a hidden training variable.
+The renderer adds scenery, lighting and ambient events on top of the mechanical world, but those systems do not enter `GameState`, policy sensing, collision or fitness.
 
 ## Key files
 
