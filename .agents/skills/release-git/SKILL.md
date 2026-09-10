@@ -10,7 +10,7 @@ description: Use at the end of any codebase modification when validating, commit
 Run:
 
 ```bash
-tsc -p tsconfig.check.json --noEmit
+npm run typecheck
 git diff --check
 ```
 

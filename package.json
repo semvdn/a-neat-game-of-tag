@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "npm run styles && vite",
     "build": "npm run styles && vite build",
-    "lint": "tsc -p tsconfig.check.json --noEmit",
     "test": "node scripts/lab.mjs --seeds 8 --verify",
     "preview": "vite preview",
     "evaluate": "node scripts/lab.mjs",
@@ -18,7 +17,8 @@
     "build:demo": "npm run styles && npm run demo:extract && vite build --config vite.demo.config.ts",
     "preview:demo": "vite preview --config vite.demo.config.ts",
     "configure:github": "node scripts/configure-github.mjs",
-    "check": "npm run lint && npm run build && npm run build:demo && npm test"
+    "check": "npm run typecheck && npm run build && npm run build:demo && npm test",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "lucide-react": "^1.40.0",
@@ -27,6 +27,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.0",
     "esbuild": "^0.25.12",
     "tailwindcss": "^4.1.10",
@@ -36,5 +38,6 @@
   "description": "Evolving pursuit and evasion with NeuroEvolution of Augmenting Topologies in an infinite procedural multi-agent game of tag.",
   "engines": {
     "node": ">=22"
-  }
+  },
+  "license": "MIT"
 }

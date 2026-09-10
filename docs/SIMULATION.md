@@ -267,7 +267,7 @@ npm run dev
 Type-check:
 
 ```bash
-npm run lint
+npm run typecheck
 ```
 
 Production build:

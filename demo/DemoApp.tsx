@@ -139,7 +139,7 @@ const DemoApp: React.FC = () => {
   const [showSenses, setShowSenses] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [introVisible, setIntroVisible] = useState(true);
-  const sourceUrl = (import.meta as any).env?.VITE_REPOSITORY_URL as string | undefined;
+  const sourceUrl = import.meta.env.VITE_REPOSITORY_URL;
   const [dayNightConfig, setDayNightConfig] = useState<DayNightConfig>(() => ({
     ...createDefaultDayNightConfig(),
     mode: 'cycle',
@@ -220,7 +220,9 @@ const DemoApp: React.FC = () => {
   }, [asset?.worldSeed]);
 
   const updateGame = useCallback((deltaTime: number) => {
-    if (!asset || !chaserAgent.current || !runnerAgent.current) return;
+    const chaserModel = chaserAgent.current;
+    const runnerModel = runnerAgent.current;
+    if (!asset || !chaserModel || !runnerModel) return;
 
     setGameState(previous => {
       let next: GameState = {
@@ -247,7 +249,7 @@ const DemoApp: React.FC = () => {
         const previousRole = agent.role;
         agent.role = role;
         agent.modelId = isChaser ? `showcase_chaser_g${asset.chaser.generation}` : `showcase_runner_g${asset.runner.generation}`;
-        const model = isChaser ? chaserAgent.current : runnerAgent.current;
+        const model = isChaser ? chaserModel : runnerModel;
         if (previousRole && previousRole !== role) model.resetState(agent.id);
         const decision = model.chooseAction(getAgentStateVector(agent, next, VIEWPORT), agent.id);
         actions[agent.id] = {

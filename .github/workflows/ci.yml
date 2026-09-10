@@ -26,7 +26,7 @@ jobs:
         run: npm ci
 
       - name: Typecheck
-        run: npm run lint
+        run: npm run typecheck
 
       - name: Build full studio
         run: npm run build

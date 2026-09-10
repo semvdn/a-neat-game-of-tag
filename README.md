@@ -101,4 +101,8 @@ npm run check
 git diff --check
 ```
 
-`npm run check` performs TypeScript validation, both production builds, and the deterministic 8-seed regression suite. Build output and generated lab reports are ignored. Both production targets regenerate the Tailwind utility sheet locally and require no remote runtime assets. The full build carries the restorable evolution checkpoint; the Pages build carries only the compact showcase pair. Serve either build from HTTP rather than opening its `index.html` directly from `file://`.
+`npm run typecheck` runs strict TypeScript validation with the official React, React DOM, Node, and Vite type definitions. `npm run check` then adds both production builds and the deterministic 8-seed regression suite. Build output and generated lab reports are ignored. Both production targets regenerate the Tailwind utility sheet locally and require no remote runtime assets. The full build carries the restorable evolution checkpoint; the Pages build carries only the compact showcase pair. Serve either build from HTTP rather than opening its `index.html` directly from `file://`.
+
+## License
+
+Released under the [MIT License](LICENSE).

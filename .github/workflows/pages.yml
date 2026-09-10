@@ -35,7 +35,7 @@ jobs:
         run: npm ci
 
       - name: Typecheck
-        run: npm run lint
+        run: npm run typecheck
 
       - name: Build lightweight showcase
         run: npm run build:demo

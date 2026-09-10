@@ -1021,9 +1021,10 @@ export function runTrainingEpisode(
         }
       }
 
-      const landedOnNewPlatform = !physics.fell && agent.isOnGround && agent.supportingAgentId == null && agent.lastPlatformId != null && agent.lastPlatformId !== previousPlatformIds[i];
-      if (landedOnNewPlatform) {
-        const platform = gameState.platforms.find(p => p.id === agent.lastPlatformId);
+      const landedPlatformId = agent.lastPlatformId;
+      const landedOnNewPlatform = !physics.fell && agent.isOnGround && agent.supportingAgentId == null && landedPlatformId != null && landedPlatformId !== previousPlatformIds[i];
+      if (landedOnNewPlatform && landedPlatformId != null) {
+        const platform = gameState.platforms.find(p => p.id === landedPlatformId);
         const isBranch = platform?.structureType === 'branch-upper' || platform?.structureType === 'branch-lower';
         if (physics.roleAtStep === 'evader') {
           runnerPlatformLandings++;
@@ -1032,8 +1033,8 @@ export function runTrainingEpisode(
           chaserPlatformLandings++;
           if (isBranch) chaserBranchLandings++;
           if (
-            runnerVisitedPlatformIds.has(agent.lastPlatformId) &&
-            !chaserRewardedRunnerPlatformIds.has(agent.lastPlatformId) &&
+            runnerVisitedPlatformIds.has(landedPlatformId) &&
+            !chaserRewardedRunnerPlatformIds.has(landedPlatformId) &&
             pursuitBonusThisWindow < CHASER_PURSUIT_REWARD_CAP_PER_WINDOW
           ) {
             const reward = Math.min(
@@ -1043,7 +1044,7 @@ export function runTrainingEpisode(
             pursuitBonusThisWindow += reward;
             chaserPursuitFitnessBonus += reward;
             chaserPursuitLandings++;
-            chaserRewardedRunnerPlatformIds.add(agent.lastPlatformId);
+            chaserRewardedRunnerPlatformIds.add(landedPlatformId);
           }
         }
       }
