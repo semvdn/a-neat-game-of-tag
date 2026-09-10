@@ -23,7 +23,7 @@ The public demo is deliberately lightweight: it ships the curated **Chaser g7410
 - **Multi-agent learning design:** common opponent panels, Hall-of-Fame opponents, deterministic evaluation, role-specific fitness, and safeguards against reward exploits.
 - **Simulation engineering:** one shared gameplay core for both visible play and headless training, including platform physics, route-aware pursuit, moving platforms, respawn, body contacts, and failure handling.
 - **Procedural systems:** deterministic infinite terrain, branching routes, ten visual/mechanical biomes, day/night presentation, and seeded evaluation worlds.
-- **ML observability:** topology inspection, compact training telemetry, checkpointing, held-out evaluation, experiment reports, and reproducibility checks.
+- **ML observability:** topology inspection, compact training telemetry, checkpointing, held-out evaluation, deterministic traces, and reproducibility checks.
 - **Production-oriented presentation:** an offline exhibition mode plus a separate tree-shaken GitHub Pages showcase that reuses the exact simulation and trained policies without shipping the training infrastructure.
 
 ## Clone and run the full app locally
@@ -41,7 +41,7 @@ Open the local URL printed by Vite. The full studio ships with the curated **gen
 
 Select **Start Simulation** to begin visible playback and background evolution. Visible playback and training can be paused independently. Use **Diagnostics → Runs & data** to import/export other full evolutionary checkpoints and analysis reports.
 
-For a local installation/kiosk, choose **Exhibit** or open `?exhibit=1`. That mode auto-loads the bundled showcase and starts visible playback with background evolution paused. Add `&train=1` only when you intentionally want evolution to continue during an installation. **F** toggles browser fullscreen where supported; **G** or **Escape** returns to the studio. See [artwork and installation guidance](docs/ARTWORK.md).
+For a local installation/kiosk, choose **Exhibit** or open `?exhibit=1`. That mode auto-loads the bundled showcase and starts visible playback with background evolution paused. Add `&train=1` only when you intentionally want evolution to continue during an installation. **F** toggles browser fullscreen where supported; **G** or **Escape** returns to the studio.
 
 ## Run the lightweight web demo locally
 
@@ -70,7 +70,6 @@ npm run evaluate -- --checkpoint checkpoint.json --conditions evaluation/conditi
 
 The lab uses the actual simulation and produces paired per-seed results, per-start breakdowns, and optional traces in `evaluations/report.json`. Without a checkpoint it uses explicitly untrained scripted controls. `--verify` checks encounter regressions, forbids unseeded episode randomness, and repeats episodes to check determinism.
 
-Read [the evaluation guide](docs/EVALUATION.md) before interpreting results. The [initial experiment](docs/experiments/2026-09-08.md) tested 2,304 distinct condition/scenario episodes and found no reason to replace normal terrain defaults. It also confirmed and corrected misleading evade accounting around falls.
 
 ## Design contracts
 
@@ -84,16 +83,15 @@ Read [the evaluation guide](docs/EVALUATION.md) before interpreting results. The
 
 Current checkpoints use `world-relative-senses-v3` and `signed-horizontal-controls-v2`. Older 25-input or four-output policies are incompatible. Current revision `solid-group-v12` adds solid Runner contacts, universal surfaces, moving-surface sweeps and bounded group-cohesion fitness without changing the controller schema; current-schema older checkpoints use the existing score-migration path.
 
-## Documentation
+## Core documentation
 
-- [GitHub Pages showcase and deployment](docs/GITHUB_PAGES.md)
-- [Solid Runner contacts, universal landings and group-cohesion training](docs/SOLID_GROUP.md)
-- [Artwork direction and exhibition operation](docs/ARTWORK.md)
-- [Gameplay laboratory and experiment protocol](docs/EVALUATION.md)
-- [Reproducible production-worker training experiments](docs/TRAINING_EXPERIMENTS.md)
-- [Architecture and contributor workflow](docs/ARCHITECTURE.md)
-- [Detailed simulation, training, and checkpoint reference](docs/SIMULATION.md)
-- [Agent instructions](AGENTS.md) and [task-specific skills](.agents/skills/README.md)
+The public documentation is intentionally limited to the three mechanisms that define the project:
+
+- [**World and platform generation**](docs/WORLD.md) — the infinite rolling world, branches, moving platforms, biome biases and terrain-safety invariants.
+- [**NEAT and co-evolution setup**](docs/NEAT.md) — policy observations/actions, topology evolution, speciation, opponent leagues and champion validation.
+- [**Reward function and shaping**](docs/REWARD_SHAPING.md) — competitive events, safe-progress shaping, pursuit/escape signals and anti-exploit constraints.
+
+Implementation guidance for coding agents remains in [AGENTS.md](AGENTS.md) and `.agents/skills/`; it is not part of the public mechanism documentation.
 
 ## Validate
 
