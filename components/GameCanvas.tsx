@@ -3,10 +3,10 @@ import type { GameState, PlatformState } from '../types';
 import { drawPlatform, drawAgent, drawAgentTrail, drawTagEffect, drawAgentSenses } from './drawing';
 import { AGENT_WIDTH, WORLD_REF_WIDTH, WORLD_REF_HEIGHT, CAMERA_FRAME_PADDING_REFERENCE_PX, CAMERA_MIN_USEFUL_AUTO_ZOOM } from '../constants';
 import { cameraRelevantAgents } from '../learning/cameraFraming';
-import { biomeLabel, DEFAULT_BIOME_WORLD_SEED, getBiomeAtX } from '../world/biomes';
+import { DEFAULT_BIOME_WORLD_SEED } from '../world/biomes';
 import { BiomeBackgroundCache, drawBiomeBackground, drawBiomeForeground } from './biomeBackground';
 import type { DayNightConfig } from '../world/dayNight';
-import { formatWorldHour, resolveWorldLighting } from '../world/dayNight';
+import { resolveWorldLighting } from '../world/dayNight';
 
 interface GameCanvasProps {
   gameState: GameState;
@@ -344,35 +344,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     drawBiomeForeground(ctx, biomeBackgroundCache, { cameraCenterX, cameraCenterY, cameraScale, cssWidth, cssHeight, worldSeed: visualWorldSeed, lighting, visualTimeMs });
 
-    if (showSenses) {
-      // Screen-space legend: it stays readable and stationary while the world camera moves.
-      const legendX = 10;
-      const legendY = 10;
-      const legendW = Math.min(cssWidth - 20, 680);
-      ctx.fillStyle = 'rgba(3, 7, 18, 0.82)';
-      ctx.fillRect(legendX, legendY, Math.max(0, legendW), 61);
-      ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-      ctx.textBaseline = 'top';
-      ctx.fillStyle = '#d1d5db';
-      ctx.fillText(
-        'SENSES · compact 23 policy inputs · target/threat · teammate · platforms · ledges',
-        legendX + 7,
-        legendY + 7
-      );
-      ctx.fillStyle = '#94a3b8';
-      ctx.fillText(
-        'No LiDAR duplication · stable next/next2/previous platform slots · S toggles view',
-        legendX + 7,
-        legendY + 24
-      );
-      const debugBiome = getBiomeAtX(cameraCenterX, visualWorldSeed);
-      ctx.fillStyle = '#7dd3fc';
-      ctx.fillText(
-        `WORLD · ${biomeLabel(debugBiome)} · ${formatWorldHour(lighting.hour)} ${dayNightConfig.mode === 'realtime' ? 'real time' : `${dayNightConfig.cycleMinutes}m day`} · region ${debugBiome.regionIndex} · cache ${biomeBackgroundCache.size}`,
-        legendX + 7,
-        legendY + 41
-      );
-    }
 
     // Kept for the existing API. Capture is intentionally opt-in elsewhere; do not create
     // a data URL every animation frame because it would stall the visual simulation.
