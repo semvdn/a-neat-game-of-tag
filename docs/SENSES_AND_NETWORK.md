@@ -16,31 +16,31 @@ The current representation therefore uses **semantic world-space observations**.
 
 Positions are normalized against a fixed **1200 × 800 world reference**, not the current browser viewport. That makes the policy invariant to presentation size.
 
-| Index | Observation | Why it is useful |
-| ---: | --- | --- |
-| 0 | Horizontal velocity | Distinguishes leftward, rightward and near-stationary movement. |
-| 1 | Vertical velocity | Distinguishes rising, falling and stable movement during jumps. |
-| 2 | Energy / stamina | Lets jump and sprint decisions depend on the remaining energy budget. |
-| 3 | Grounded state | Tells the controller whether a jump can currently start. |
-| 4 | Own tag cooldown | Exposes temporary no-tag states after role changes. |
-| 5 | Target/threat tag cooldown | Indicates whether the relevant opponent can currently participate in a tag transition. |
-| 6 | Distance to left ledge | Gives local footing information without a raycast. |
-| 7 | Distance to right ledge | Gives remaining runway and helps avoid walking blindly off a platform. |
-| 8 | Next platform horizontal offset | Locates the nearest usable platform ahead. |
-| 9 | Next platform vertical offset | Describes the vertical jump required to reach it. |
-| 10 | Next platform width | Distinguishes forgiving from narrow landing targets. |
-| 11 | Second-ahead platform horizontal offset | Adds limited route look-ahead. |
-| 12 | Second-ahead platform vertical offset | Helps anticipate the route after the immediate landing. |
-| 13 | Second-ahead platform width | Describes the safety margin of that later landing. |
-| 14 | Previous platform horizontal offset | Provides a retreat/recovery reference behind the agent. |
-| 15 | Previous platform vertical offset | Supports reversing or recovering between levels. |
-| 16 | Previous platform width | Describes how forgiving the fallback surface is. |
-| 17 | Target/threat horizontal offset | Core pursuit/evasion signal along the world axis. |
-| 18 | Target/threat vertical offset | Handles opponents on different platform levels. |
-| 19 | Target/threat horizontal velocity | Supports interception and escape based on opponent motion. |
-| 20 | Target/threat vertical velocity | Helps interpret opponent jumps and falls. |
-| 21 | Closest Runner teammate horizontal offset | Gives Runners awareness of nearby Runner congestion/group structure. Zero for the Chaser. |
-| 22 | Closest Runner teammate vertical offset | Distinguishes teammates above/below as well as ahead/behind. Zero for the Chaser. |
+| Index | Observation |
+| ---: | --- |
+| 0 | Horizontal velocity |
+| 1 | Vertical velocity |
+| 2 | Energy / stamina |
+| 3 | Grounded state |
+| 4 | Own tag cooldown |
+| 5 | Target/threat tag cooldown |
+| 6 | Distance to left ledge |
+| 7 | Distance to right ledge |
+| 8 | Next platform horizontal offset |
+| 9 | Next platform vertical offset |
+| 10 | Next platform width |
+| 11 | Second-ahead platform horizontal offset |
+| 12 | Second-ahead platform vertical offset |
+| 13 | Second-ahead platform width |
+| 14 | Previous platform horizontal offset |
+| 15 | Previous platform vertical offset |
+| 16 | Previous platform width |
+| 17 | Target/threat horizontal offset |
+| 18 | Target/threat vertical offset |
+| 19 | Target/threat horizontal velocity |
+| 20 | Target/threat vertical velocity |
+| 21 | Closest Runner teammate horizontal offset |
+| 22 | Closest Runner teammate vertical offset |
 
 ### Role-dependent target selection
 
