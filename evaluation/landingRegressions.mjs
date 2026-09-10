@@ -14,7 +14,7 @@ export function verifyLandings() {
   });
   const step = (input, platforms) => {
     const mutable = structuredClone(input);
-    const args = [[structuredClone(input)], platforms, 0, { width: 1200, height: 800 }, 16.67, { moveRight: input.velocity.x >= 0 ? 1 : 0, moveLeft: input.velocity.x < 0 ? 1 : 0, jump: 0 }, upgrades];
+    const args = [[structuredClone(input)], platforms, 0, { width: 1200, height: 800 }, 16.67, { moveRight: input.velocity.x > 0 ? 1 : 0, moveLeft: input.velocity.x < 0 ? 1 : 0, jump: 0 }, upgrades];
     const visual = stepAgentPhysics(input, ...args);
     stepAgentPhysicsInPlace(mutable, ...args);
     assert.deepEqual(mutable, visual.agent, 'Visible and training landing results must match');
