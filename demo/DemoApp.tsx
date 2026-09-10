@@ -250,7 +250,7 @@ const DemoApp: React.FC = () => {
         const role: 'chaser' | 'evader' = isChaser ? 'chaser' : 'evader';
         const previousRole = agent.role;
         agent.role = role;
-        agent.modelId = isChaser ? `showcase_chaser_g${asset.chaser.generation}` : `showcase_runner_g${asset.runner.generation}`;
+        agent.modelId = isChaser ? 'pretrained_demo_chaser' : 'pretrained_demo_runner';
         const model = isChaser ? chaserModel : runnerModel;
         if (previousRole && previousRole !== role) model.resetState(agent.id);
         const decision = model.chooseAction(getAgentStateVector(agent, next, VIEWPORT), agent.id);
@@ -461,7 +461,7 @@ const DemoApp: React.FC = () => {
             <div className="text-[11px] uppercase tracking-[0.45em] text-cyan-200/90">Neuroevolution showcase</div>
             <h1 className="mt-3 text-4xl sm:text-6xl font-black tracking-tight text-white">A NEAT GAME OF TAG</h1>
             <p className="mt-3 text-sm sm:text-base text-gray-300">Evolving pursuit and evasion with NeuroEvolution of Augmenting Topologies</p>
-            <p className="mt-2 font-mono text-[11px] text-gray-400">Checkpoint {asset.sourceCheckpointGeneration.toLocaleString()} · Chaser g{asset.chaser.generation} · Runner g{asset.runner.generation}</p>
+            <p className="mt-2 font-mono text-[11px] text-gray-400">Pretrained demo model</p>
           </div>
         </div>
       )}
@@ -469,7 +469,7 @@ const DemoApp: React.FC = () => {
       {asset && (
         <div className="pointer-events-none absolute left-4 top-4 z-10 rounded-lg border border-cyan-500/20 bg-black/55 px-3 py-2 backdrop-blur shadow-lg">
           <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-200">A NEAT Game of Tag</div>
-          <div className="mt-1 font-mono text-[10px] text-gray-400">g{asset.chaser.generation} chase · g{asset.runner.generation} evade</div>
+          <div className="mt-1 font-mono text-[10px] text-gray-400">Pretrained demo model</div>
         </div>
       )}
 
