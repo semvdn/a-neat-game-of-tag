@@ -816,12 +816,6 @@ function landmarkAlphaForLayer(layer:'mid'|'near'|'foreground',normalizedZoom:nu
   return smooth01((normalizedZoom-.58)/.5)*.18;
 }
 
-function landmarkStrideForLayer(layer:'mid'|'near'|'foreground',normalizedZoom:number){
-  if(layer==='mid') return normalizedZoom<.35?4:normalizedZoom<.5?3:normalizedZoom<.75?2:1;
-  if(layer==='near') return normalizedZoom<.42?4:normalizedZoom<.58?3:normalizedZoom<.82?2:1;
-  return normalizedZoom<.72?3:normalizedZoom<.95?2:1;
-}
-
 function drawContinuousPanorama(ctx:CanvasRenderingContext2D,layer:'far'|'mid',o:BackgroundDrawOptions){
   const parallax=parallaxByLayer[layer],{cameraCenterX,cameraCenterY,cameraScale,cssWidth,cssHeight,worldSeed}=o;
   const verticalParallax=layer==='far'?.045:.09,baselineRatio=layer==='far'?.72:.79;
@@ -950,12 +944,12 @@ function drawLandmarkLayer(ctx:CanvasRenderingContext2D,cache:BiomeBackgroundCac
   const fitScale=Math.max(.0001,Math.min(cssWidth/1280,cssHeight/720));
   const normalizedZoom=cameraScale/fitScale;
   const alpha=landmarkAlphaForLayer(layer,normalizedZoom); if(alpha<=.01) return;
-  const stride=landmarkStrideForLayer(layer,normalizedZoom);
+  // Draw every descriptor at every zoom. The descriptor count is already sparse; zoom-dependent
+  // integer LOD strides caused whole trees/buildings/rocks to pop in and out at scale thresholds.
   ctx.save(); ctx.globalAlpha*=alpha;
   for(let chunkIndex=minChunk;chunkIndex<=maxChunk;chunkIndex++){
     const chunk=cache.getChunk(layer,chunkIndex,worldSeed), chunkWorldX=chunkIndex*BACKGROUND_CHUNK_WIDTH;
     for(let featureIndex=0;featureIndex<chunk.features.length;featureIndex++){
-      if(featureIndex%stride!==0) continue;
       const feature=chunk.features[featureIndex], featureWorldX=chunkWorldX+feature.x*BACKGROUND_CHUNK_WIDTH, screenX=cssWidth*.5+(featureWorldX-cameraCenterX)*cameraScale*parallax;
       const featureSample=getBiomeAtX(featureWorldX,worldSeed), featurePalette=lightBiomePalette(paletteForBiomeSample(featureSample),o.lighting), biome=feature.biome;
       const dims=featureDimensions(biome,layer,feature.variant,feature.scale,cssWidth,cssHeight,cameraScale);
@@ -1146,76 +1140,121 @@ function drawGroundAndGlowEvents(ctx:CanvasRenderingContext2D,o:BackgroundDrawOp
   drawFireflyEvents(ctx,o);
 }
 
-function drawAmbientDetailsForBiome(ctx:CanvasRenderingContext2D,o:BackgroundDrawOptions,biome:BiomeId,alpha:number,xMin:number,xMax:number){
-  if(alpha<=.01)return;
-  const sample=getBiomeAtX((xMin+xMax)*.5,o.worldSeed),p=lightBiomePalette(paletteForBiomeSample(sample),o.lighting);
-  ctx.save();ctx.globalAlpha*=alpha;
-  const span=xMax-xMin;
-  const countFactor=Math.max(1,Math.floor(span/1800));
-  if(biome==='desert'){
-    ctx.fillStyle=rgba(p.detail,.12);for(let i=0;i<6*countFactor;i++){const wx=xMin+biomeRandom01(o.worldSeed,0x53414e44,i+sample.regionIndex*11)*span;const x=o.cssWidth*.5+(wx-o.cameraCenterX)*o.cameraScale*.58;const y=o.cssHeight*(.6+((i%4)*.05));ctx.fillRect(snap(x),snap(y),18+(i%3)*12,2);}
-  } else if(biome==='snowy-mountains'){
-    ctx.fillStyle=rgba(p.detail,.26);for(let i=0;i<10*countFactor;i++){const wx=xMin+biomeRandom01(o.worldSeed,0x534e4f57,i+sample.regionIndex*29)*span;const x=o.cssWidth*.5+(wx-o.cameraCenterX)*o.cameraScale*.4;const y=o.cssHeight*(.12+biomeRandom01(o.worldSeed,0x534e5959,i+sample.regionIndex*29)*.66);ctx.fillRect(snap(x),snap(y),i%5===0?3:2,i%5===0?3:2);}
-  } else if(biome==='temperate-forest'){
-    ctx.fillStyle=rgba(p.detail,.12);for(let i=0;i<8*countFactor;i++){const wx=xMin+biomeRandom01(o.worldSeed,0x4c454146,i+sample.regionIndex*17)*span;const x=o.cssWidth*.5+(wx-o.cameraCenterX)*o.cameraScale*.46;const y=o.cssHeight*(.3+biomeRandom01(o.worldSeed,0x4c454159,i+sample.regionIndex*17)*.42);ctx.fillRect(snap(x),snap(y),3,2);}
-  } else if(biome==='rural-village'){
-    // Fence fragments are world-anchored and local to this sample slice. The previous version
-    // redrew a full-screen fence for every biome sample, which accumulated into a fixed overlay.
-    const parallax=.52;
-    const firstPost=Math.floor(xMin/260)*260;
-    ctx.fillStyle=rgba(p.detail,.38);
-    for(let wx=firstPost;wx<=xMax+260;wx+=260){
-      if(wx<xMin-40||wx>xMax+40)continue;
-      const x=o.cssWidth*.5+(wx-o.cameraCenterX)*o.cameraScale*parallax;
-      const nextX=o.cssWidth*.5+(wx+180-o.cameraCenterX)*o.cameraScale*parallax;
-      const y=snap(o.cssHeight*.83);
-      ctx.fillRect(snap(x),y-11,3,14);
-      ctx.fillRect(snap(x),y,snap(Math.max(8,nextX-x)),2);
-    }
-  } else if(biome==='swamp'){
-    // Swamp detail used to draw two full-width translucent haze bands plus the same reed pattern
-    // once per sampled world slice. That accumulated into a distinct fixed-screen overlay pattern.
-    // Keep the wetland texture sparse, local and world-anchored instead.
-    const parallax=.48;
-    const firstGlint=Math.floor(xMin/190)*190;
-    ctx.fillStyle=rgba(p.detail,.42);
-    for(let wx=firstGlint;wx<=xMax+190;wx+=190){
-      if(wx<xMin-30||wx>xMax+30)continue;
-      const key=Math.floor(wx/190)+sample.regionIndex*131;
-      const x=o.cssWidth*.5+(wx-o.cameraCenterX)*o.cameraScale*parallax;
-      const y=snap(o.cssHeight*(.78+biomeRandom01(o.worldSeed,0x53574159,key)*.07));
-      const glintWidth=12+biomeRandom01(o.worldSeed,0x5357474c,key)*24;
-      ctx.fillRect(snap(x),y,snap(glintWidth),2);
-      if(biomeRandom01(o.worldSeed,0x53575244,key)>.46){
-        const reedHeight=12+biomeRandom01(o.worldSeed,0x53575248,key)*22;
-        ctx.fillRect(snap(x+5),snap(y-reedHeight),2,snap(reedHeight));
-        if(biomeRandom01(o.worldSeed,0x53575232,key)>.5)ctx.fillRect(snap(x+10),snap(y-reedHeight*.72),2,snap(reedHeight*.72));
-      }
-    }
-    const mistSpacing=880;
-    const firstMist=Math.floor(xMin/mistSpacing)*mistSpacing;
-    ctx.fillStyle=rgba(p.haze,.3);
-    for(let wx=firstMist;wx<=xMax+mistSpacing;wx+=mistSpacing){
-      const key=Math.floor(wx/mistSpacing)+sample.regionIndex*47;
-      if(wx<xMin-240||wx>xMax+240||biomeRandom01(o.worldSeed,0x53574d53,key)>.46)continue;
-      const x=o.cssWidth*.5+(wx-o.cameraCenterX)*o.cameraScale*parallax;
-      const width=Math.max(18,(180+biomeRandom01(o.worldSeed,0x53574d57,key)*180)*o.cameraScale*parallax);
-      const y=snap(o.cssHeight*(.64+biomeRandom01(o.worldSeed,0x53574d59,key)*.08));
-      ctx.fillRect(snap(x-width*.5),y,snap(width),4);
-    }
-  }
-  ctx.restore();
+function biomeMembership(sample:BiomeSample,biome:BiomeId):number{
+  if(!sample.secondary)return sample.primary===biome?1:0;
+  let weight=0;
+  if(sample.primary===biome)weight+=1-sample.blend;
+  if(sample.secondary===biome)weight+=sample.blend;
+  return weight;
 }
 
 function drawAmbientDetails(ctx:CanvasRenderingContext2D,o:BackgroundDrawOptions){
-  const worldSpan=o.cssWidth/Math.max(.0001,o.cameraScale*.35);
-  const sampleCount=Math.max(6,Math.ceil(o.cssWidth/220));
-  for(let i=0;i<sampleCount;i++){
-    const t0=i/sampleCount, t1=(i+1)/sampleCount;
-    const worldX0=o.cameraCenterX-worldSpan*.5+t0*worldSpan, worldX1=o.cameraCenterX-worldSpan*.5+t1*worldSpan;
-    const sample=getBiomeAtX((worldX0+worldX1)*.5,o.worldSeed);
-    if(!sample.secondary){ drawAmbientDetailsForBiome(ctx,o,sample.primary,1/sampleCount,worldX0,worldX1); }
-    else { drawAmbientDetailsForBiome(ctx,o,sample.primary,(1-sample.blend)/sampleCount,worldX0,worldX1); drawAmbientDetailsForBiome(ctx,o,sample.secondary,sample.blend/sampleCount,worldX0,worldX1); }
+  // Ambient marks are generated from FIXED WORLD-SPACE cells. Do not derive their membership or
+  // random positions from viewport slices: changing camera zoom changes slice boundaries, which
+  // used to regenerate sand streaks, snow flecks and forest leaves at different world positions.
+  // Each mark below therefore has a stable integer world-cell key and only its screen projection
+  // changes as the presentation camera zooms/pans.
+  const visibleRange=(parallax:number,paddingCells:number,spacing:number)=>{
+    const halfWorld=o.cssWidth*.58/Math.max(.0001,o.cameraScale*parallax);
+    return {
+      first:Math.floor((o.cameraCenterX-halfWorld)/spacing)-paddingCells,
+      last:Math.floor((o.cameraCenterX+halfWorld)/spacing)+paddingCells,
+    };
+  };
+  const projectX=(worldX:number,parallax:number)=>o.cssWidth*.5+(worldX-o.cameraCenterX)*o.cameraScale*parallax;
+  const paletteAt=(worldX:number)=>{
+    const sample=getBiomeAtX(worldX,o.worldSeed);
+    return {sample,palette:lightBiomePalette(paletteForBiomeSample(sample),o.lighting)};
+  };
+
+  // Desert wind/sand marks.
+  {
+    const spacing=300,parallax=.58,{first,last}=visibleRange(parallax,2,spacing);
+    for(let cell=first;cell<=last;cell++){
+      const worldX=(cell+biomeRandom01(o.worldSeed,0x53414e58,cell)*.88+.06)*spacing;
+      const {sample,palette}=paletteAt(worldX),weight=biomeMembership(sample,'desert');
+      if(weight<=.01)continue;
+      const x=projectX(worldX,parallax),y=o.cssHeight*(.6+(Math.abs(cell)%4)*.05);
+      ctx.fillStyle=rgba(palette.detail,.12*weight);
+      ctx.fillRect(snap(x),snap(y),18+(Math.abs(cell)%3)*12,2);
+    }
+  }
+
+  // Snow flecks.
+  {
+    const spacing=180,parallax=.4,{first,last}=visibleRange(parallax,2,spacing);
+    for(let cell=first;cell<=last;cell++){
+      const worldX=(cell+biomeRandom01(o.worldSeed,0x534e4f58,cell)*.9+.05)*spacing;
+      const {sample,palette}=paletteAt(worldX),weight=biomeMembership(sample,'snowy-mountains');
+      if(weight<=.01)continue;
+      const x=projectX(worldX,parallax),y=o.cssHeight*(.12+biomeRandom01(o.worldSeed,0x534e5959,cell)*.66);
+      const size=biomeRandom01(o.worldSeed,0x534e535a,cell)>.8?3:2;
+      ctx.fillStyle=rgba(palette.detail,.26*weight);
+      ctx.fillRect(snap(x),snap(y),size,size);
+    }
+  }
+
+  // Temperate-forest leaf motes.
+  {
+    const spacing=225,parallax=.46,{first,last}=visibleRange(parallax,2,spacing);
+    for(let cell=first;cell<=last;cell++){
+      const worldX=(cell+biomeRandom01(o.worldSeed,0x4c454146,cell)*.9+.05)*spacing;
+      const {sample,palette}=paletteAt(worldX),weight=biomeMembership(sample,'temperate-forest');
+      if(weight<=.01)continue;
+      const x=projectX(worldX,parallax),y=o.cssHeight*(.3+biomeRandom01(o.worldSeed,0x4c454159,cell)*.42);
+      ctx.fillStyle=rgba(palette.detail,.12*weight);
+      ctx.fillRect(snap(x),snap(y),3,2);
+    }
+  }
+
+  // Rural fence fragments. Posts remain world-anchored and fade smoothly across biome borders.
+  {
+    const spacing=260,parallax=.52,{first,last}=visibleRange(parallax,2,spacing);
+    for(let cell=first;cell<=last;cell++){
+      const worldX=cell*spacing;
+      const {sample,palette}=paletteAt(worldX),weight=biomeMembership(sample,'rural-village');
+      if(weight<=.01)continue;
+      const x=projectX(worldX,parallax),nextX=projectX(worldX+180,parallax),y=snap(o.cssHeight*.83);
+      ctx.fillStyle=rgba(palette.detail,.38*weight);
+      ctx.fillRect(snap(x),y-11,3,14);
+      ctx.fillRect(snap(x),y,snap(Math.max(8,nextX-x)),2);
+    }
+  }
+
+  // Swamp water glints/reeds.
+  {
+    const spacing=190,parallax=.48,{first,last}=visibleRange(parallax,2,spacing);
+    for(let cell=first;cell<=last;cell++){
+      const worldX=cell*spacing;
+      const {sample,palette}=paletteAt(worldX),weight=biomeMembership(sample,'swamp');
+      if(weight<=.01)continue;
+      const x=projectX(worldX,parallax);
+      const y=snap(o.cssHeight*(.78+biomeRandom01(o.worldSeed,0x53574159,cell)*.07));
+      const glintWidth=12+biomeRandom01(o.worldSeed,0x5357474c,cell)*24;
+      ctx.fillStyle=rgba(palette.detail,.42*weight);
+      ctx.fillRect(snap(x),y,snap(glintWidth),2);
+      if(biomeRandom01(o.worldSeed,0x53575244,cell)>.46){
+        const reedHeight=12+biomeRandom01(o.worldSeed,0x53575248,cell)*22;
+        ctx.fillRect(snap(x+5),snap(y-reedHeight),2,snap(reedHeight));
+        if(biomeRandom01(o.worldSeed,0x53575232,cell)>.5)ctx.fillRect(snap(x+10),snap(y-reedHeight*.72),2,snap(reedHeight*.72));
+      }
+    }
+  }
+
+  // Swamp mist patches use a coarser fixed lattice, again independent of viewport subdivision.
+  {
+    const spacing=880,parallax=.48,{first,last}=visibleRange(parallax,2,spacing);
+    for(let cell=first;cell<=last;cell++){
+      if(biomeRandom01(o.worldSeed,0x53574d53,cell)>.46)continue;
+      const worldX=cell*spacing;
+      const {sample,palette}=paletteAt(worldX),weight=biomeMembership(sample,'swamp');
+      if(weight<=.01)continue;
+      const x=projectX(worldX,parallax);
+      const width=Math.max(18,(180+biomeRandom01(o.worldSeed,0x53574d57,cell)*180)*o.cameraScale*parallax);
+      const y=snap(o.cssHeight*(.64+biomeRandom01(o.worldSeed,0x53574d59,cell)*.08));
+      ctx.fillStyle=rgba(palette.haze,.3*weight);
+      ctx.fillRect(snap(x-width*.5),y,snap(width),4);
+    }
   }
 }
 
@@ -1245,17 +1284,22 @@ export function drawBiomeForeground(ctx:CanvasRenderingContext2D,cache:BiomeBack
   const alpha=landmarkAlphaForLayer('foreground',normalizedZoom); if(alpha<=.01)return;
   const layer:Layer='foreground',parallax=.88,halfWorldVisible=cssWidth*.55/Math.max(.0001,cameraScale*parallax),minChunk=Math.floor((cameraCenterX-halfWorldVisible)/BACKGROUND_CHUNK_WIDTH)-1,maxChunk=Math.floor((cameraCenterX+halfWorldVisible)/BACKGROUND_CHUNK_WIDTH)+1;
   cache.ensureCapacity((maxChunk-minChunk+1)*3+48);
-  const stride=landmarkStrideForLayer('foreground',normalizedZoom);
   ctx.save();ctx.globalAlpha*=alpha;
   for(let chunkIndex=minChunk;chunkIndex<=maxChunk;chunkIndex++){
     const chunk=cache.getChunk(layer,chunkIndex,worldSeed),chunkWorldX=chunkIndex*BACKGROUND_CHUNK_WIDTH;
     for(let idx=0; idx<chunk.features.length; idx++){
-      if(idx%stride!==0) continue;
       const feature=chunk.features[idx];
       const featureWorldX=chunkWorldX+feature.x*BACKGROUND_CHUNK_WIDTH,x=cssWidth*.5+(featureWorldX-cameraCenterX)*cameraScale*parallax;
-      if(x>cssWidth*.18&&x<cssWidth*.82)continue;
+      // Foreground motifs belong near the side edges, but a hard 18%/82% screen cutoff made a
+      // tree/bin/etc. blink when camera zoom moved its projected X across that exact threshold.
+      // Fade the central mask across a generous band instead, so zoom changes are continuous.
+      const edgeDistance=Math.abs(x-cssWidth*.5)/Math.max(1,cssWidth*.5);
+      const edgeVisibility=smooth01((edgeDistance-.54)/.18);
+      if(edgeVisibility<=.001)continue;
       const sample=getBiomeAtX(featureWorldX,worldSeed),palette=lightBiomePalette(paletteForBiomeSample(sample),o.lighting),biome=feature.biome,dims=featureDimensions(biome,layer,feature.variant,feature.scale*.9,cssWidth,cssHeight,cameraScale);
+      ctx.save();ctx.globalAlpha*=edgeVisibility;
       drawPlacedFeature(ctx,biome,x,cssHeight+4,dims.width,dims.height,palette.near,palette.detail,feature.variant,layer,feature.flipX);
+      ctx.restore();
     }
   }
   ctx.restore();
