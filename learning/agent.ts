@@ -6,6 +6,7 @@ import {
   createMinimalGenome,
   type NeatGenomeData,
   type NeatRole,
+  type PolicyActionSchema,
 } from './neat';
 
 // Kept as an alias so the existing App persistence/worker plumbing needs only a small migration.
@@ -21,15 +22,19 @@ export type AgentWeights = NeatGenomeData;
 export class LearningAgent {
   private genome: NeatGenomeData;
   private network: NeatNetwork;
+  private actionSchema: PolicyActionSchema;
   public role: NeatRole;
 
   constructor(role: NeatRole = 'general', genome?: NeatGenomeData) {
     this.role = role;
     if (genome) {
       this.genome = cloneGenome(genome);
+      this.actionSchema = genome.actionSchema ?? 'signed-horizontal-controls-v2';
+      this.genome.actionSchema = this.actionSchema;
     } else {
       const tracker = new InnovationTracker(STATE_VECTOR_SIZE + POLICY_OUTPUT_SPACE.length);
       this.genome = createMinimalGenome(`${role}_runtime`, role, tracker, 1);
+      this.actionSchema = this.genome.actionSchema ?? 'signed-horizontal-controls-v3';
     }
     this.network = new NeatNetwork(this.genome);
   }
@@ -37,6 +42,7 @@ export class LearningAgent {
   public resetWeights() {
     const tracker = new InnovationTracker(STATE_VECTOR_SIZE + POLICY_OUTPUT_SPACE.length);
     this.genome = createMinimalGenome(`${this.role}_runtime`, this.role, tracker, 1);
+    this.actionSchema = this.genome.actionSchema ?? 'signed-horizontal-controls-v3';
     this.network = new NeatNetwork(this.genome);
   }
 
@@ -44,7 +50,7 @@ export class LearningAgent {
     return cloneGenome(this.genome);
   }
 
-  public setWeights(weights: AgentWeights) {
+  public setWeights(weights: AgentWeights, actionSchemaHint?: PolicyActionSchema) {
     if (!weights || !Array.isArray(weights.nodes) || !Array.isArray(weights.connections)) {
       throw new Error('This build expects a NEAT genome. Legacy PPO weight files are not directly compatible.');
     }
@@ -56,9 +62,15 @@ export class LearningAgent {
         `received ${inputCount}/${outputCount}. Reset or retrain this older policy for the compact sense layout.`
       );
     }
+    this.actionSchema = actionSchemaHint ?? weights.actionSchema ?? 'signed-horizontal-controls-v2';
     this.genome = cloneGenome(weights);
+    this.genome.actionSchema = this.actionSchema;
     this.role = weights.role || this.role;
     this.network = new NeatNetwork(this.genome);
+  }
+
+  public getActionSchema(): PolicyActionSchema {
+    return this.actionSchema;
   }
 
   public setGeneration(generation: number) {
@@ -69,7 +81,7 @@ export class LearningAgent {
     return JSON.stringify({
       algorithm: 'NEAT',
       version: 2,
-      actionSchema: 'signed-horizontal-controls-v2',
+      actionSchema: this.actionSchema,
       role: this.role,
       generation: this.genome.generation,
       genome: this.getWeights(),
@@ -80,12 +92,12 @@ export class LearningAgent {
   public importJson(jsonString: string): boolean {
     try {
       const data = JSON.parse(jsonString);
-      if (data?.algorithm === 'NEAT' && data?.actionSchema !== 'signed-horizontal-controls-v2') {
-        throw new Error('This policy uses an older horizontal controller and cannot be imported safely into the signed-drive build.');
+      if (data?.algorithm === 'NEAT' && data?.actionSchema && !['signed-horizontal-controls-v2', 'signed-horizontal-controls-v3'].includes(data.actionSchema)) {
+        throw new Error('This policy uses an unsupported horizontal controller schema.');
       }
       const genome = data.genome || (data.nodes && data.connections ? data : null);
       if (!genome) return false;
-      this.setWeights(genome);
+      this.setWeights(genome, data?.actionSchema as PolicyActionSchema | undefined);
       return true;
     } catch (error) {
       console.error('Failed to parse NEAT agent JSON:', error);
@@ -117,9 +129,13 @@ export class LearningAgent {
     contextId = 0
   ): typeof out {
     const outputs = this.network.activateFast(state, contextId);
-    // One sigmoid output represents the complete horizontal axis. Mapping [0,1] -> [-1,+1]
-    // removes the contradictory left+right state entirely while preserving simultaneous jump/sprint.
-    let horizontalDrive = Math.max(-1, Math.min(1, ((outputs[0] ?? 0.5) * 2) - 1));
+    // v3 uses the phenotype's native symmetric [-1,+1] activation directly. Historical v2
+    // checkpoints are intentionally decoded with the old [0,1] remapping so their behavior remains
+    // reproducible rather than silently changing when loaded in a newer build.
+    const rawHorizontal = outputs[0] ?? 0;
+    let horizontalDrive = this.actionSchema === 'signed-horizontal-controls-v3'
+      ? Math.max(-1, Math.min(1, rawHorizontal))
+      : Math.max(-1, Math.min(1, rawHorizontal * 2 - 1));
     if (Math.abs(horizontalDrive) < POLICY_CONTROL_ACTIVE_THRESHOLD) horizontalDrive = 0;
     const moveLeft = horizontalDrive < 0 ? -horizontalDrive : 0;
     const moveRight = horizontalDrive > 0 ? horizontalDrive : 0;

@@ -2,7 +2,7 @@ import { DEFAULT_TRAINING_FITNESS_CONFIG, sanitizeTrainingFitnessConfig } from '
 import { GROUP_COHESION } from '../learning/groupCohesion';
 import { BASELINE_PURSUIT_DESIGN } from '../learning/pursuitConfig';
 import { LearningAgent, type AgentWeights } from '../learning/agent';
-import { NeatPopulation, DEFAULT_NEAT_CONFIG, DEFAULT_NETWORK_ARCHITECTURE_SUITE, NETWORK_ARCHITECTURE_PRESETS, NETWORK_ARCHITECTURE_SUITE_PRESETS, sanitizeNetworkArchitectureSuite, cloneGenome, type NeatGenerationMetrics, type NeatGenomeData, type NeatPopulationCheckpoint, type NetworkArchitectureSuiteConfig } from '../learning/neat';
+import { NeatPopulation, DEFAULT_NEAT_CONFIG, DEFAULT_NETWORK_ARCHITECTURE_SUITE, NETWORK_ARCHITECTURE_PRESETS, NETWORK_ARCHITECTURE_SUITE_PRESETS, sanitizeNetworkArchitectureSuite, cloneGenome, type NeatGenerationMetrics, type NeatGenomeData, type NeatPopulationCheckpoint, type NetworkArchitectureSuiteConfig, type PolicyActionSchema } from '../learning/neat';
 import { updateEloRatings, createLeaderboardEntries } from '../learning/elo';
 import {
   runTrainingEpisode,
@@ -234,9 +234,9 @@ interface EvolutionCheckpoint {
   /** Fitness semantics marker for compatibility with checkpoints created before right-only exploration. */
   explorationRewardMode?: 'safe-per-runner-right-frontier';
   gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5' | 'hybrid-soft-pursuit-v6' | 'hybrid-soft-pursuit-terrain-v7' | 'hybrid-soft-pursuit-terrain-escape-v8' | 'hybrid-soft-pursuit-terrain-natural-v9' | 'clean-encounters-v10' | 'swept-landings-v11' | 'solid-group-v12';
-  actionSchema?: 'signed-horizontal-controls-v2';
+  actionSchema?: PolicyActionSchema;
   stateSchema?: 'world-relative-senses-v3';
-  horizontalControlResolution?: 'signed-axis-v2';
+  horizontalControlResolution?: 'signed-axis-v2' | 'signed-axis-v3-symmetric';
   chaserElo: number;
   evaderElo: number;
   hallOfFame: {
@@ -1532,9 +1532,9 @@ function buildEvolutionCheckpoint(analysisHistoryLimit = 0): EvolutionCheckpoint
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     explorationRewardMode: 'safe-per-runner-right-frontier',
     gameplayObjectiveVersion: 'solid-group-v12',
-    actionSchema: 'signed-horizontal-controls-v2',
+    actionSchema: championChaser.getActionSchema(),
     stateSchema: 'world-relative-senses-v3',
-    horizontalControlResolution: 'signed-axis-v2',
+    horizontalControlResolution: championChaser.getActionSchema() === 'signed-horizontal-controls-v3' ? 'signed-axis-v3-symmetric' : 'signed-axis-v2',
     chaserElo,
     evaderElo,
     hallOfFame: {
@@ -1601,7 +1601,7 @@ function checkpointWithRecentAnalysis(base: EvolutionCheckpoint | null, historyL
 }
 
 function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
-  if (!checkpoint || checkpoint.format !== 'neat-tag-evolution-checkpoint' || checkpoint.version !== 2 || checkpoint.actionSchema !== 'signed-horizontal-controls-v2' || checkpoint.stateSchema !== 'world-relative-senses-v3') {
+  if (!checkpoint || checkpoint.format !== 'neat-tag-evolution-checkpoint' || checkpoint.version !== 2 || !['signed-horizontal-controls-v2', 'signed-horizontal-controls-v3'].includes(checkpoint.actionSchema || '') || checkpoint.stateSchema !== 'world-relative-senses-v3') {
     throw new Error('This checkpoint uses an incompatible older policy state/controller schema. This build requires fresh 23-input world-relative policies.');
   }
 
@@ -1619,7 +1619,8 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
   const migratedExplorationFitness = !checkpoint.trainingFitnessConfig;
   const migratedExplorationRewardMode = checkpoint.explorationRewardMode !== 'safe-per-runner-right-frontier';
   const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'solid-group-v12';
-  const migratedHorizontalControl = checkpoint.horizontalControlResolution !== 'signed-axis-v2';
+  const expectedHorizontalControlResolution = checkpoint.actionSchema === 'signed-horizontal-controls-v3' ? 'signed-axis-v3-symmetric' : 'signed-axis-v2';
+  const migratedHorizontalControl = checkpoint.horizontalControlResolution !== expectedHorizontalControlResolution;
   trainingFitnessConfig = sanitizeTrainingFitnessConfig(checkpoint.trainingFitnessConfig);
   terrainVarietyConfig = sanitizeTerrainVarietyConfig(checkpoint.terrainVarietyConfig);
   chaserElo = Number.isFinite(checkpoint.chaserElo) ? checkpoint.chaserElo : INITIAL_ELO;
@@ -2943,8 +2944,8 @@ function buildAnalysisExport(historyStride = 1) {
     stateVectorSize: STATE_VECTOR_SIZE,
     actionSpace: [...ACTION_SPACE],
     policyOutputSpace: [...POLICY_OUTPUT_SPACE],
-    actionSchema: 'signed-horizontal-controls-v2',
-    horizontalControlResolution: 'signed-axis-v2',
+    actionSchema: championChaser.getActionSchema(),
+    horizontalControlResolution: championChaser.getActionSchema() === 'signed-horizontal-controls-v3' ? 'signed-axis-v3-symmetric' : 'signed-axis-v2',
     gameplayObjectiveVersion: 'solid-group-v12',
     stateSchema: 'world-relative-senses-v3',
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),

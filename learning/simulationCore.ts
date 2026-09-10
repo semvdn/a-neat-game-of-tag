@@ -1261,39 +1261,66 @@ function extendRouteTowardX(
   terrain: TerrainRuntimeConfig,
   profile: TerrainBiomeProfile,
   corridorMin: number,
-  corridorMax: number
+  corridorMax: number,
+  maxRemaining = 80
 ): { last: PlatformState; nextPlatformId: number } {
-  const currentRight = platformEnvelope(last).right;
-  const remaining = targetRight - currentRight;
-  if (remaining <= 155) return { last, nextPlatformId };
+  let current = last;
+  const preferredGap = clampBiomeScale(72 * profile.gapMultiplier, 60, 90);
+  const minWidth = 80;
+  const maxWidth = 140;
 
-  // Keep connector edge gaps in the ordinary jumpable range. Connectors stay stationary so two
-  // sibling endpoints do not chase one another horizontally while the parent branch is aligning.
-  const startX = currentRight + clampBiomeScale(68 * profile.gapMultiplier, 58, 82);
-  const usableSpan = Math.max(180, targetRight - startX);
-  const count = Math.max(1, Math.ceil(usableSpan / clampBiomeScale(255 * profile.routePersistenceMultiplier, 220, 315)));
-  const stationaryTerrain: TerrainRuntimeConfig = { ...terrain, movingPlatformsEnabled: false };
-  return addRoutePlatforms(
-    platforms,
-    count,
-    startX,
-    startX + usableSpan,
-    laneY,
-    side,
-    routePath,
-    groupId,
-    rootGroupId,
-    depth,
-    viewportHeight,
-    nextPlatformId,
-    rng,
-    stationaryTerrain,
-    profile,
-    false,
-    last.position.y,
-    corridorMin,
-    corridorMax
-  );
+  // Alignment ledges are a safety mechanism, not extra route choices. Build them from the lagging
+  // endpoint forward in ordinary jump-sized steps. The older implementation stretched a generated
+  // slot toward the farther sibling and could accidentally create the very oversized jump it was
+  // meant to prevent after an asymmetric nested fork.
+  for (let guard = 0; guard < 8; guard++) {
+    const currentRight = platformEnvelope(current).right;
+    const remaining = targetRight - currentRight;
+    if (remaining <= maxRemaining) return { last: current, nextPlatformId };
+
+    let width = maxWidth;
+    let desiredX = currentRight + preferredGap;
+    if (remaining <= preferredGap + maxWidth) {
+      width = Math.max(minWidth, Math.min(maxWidth, remaining - preferredGap));
+      desiredX = targetRight - width;
+      if (desiredX - currentRight < MIN_PLATFORM_GAP_X) desiredX = currentRight + MIN_PLATFORM_GAP_X;
+    }
+
+    // Keep alignment almost level with the route endpoint. Vertical convergence toward the parent
+    // lane can happen on the following ordinary platform; these bridges exist only to remove an
+    // inherited horizontal lead from the other sibling.
+    const y = Math.max(corridorMin, Math.min(corridorMax, current.position.y + Math.max(-36, Math.min(36, laneY - current.position.y))));
+    const slotStart = desiredX - 6;
+    const slotEnd = desiredX + width + 6;
+    const connector = placeBranchPlatformWithoutOverlap({
+      id: nextPlatformId++,
+      width,
+      height: PLATFORM_HEIGHT,
+      position: { x: desiredX, y },
+      structureType: side === 'upper' ? 'branch-upper' : 'branch-lower',
+      branchGroupId: groupId,
+      branchDepth: depth,
+      routePath,
+      rootBranchGroupId: rootGroupId,
+    }, platforms, viewportHeight, slotStart, slotEnd, y, corridorMin, corridorMax);
+    platforms.push(connector);
+    current = connector;
+  }
+
+  return { last: current, nextPlatformId };
+}
+
+function baseJumpHorizontalReach(deltaY: number): number {
+  // Discrete vertical integration in stepAgentPhysics is:
+  //   y(n) = n * JUMP_STRENGTH + GRAVITY * n * (n + 1) / 2.
+  // Use the descending root and the slower base Runner speed as the generation envelope. A small
+  // margin keeps a mathematically exact edge catch from becoming the only possible solution.
+  const a = GRAVITY / 2;
+  const b = JUMP_STRENGTH + GRAVITY / 2;
+  const discriminant = b * b + 4 * a * deltaY;
+  if (discriminant < 0) return 0;
+  const frames = (-b + Math.sqrt(discriminant)) / (2 * a);
+  return Math.max(MIN_PLATFORM_GAP_X, MAX_SPEED * frames - 8);
 }
 
 /** Build an asymmetric branch tree. Each fork has a naturally sized local runway; recursive child
@@ -1514,17 +1541,47 @@ function buildBranchTree(
     }
   }
 
+  // Normalize any remaining sibling lead before the merge. This also covers non-nested branches:
+  // independent platform widths and collision-safe placement can otherwise leave one endpoint much
+  // farther behind than the other.
+  for (let pass = 0; pass < 4; pass++) {
+    const targetRight = Math.max(platformEnvelope(upperLast).right, platformEnvelope(lowerLast).right);
+    const upperAligned = extendRouteTowardX(
+      platforms, upperLast, targetRight, upperY, 'upper', upperPath, groupId, rootGroupId, depth,
+      viewportHeight, nextPlatformId, rng, terrain, profile, upperRouteCorridor[0], upperRouteCorridor[1], 80
+    );
+    nextPlatformId = upperAligned.nextPlatformId;
+    upperLast = upperAligned.last;
+    const lowerAligned = extendRouteTowardX(
+      platforms, lowerLast, Math.max(targetRight, platformEnvelope(upperLast).right), lowerY, 'lower', lowerPath,
+      groupId, rootGroupId, depth, viewportHeight, nextPlatformId, rng, terrain, profile,
+      lowerRouteCorridor[0], lowerRouteCorridor[1], 80
+    );
+    nextPlatformId = lowerAligned.nextPlatformId;
+    lowerLast = lowerAligned.last;
+    if (Math.abs(platformEnvelope(upperLast).right - platformEnvelope(lowerLast).right) <= 80) break;
+  }
+
   // The merge is positioned from the COMPLETE swept envelopes, so a nearby moving route platform
   // can never sweep through the rejoin point. Merges themselves remain stationary checkpoints.
   const resolvedRouteRight = Math.max(platformEnvelope(upperLast).right, platformEnvelope(lowerLast).right);
-  const mergeLeftX = resolvedRouteRight + mergeGap;
-  const mergeRightX = mergeLeftX + mergeWidth;
   const naturalMergeY = clampPlatformY((upperLast.position.y + lowerLast.position.y) / 2 + (rng() - 0.5) * 20 * clampBiomeScale(profile.verticalVariationMultiplier, 0.75, 1.3), viewportHeight);
   // Rejoining should not secretly be the hardest upward jump in the branch. The lower route may
   // need to climb back toward the midpoint, so cap that climb while allowing the upper route's
   // descent to stay generous.
   const mergeReachabilityFloor = Math.max(upperLast.position.y, lowerLast.position.y) - 126;
   const mergeY = clampPlatformY(Math.max(naturalMergeY, mergeReachabilityFloor), viewportHeight);
+  const upperRight = platformEnvelope(upperLast).right;
+  const lowerRight = platformEnvelope(lowerLast).right;
+  const minMergeLeftX = resolvedRouteRight + Math.max(MIN_PLATFORM_GAP_X, MIN_PLATFORM_CLEARANCE_X);
+  const desiredMergeLeftX = resolvedRouteRight + mergeGap;
+  const maxMergeLeftFromUpper = upperRight + baseJumpHorizontalReach(mergeY - upperLast.position.y);
+  const maxMergeLeftFromLower = lowerRight + baseJumpHorizontalReach(mergeY - lowerLast.position.y);
+  const mergeLeftX = Math.max(
+    minMergeLeftX,
+    Math.min(desiredMergeLeftX, maxMergeLeftFromUpper, maxMergeLeftFromLower)
+  );
+  const mergeRightX = mergeLeftX + mergeWidth;
   const merge = placeBranchPlatformWithoutOverlap({
     id: nextPlatformId++,
     width: mergeWidth,
@@ -1535,7 +1592,7 @@ function buildBranchTree(
     branchDepth: depth,
     mergeToRoutePath: parentRoutePath,
     rootBranchGroupId: rootGroupId,
-  }, platforms, viewportHeight, mergeLeftX, mergeRightX, mergeY, corridorMin, corridorMax);
+  }, platforms, viewportHeight, mergeLeftX - 6, mergeRightX + 6, mergeY, corridorMin, corridorMax);
   platforms.push(merge);
   return { merge, nextPlatformId };
 }

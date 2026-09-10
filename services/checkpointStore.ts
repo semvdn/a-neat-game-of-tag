@@ -84,7 +84,7 @@ export function validateFullCheckpointJson(serialized: string): { valid: boolean
     if (checkpoint.format !== 'neat-tag-evolution-checkpoint' || checkpoint.version !== 2) {
       return { valid: false, message: 'Checkpoint format/version is not supported by this build.' };
     }
-    if (checkpoint.actionSchema !== 'signed-horizontal-controls-v2') {
+    if (!['signed-horizontal-controls-v2', 'signed-horizontal-controls-v3'].includes(checkpoint.actionSchema)) {
       return { valid: false, message: 'Checkpoint uses an incompatible controller action schema.' };
     }
     if (checkpoint.stateSchema !== 'world-relative-senses-v3') {

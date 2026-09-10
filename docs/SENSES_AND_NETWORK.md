@@ -48,6 +48,8 @@ The vector layout is shared by both populations, but the opponent channels resol
 
 For a **Chaser**, the target is the nearest Runner. For a **Runner**, the threat is the active Chaser. Runner-only teammate channels point to the closest other Runner.
 
+Because Chaser and Runner are evolved as separate populations, the vector does not need an `isChaser` input. The identity of the network already defines the role.
+
 ## Stable platform slots
 
 The three platform slots are selected by **forward/backward world ordering**, not raw Euclidean distance:
@@ -153,17 +155,21 @@ The jump signal behaves like a button with hysteresis: it must cross a high thre
 
 Sprint scales acceleration and maximum speed while consuming stamina. Holding sprint also blocks stamina regeneration, which gives the controller a reason to learn when to release it.
 
-### Current horizontal decoder
+### Horizontal decoder compatibility
 
-One implementation detail is worth making explicit. `NeatNetwork` produces symmetric outputs in approximately `[-1, 1]`, while `LearningAgent` currently calculates horizontal drive as:
+The NEAT phenotype uses a symmetric activation in approximately `[-1, 1]`. New genomes now use the **`signed-horizontal-controls-v3`** decoder, which feeds that value directly into horizontal drive:
 
 ```text
-horizontalDrive = clamp(2 × output0 - 1, -1, 1)
+horizontalDrive = clamp(output0, -1, 1)
 ```
 
-The nearby source comment still describes `output0` as though it were a `[0,1]` sigmoid output. The current evolved checkpoints were trained under the implemented mapping, so changing it would alter policy behaviour and should be treated as a controller/schema change rather than a documentation correction.
+This makes a zero neural activation genuinely neutral and gives left/right control symmetric ranges.
 
-Jump and sprint clamp negative activations to zero and positive activations to at most one.
+The bundled generation-7422 showcase was trained under the historical **`signed-horizontal-controls-v2`** decoder, which remapped the same network output as `2 × output0 - 1`. Those existing genomes are deliberately kept on v2 when loaded so their evolved behaviour remains reproducible. Untagged historical genomes are also interpreted as v2 for backward compatibility.
+
+Freshly created genomes are explicitly marked v3, and that schema is inherited through cloning and crossover. A resumed v2 checkpoint therefore keeps its original controller semantics, while a new run starts with the corrected symmetric controller. Changing decoder semantics is treated as a policy-schema change rather than silently modifying an old checkpoint.
+
+Jump and sprint continue to clamp negative activations to zero and positive activations to at most one.
 
 ## Why this architecture fits the problem
 

@@ -34,7 +34,7 @@ The public documentation is intentionally limited to the core mechanisms that de
 - [**NEAT and co-evolution setup**](docs/NEAT.md) — topology evolution, speciation, opponent leagues and champion validation.
 - [**Reward function and shaping**](docs/REWARD_SHAPING.md) — competitive events, safe-progress shaping, pursuit/escape signals and anti-exploit constraints.
 
-Implementation guidance for coding agents are in [AGENTS.md](AGENTS.md) and `.agents/skills/`.
+Implementation guidance for coding agents is in [AGENTS.md](AGENTS.md) and `.agents/skills/`.
 
 ## License
 
@@ -42,4 +42,4 @@ Released under the [MIT License](LICENSE).
 
 ## AI use
 
-Generative AI, primarily OpenAI's GPT 5.6 Sol, was used extensively as a development tool throughout this project.
+Generative AI, primarily OpenAI ChatGPT, was used extensively as a development tool throughout this project.

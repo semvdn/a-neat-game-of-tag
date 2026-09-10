@@ -1,6 +1,7 @@
 import { POLICY_OUTPUT_SPACE, STATE_VECTOR_SIZE } from '../constants';
 
 export type NeatRole = 'chaser' | 'evader' | 'general';
+export type PolicyActionSchema = 'signed-horizontal-controls-v2' | 'signed-horizontal-controls-v3';
 export type NodeGeneType = 'input' | 'hidden' | 'output';
 
 export interface NodeGene {
@@ -25,6 +26,8 @@ export interface NeatGenomeData {
   id: string;
   role: NeatRole;
   generation: number;
+  /** Controller decoder semantics. Missing means the historical v2 decoder for backward compatibility. */
+  actionSchema?: PolicyActionSchema;
   nodes: NodeGene[];
   connections: ConnectionGene[];
   fitness?: number;
@@ -636,7 +639,7 @@ export function createGenomeWithArchitecture(
     }
   }
   addInitialRecurrentConnections(connections, tracker, nodes, arch.initialRecurrentConnections, arch.initialWeightScale);
-  return { id, role, generation, nodes, connections, fitness: 0 };
+  return { id, role, generation, actionSchema: 'signed-horizontal-controls-v3', nodes, connections, fitness: 0 };
 }
 
 export function createMinimalGenome(
@@ -1118,6 +1121,7 @@ export function crossover(a: NeatGenomeData, b: NeatGenomeData, childId: string,
     id: childId,
     role: fitter.role,
     generation,
+    actionSchema: fitter.actionSchema ?? 'signed-horizontal-controls-v2',
     nodes: childNodes,
     connections: safeConnections,
     fitness: 0,
