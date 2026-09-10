@@ -2,15 +2,15 @@
 
 *Evolving pursuit and evasion with NeuroEvolution of Augmenting Topologies*
 
-[![Validate project](https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY/actions/workflows/ci.yml)
+[![Validate project](https://github.com/semvdn/a-neat-game-of-tag/actions/workflows/ci.yml/badge.svg)](https://github.com/semvdn/a-neat-game-of-tag/actions/workflows/ci.yml)
 
 **Status:** v1.0 feature-frozen; current work focuses on evaluation, soak testing, and presentation rather than adding new gameplay systems.
 
 An interactive neuroevolution project in which autonomous Chaser and Runner policies co-evolve to play tag across an infinite procedural platform world. The project combines a shared real-time/headless simulation, custom NEAT evolution, multi-agent evaluation, procedural terrain, diagnostic tooling, and a lightweight browser showcase.
 
-[**▶ Open the live GitHub Pages demo**](https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPOSITORY/)
+[**▶ Open the live GitHub Pages demo**](https://semvdn.github.io/a-neat-game-of-tag/)
 
-[![A NEAT Game of Tag gameplay](docs/media/gameplay.gif)](https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPOSITORY/)
+[![A NEAT Game of Tag gameplay](docs/media/gameplay.gif)](https://semvdn.github.io/a-neat-game-of-tag/)
 
 The public demo is deliberately lightweight: it ships the curated **Chaser g7410 + Runner g4381** pair and the visual simulation, but not the training worker, population checkpoint, experiment controls, or checkpoint-management UI. The full research application remains in this repository.
 
@@ -30,8 +30,8 @@ The public demo is deliberately lightweight: it ships the curated **Chaser g7410
 Requires **Node.js 22 or newer**, npm, and a modern desktop browser. An `.nvmrc` is included, so nvm users can run `nvm use` before installing dependencies.
 
 ```sh
-git clone https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY.git
-cd YOUR_REPOSITORY
+git clone https://github.com/semvdn/a-neat-game-of-tag.git
+cd a-neat-game-of-tag
 npm install
 npm run dev
 ```
