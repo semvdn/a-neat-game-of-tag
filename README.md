@@ -12,9 +12,10 @@ An interactive neuroevolution project in which autonomous Chaser and Runner poli
 
 [![A NEAT Game of Tag gameplay](docs/media/gameplay.gif)](https://semvdn.github.io/a-neat-game-of-tag/)
 
+*Gameplay recorded directly from the deployed lightweight demo using Chaser g7410 + Runner g4381.*
+
 The public demo is deliberately lightweight: it ships the curated **Chaser g7410 + Runner g4381** pair and the visual simulation, but not the training worker, population checkpoint, experiment controls, or checkpoint-management UI. The full research application remains in this repository.
 
-> Publishing this repository for the first time? Run `npm run configure:github -- OWNER/REPOSITORY` once after creating the GitHub repo to replace the placeholder repository and Pages links.
 
 ## What this project demonstrates
 
@@ -58,7 +59,7 @@ npm run build:demo
 npm run preview:demo
 ```
 
-Deployment is wired in [.github/workflows/pages.yml](.github/workflows/pages.yml). After selecting **GitHub Actions** as the Pages source in repository settings, every push to `main` rebuilds and deploys `dist-demo/`. See the [GitHub Pages setup guide](docs/GITHUB_PAGES.md).
+Deployment is handled by [.github/workflows/pages.yml](.github/workflows/pages.yml); every push to `main` rebuilds and deploys `dist-demo/` automatically.
 
 ## Evaluate changes
 
@@ -106,3 +107,9 @@ git diff --check
 ## License
 
 Released under the [MIT License](LICENSE).
+
+## AI use
+
+Generative AI, primarily OpenAI ChatGPT, was used extensively as a development tool throughout this project for architecture and experiment brainstorming, pair-programming and refactoring, debugging, documentation, and repository/presentation polish. Project goals, simulation and training design choices, evaluation criteria, checkpoint selection, visual direction, and final review remained human-directed, and AI-produced changes were iteratively inspected and tested against the running simulation and automated checks.
+
+The agents shown in the demo are **not controlled by a large language model**. Their policies were evolved with the project's NEAT implementation; AI assistance was used in developing the software and research workflow around them.
