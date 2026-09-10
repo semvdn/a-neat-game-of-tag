@@ -23,7 +23,7 @@ npm ci
 npm run dev
 ```
 
-Open the local URL printed by Vite. The app comes with a pre-evolved **generation 7422 checkpoint**, loaded automatically as the default showcase and evolutionary resume point.
+Open the local URL printed by Vite. The app comes with a **pretrained demo model**, loaded automatically as the default showcase.
 
 ## Documentation
 
