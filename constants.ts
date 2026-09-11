@@ -106,6 +106,7 @@ export const NEAT_BENCHMARK_START_MODES = 3; // exact visual, varied fresh, and 
 // compared against the same opponents/scenario seeds, eliminating most opponent-draw noise.
 // The strongest few then face a separate held-out panel before one is accepted as champion.
 export const NEAT_CHAMPION_VALIDATION_CANDIDATES = 4;
+export const NEAT_CHAMPION_VALIDATION_TRAVERSAL_CANDIDATES = 4;
 export const NEAT_CHAMPION_VALIDATION_CURRENT_OPPONENTS = 4;
 export const NEAT_CHAMPION_VALIDATION_HOF_OPPONENTS = 2;
 // Retained visible champions are chosen separately from evolutionary champions. Chaser retention
@@ -127,6 +128,14 @@ export const MAX_RUNNER_PACE_REWARD_PER_WINDOW = 30;
 export const DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM = 2.5;
 export const MAX_CHASER_PURSUIT_REWARD_PER_PLATFORM = 8;
 export const CHASER_PURSUIT_REWARD_CAP_PER_WINDOW = 5;
+// Conditional traversal shaping is only active when the chase actually requires terrain changes.
+// A Chaser is rewarded for useful safe transitions while Runners are advancing across platforms,
+// and receives a shortfall penalty for simply refusing the traversal problem. This makes giving up
+// on parkour less attractive than learning it without turning raw jumping into a reward target.
+export const CHASER_TRAVERSAL_REWARD_PER_WINDOW = 8;
+export const CHASER_TRAVERSAL_SHORTFALL_PENALTY_PER_WINDOW = 10;
+export const CHASER_TRAVERSAL_MAX_REQUIRED_TRANSITIONS_PER_WINDOW = 2;
+export const CHASER_USEFUL_LANDING_MIN_CLOSING_PX = 24;
 // Tactical evasion reward: entering genuine pressure (<=180px) and opening back beyond 380px
 // without a tag/fall earns a small capped bonus. Pace remains the dominant movement requirement.
 export const RUNNER_PRESSURE_ESCAPE_REWARD = 3;

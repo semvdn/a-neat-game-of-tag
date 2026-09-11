@@ -24,6 +24,7 @@ import {
   NEAT_BENCHMARK_REFERENCES_PER_ROLE,
   NEAT_BENCHMARK_START_MODES,
   NEAT_CHAMPION_VALIDATION_CANDIDATES,
+  NEAT_CHAMPION_VALIDATION_TRAVERSAL_CANDIDATES,
   NEAT_CHAMPION_VALIDATION_CURRENT_OPPONENTS,
   NEAT_CHAMPION_VALIDATION_HOF_OPPONENTS,
   NEAT_GENERALIST_VALIDATION_CANDIDATES,
@@ -136,18 +137,18 @@ let activePursuitDesign: PursuitDesignConfig | null = { ...BASELINE_PURSUIT_DESI
 
 // Bump whenever retained-champion scoring semantics change. Checkpoints created under an older
 // retention rule are re-evaluated on load instead of silently preserving a stale score.
-const GENERALIST_RETENTION_VERSION = 2;
+const GENERALIST_RETENTION_VERSION = 3;
 const CHASER_RETENTION = {
-  benchmarkWeight: 0.25,
+  benchmarkWeight: 0.20,
   crossPlayWeight: 0.30,
   pursuitWeight: 0.20,
-  traversalWeight: 0.25,
-  traversalPlatformTarget: 1.25,
-  traversalPursuitLandingTarget: 0.40,
-  traversalBranchLandingTarget: 0.20,
-  traversalFailureTolerance: 1.25,
-  minPlatformLandingsPerMidgameEpisode: 0.50,
-  minTraversalScore: 35,
+  traversalWeight: 0.30,
+  traversalPlatformTarget: 2.0,
+  traversalPursuitLandingTarget: 0.60,
+  traversalBranchLandingTarget: 0.25,
+  traversalFailureTolerance: 1.0,
+  minPlatformLandingsPerMidgameEpisode: 1.0,
+  minTraversalScore: 45,
 } as const;
 
 
@@ -249,7 +250,7 @@ interface EvolutionCheckpoint {
   networkArchitecture?: NetworkArchitectureSuiteConfig;
   /** Fitness semantics marker for compatibility with checkpoints created before right-only exploration. */
   explorationRewardMode?: 'safe-per-runner-right-frontier';
-  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5' | 'hybrid-soft-pursuit-v6' | 'hybrid-soft-pursuit-terrain-v7' | 'hybrid-soft-pursuit-terrain-escape-v8' | 'hybrid-soft-pursuit-terrain-natural-v9' | 'clean-encounters-v10' | 'swept-landings-v11' | 'solid-group-v12' | 'clean-tags-traversal-v13';
+  gameplayObjectiveVersion?: 'pace-pursuit-branches-v1' | 'pace-pursuit-branches-v2' | 'pace-pressure-crossplay-v3' | 'pursuit-design-v4' | 'world-camera-decoupled-v5' | 'hybrid-soft-pursuit-v6' | 'hybrid-soft-pursuit-terrain-v7' | 'hybrid-soft-pursuit-terrain-escape-v8' | 'hybrid-soft-pursuit-terrain-natural-v9' | 'clean-encounters-v10' | 'swept-landings-v11' | 'solid-group-v12' | 'clean-tags-traversal-v13' | 'conditional-traversal-v14';
   actionSchema: PolicyActionSchema;
   stateSchema?: 'world-relative-senses-v3';
   horizontalControlResolution: 'signed-axis-v3-symmetric';
@@ -395,6 +396,8 @@ let chaserFitnessCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
 let evaderFitnessCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
 let chaserFitnessSamples = Array.from({ length: NEAT_POPULATION_SIZE }, () => [] as number[]);
 let evaderFitnessSamples = Array.from({ length: NEAT_POPULATION_SIZE }, () => [] as number[]);
+let chaserTraversalCompletionTotals = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
+let chaserTraversalCompletionCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
 let generationPopulationMatches = 0;
 let generationPopulationTags = 0;
 let generationPopulationTaggedEpisodes = 0;
@@ -417,6 +420,12 @@ let generationRunnerPaceWindowsSatisfied = 0;
 let generationRunnerPaceWindowsTotal = 0;
 let generationChaserPursuitBonus = 0;
 let generationChaserPursuitLandings = 0;
+let generationChaserTraversalBonus = 0;
+let generationChaserTraversalShortfallPenalty = 0;
+let generationChaserTraversalCompletion = 0;
+let generationChaserTraversalRequiredEpisodes = 0;
+let generationChaserTraversalWindowsSatisfied = 0;
+let generationChaserUsefulPlatformLandings = 0;
 let generationRunnerPlatformLandings = 0;
 let generationChaserPlatformLandings = 0;
 let generationRunnerBranchLandings = 0;
@@ -513,6 +522,12 @@ interface EpisodeStats {
   runnerPaceWindowsTotal: number;
   chaserPursuitFitnessBonus: number;
   chaserPursuitLandings: number;
+  chaserTraversalFitnessBonus: number;
+  chaserTraversalShortfallPenalty: number;
+  chaserTraversalCompletion: number;
+  chaserTraversalWindowsRequired: number;
+  chaserTraversalWindowsSatisfied: number;
+  chaserUsefulPlatformLandings: number;
   runnerPlatformLandings: number;
   chaserPlatformLandings: number;
   runnerBranchLandings: number;
@@ -772,6 +787,8 @@ interface GeneralistCrossPlayEvaluation {
   midgamePursuitLandingsPerEpisode: number;
   midgameBranchLandingsPerEpisode: number;
   midgameFailureEventsPerEpisode: number;
+  midgameTraversalCompletion: number;
+  midgameUsefulPlatformLandingsPerEpisode: number;
 }
 
 interface ChaserTraversalScoreBreakdown {
@@ -832,12 +849,15 @@ function chaserTraversalScore(evaluation: GeneralistCrossPlayEvaluation): Chaser
   // Retention asks a modest but explicit question: can this Chaser keep moving through real midgame
   // terrain? The gate is intentionally easier than perfect parkour; it only blocks flat-ground
   // specialists that cannot perform even basic safe transitions.
-  const platforming = 100 * clamp01(evaluation.midgamePlatformLandingsPerEpisode / CHASER_RETENTION.traversalPlatformTarget);
+  const platforming = 100 * clamp01(evaluation.midgameUsefulPlatformLandingsPerEpisode / CHASER_RETENTION.traversalPlatformTarget);
   const pursuitLandings = 100 * clamp01(evaluation.midgamePursuitLandingsPerEpisode / CHASER_RETENTION.traversalPursuitLandingTarget);
   const branches = 100 * clamp01(evaluation.midgameBranchLandingsPerEpisode / CHASER_RETENTION.traversalBranchLandingTarget);
   const reliability = 100 * (1 - clamp01(evaluation.midgameFailureEventsPerEpisode / CHASER_RETENTION.traversalFailureTolerance));
-  const total = 0.45 * platforming + 0.25 * pursuitLandings + 0.10 * branches + 0.20 * reliability;
-  const passesGate = evaluation.midgamePlatformLandingsPerEpisode >= CHASER_RETENTION.minPlatformLandingsPerMidgameEpisode &&
+  const conditionalCompletion = 100 * clamp01(evaluation.midgameTraversalCompletion);
+  const total = 0.30 * platforming + 0.20 * pursuitLandings + 0.10 * branches +
+    0.20 * reliability + 0.20 * conditionalCompletion;
+  const passesGate = evaluation.midgameUsefulPlatformLandingsPerEpisode >= CHASER_RETENTION.minPlatformLandingsPerMidgameEpisode &&
+    evaluation.midgameTraversalCompletion >= 0.45 &&
     total >= CHASER_RETENTION.minTraversalScore;
   return { total, platforming, pursuitLandings, branches, reliability, passesGate };
 }
@@ -877,6 +897,8 @@ function evaluateGeneralistCrossPlay(genome: NeatGenomeData, role: 'chaser' | 'e
       midgamePursuitLandingsPerEpisode: 0,
       midgameBranchLandingsPerEpisode: 0,
       midgameFailureEventsPerEpisode: 0,
+      midgameTraversalCompletion: 0,
+      midgameUsefulPlatformLandingsPerEpisode: 0,
     };
   }
   const candidate = new LearningAgent(role, genome);
@@ -892,6 +914,9 @@ function evaluateGeneralistCrossPlay(genome: NeatGenomeData, role: 'chaser' | 'e
   let midgamePursuitLandings = 0;
   let midgameBranchLandings = 0;
   let midgameFailureEvents = 0;
+  let midgameTraversalCompletion = 0;
+  let midgameTraversalDemandEpisodes = 0;
+  let midgameUsefulPlatformLandings = 0;
   for (let opponentIndex = 0; opponentIndex < opponents.length; opponentIndex++) {
     const opponentGenome = opponents[opponentIndex];
     const opponentRole = role === 'chaser' ? 'evader' : 'chaser';
@@ -924,6 +949,11 @@ function evaluateGeneralistCrossPlay(genome: NeatGenomeData, role: 'chaser' | 'e
         midgamePursuitLandings += result.chaserPursuitLandings;
         midgameBranchLandings += result.chaserBranchLandings;
         midgameFailureEvents += result.chaserFalls + result.chaserEscapes;
+        midgameUsefulPlatformLandings += result.chaserUsefulPlatformLandings;
+        if (result.chaserTraversalWindowsRequired > 0) {
+          midgameTraversalCompletion += result.chaserTraversalCompletion;
+          midgameTraversalDemandEpisodes++;
+        }
       }
     }
   }
@@ -936,6 +966,8 @@ function evaluateGeneralistCrossPlay(genome: NeatGenomeData, role: 'chaser' | 'e
     midgamePursuitLandingsPerEpisode: midgamePursuitLandings / midgameDenom,
     midgameBranchLandingsPerEpisode: midgameBranchLandings / midgameDenom,
     midgameFailureEventsPerEpisode: midgameFailureEvents / midgameDenom,
+    midgameTraversalCompletion: midgameTraversalCompletion / Math.max(1, midgameTraversalDemandEpisodes),
+    midgameUsefulPlatformLandingsPerEpisode: midgameUsefulPlatformLandings / midgameDenom,
   };
 }
 
@@ -1089,7 +1121,9 @@ function writeGeneralistEvaluationTelemetry(
   telemetry.crossPlayMatches = evaluation.crossPlay.matches;
   telemetry.traversalScore = evaluation.traversalScore.total;
   telemetry.traversalGatePassed = evaluation.traversalScore.passesGate;
+  telemetry.traversalCompletion = evaluation.crossPlay.midgameTraversalCompletion;
   telemetry.traversalPlatformLandingsPerEpisode = evaluation.crossPlay.midgamePlatformLandingsPerEpisode;
+  telemetry.traversalUsefulPlatformLandingsPerEpisode = evaluation.crossPlay.midgameUsefulPlatformLandingsPerEpisode;
   telemetry.traversalPursuitLandingsPerEpisode = evaluation.crossPlay.midgamePursuitLandingsPerEpisode;
   telemetry.traversalBranchLandingsPerEpisode = evaluation.crossPlay.midgameBranchLandingsPerEpisode;
   telemetry.traversalFailureEventsPerEpisode = evaluation.crossPlay.midgameFailureEventsPerEpisode;
@@ -1585,7 +1619,7 @@ function recordGenerationAnalysis(generation: number): void {
   const record: TrainingGenerationAnalysisRecord = {
     generation,
     recordedAt: Date.now(),
-    gameplayObjectiveVersion: 'clean-tags-traversal-v13',
+    gameplayObjectiveVersion: 'conditional-traversal-v14',
     groupCohesionConfig: { ...GROUP_COHESION, penaltyCap: trainingFitnessConfig.cohesionPenaltyCap, paceWeight: trainingFitnessConfig.cohesionPaceWeight },
     simulatedTimeMs: totalSimulatedTime,
     completedEpisodes,
@@ -1641,7 +1675,7 @@ function buildEvolutionCheckpoint(analysisHistoryLimit = 0): EvolutionCheckpoint
     terrainVarietyConfig: sanitizeTerrainVarietyConfig(terrainVarietyConfig),
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     explorationRewardMode: 'safe-per-runner-right-frontier',
-    gameplayObjectiveVersion: 'clean-tags-traversal-v13',
+    gameplayObjectiveVersion: 'conditional-traversal-v14',
     actionSchema: championChaser.getActionSchema(),
     stateSchema: 'world-relative-senses-v3',
     horizontalControlResolution: 'signed-axis-v3-symmetric',
@@ -1728,7 +1762,7 @@ function restoreEvolutionCheckpoint(checkpoint: EvolutionCheckpoint): void {
   upgradeConfig = sanitizeUpgradeConfig(checkpoint.upgradeConfig);
   const migratedExplorationFitness = !checkpoint.trainingFitnessConfig;
   const migratedExplorationRewardMode = checkpoint.explorationRewardMode !== 'safe-per-runner-right-frontier';
-  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'clean-tags-traversal-v13';
+  const migratedGameplayObjective = checkpoint.gameplayObjectiveVersion !== 'conditional-traversal-v14';
   trainingFitnessConfig = sanitizeTrainingFitnessConfig(checkpoint.trainingFitnessConfig);
   terrainVarietyConfig = sanitizeTerrainVarietyConfig(checkpoint.terrainVarietyConfig);
   chaserElo = Number.isFinite(checkpoint.chaserElo) ? checkpoint.chaserElo : INITIAL_ELO;
@@ -1939,10 +1973,27 @@ function validateChampionCandidates(role: 'chaser' | 'evader', generation: numbe
     mainHallGenomeIds
   );
 
-  const candidates = population.genomes
+  const rankedByFitness = population.genomes
     .map((genome, index) => ({ index, rawFitness: genome.fitness ?? -Infinity }))
-    .sort((a, b) => b.rawFitness - a.rawFitness)
-    .slice(0, Math.min(NEAT_CHAMPION_VALIDATION_CANDIDATES, population.genomes.length));
+    .sort((a, b) => b.rawFitness - a.rawFitness);
+  const candidateByIndex = new Map<number, { index: number; rawFitness: number }>();
+  for (const candidate of rankedByFitness.slice(0, Math.min(NEAT_CHAMPION_VALIDATION_CANDIDATES, population.genomes.length))) {
+    candidateByIndex.set(candidate.index, candidate);
+  }
+  if (role === 'chaser') {
+    const traversalRanked = rankedByFitness
+      .map(candidate => ({
+        ...candidate,
+        traversal: chaserTraversalCompletionCounts[candidate.index] > 0
+          ? chaserTraversalCompletionTotals[candidate.index] / chaserTraversalCompletionCounts[candidate.index]
+          : -1,
+      }))
+      .filter(candidate => candidate.traversal >= 0)
+      .sort((a, b) => b.traversal - a.traversal || b.rawFitness - a.rawFitness)
+      .slice(0, NEAT_CHAMPION_VALIDATION_TRAVERSAL_CANDIDATES);
+    for (const candidate of traversalRanked) candidateByIndex.set(candidate.index, candidate);
+  }
+  const candidates = [...candidateByIndex.values()];
   if (candidates.length === 0) return [];
 
   // If no held-out panel exists yet, preserve the raw ordering and still return candidates so the
@@ -2218,6 +2269,14 @@ function recordPopulationBalance(result: EpisodeStats) {
   generationRunnerPaceWindowsTotal += result.runnerPaceWindowsTotal;
   generationChaserPursuitBonus += result.chaserPursuitFitnessBonus;
   generationChaserPursuitLandings += result.chaserPursuitLandings;
+  generationChaserTraversalBonus += result.chaserTraversalFitnessBonus;
+  generationChaserTraversalShortfallPenalty += result.chaserTraversalShortfallPenalty;
+  if (result.chaserTraversalWindowsRequired > 0) {
+    generationChaserTraversalCompletion += result.chaserTraversalCompletion;
+    generationChaserTraversalRequiredEpisodes++;
+  }
+  generationChaserTraversalWindowsSatisfied += result.chaserTraversalWindowsSatisfied;
+  generationChaserUsefulPlatformLandings += result.chaserUsefulPlatformLandings;
   generationRunnerPlatformLandings += result.runnerPlatformLandings;
   generationChaserPlatformLandings += result.chaserPlatformLandings;
   generationRunnerBranchLandings += result.runnerBranchLandings;
@@ -2244,6 +2303,15 @@ function recordPopulationBalance(result: EpisodeStats) {
   generationDirectionConflictCountEvader += result.evaderDirectionConflictCount || 0;
 }
 
+function recordChaserTraversalCandidateSignal(
+  index: number,
+  result: Pick<TrainingEpisodeResult, 'chaserTraversalWindowsRequired' | 'chaserTraversalCompletion'>
+): void {
+  if (result.chaserTraversalWindowsRequired <= 0) return;
+  chaserTraversalCompletionTotals[index] += result.chaserTraversalCompletion;
+  chaserTraversalCompletionCounts[index]++;
+}
+
 function applyParallelEpisodeResult(task: ParallelEvaluationTask, result: TrainingEpisodeResult) {
   totalTags += result.tags;
   totalFalls += result.falls;
@@ -2266,6 +2334,7 @@ function applyParallelEpisodeResult(task: ParallelEvaluationTask, result: Traini
     chaserFitnessTotals[chaserIndex] += result.chaserFitness;
     chaserFitnessCounts[chaserIndex]++;
     chaserFitnessSamples[chaserIndex].push(result.chaserFitness);
+    recordChaserTraversalCandidateSignal(chaserIndex, result);
     recordPopulationBalance(result);
   } else if (task.phase === 'evader_population') {
     const evaderIndex = task.evaderIndex!;
@@ -2278,6 +2347,7 @@ function applyParallelEpisodeResult(task: ParallelEvaluationTask, result: Traini
     chaserFitnessTotals[chaserIndex] += result.chaserFitness;
     chaserFitnessCounts[chaserIndex]++;
     chaserFitnessSamples[chaserIndex].push(result.chaserFitness);
+    recordChaserTraversalCandidateSignal(chaserIndex, result);
   } else {
     const evaderIndex = task.evaderIndex!;
     evaderFitnessTotals[evaderIndex] += result.evaderFitness;
@@ -2520,6 +2590,8 @@ function resetEvaluationAccumulators() {
   evaderFitnessCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
   chaserFitnessSamples = Array.from({ length: NEAT_POPULATION_SIZE }, () => [] as number[]);
   evaderFitnessSamples = Array.from({ length: NEAT_POPULATION_SIZE }, () => [] as number[]);
+  chaserTraversalCompletionTotals = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
+  chaserTraversalCompletionCounts = new Array<number>(NEAT_POPULATION_SIZE).fill(0);
   generationPopulationMatches = 0;
   generationPopulationTags = 0;
   generationPopulationTaggedEpisodes = 0;
@@ -2542,6 +2614,12 @@ function resetEvaluationAccumulators() {
   generationRunnerPaceWindowsTotal = 0;
   generationChaserPursuitBonus = 0;
   generationChaserPursuitLandings = 0;
+  generationChaserTraversalBonus = 0;
+  generationChaserTraversalShortfallPenalty = 0;
+  generationChaserTraversalCompletion = 0;
+  generationChaserTraversalRequiredEpisodes = 0;
+  generationChaserTraversalWindowsSatisfied = 0;
+  generationChaserUsefulPlatformLandings = 0;
   generationRunnerPlatformLandings = 0;
   generationChaserPlatformLandings = 0;
   generationRunnerBranchLandings = 0;
@@ -2613,6 +2691,7 @@ function evaluateNextMatch(): boolean {
     chaserFitnessTotals[chaserIndex] += result.chaserFitness;
     chaserFitnessCounts[chaserIndex]++;
     chaserFitnessSamples[chaserIndex].push(result.chaserFitness);
+    recordChaserTraversalCandidateSignal(chaserIndex, result);
     recordPopulationBalance(result);
     recordEpisodeTelemetry(result);
 
@@ -2678,6 +2757,7 @@ function evaluateNextMatch(): boolean {
       chaserFitnessTotals[evaluationIndex] += result.chaserFitness;
       chaserFitnessCounts[evaluationIndex]++;
       chaserFitnessSamples[evaluationIndex].push(result.chaserFitness);
+      recordChaserTraversalCandidateSignal(evaluationIndex, result);
       recordEpisodeTelemetry(result, false);
     }
 
@@ -2734,17 +2814,9 @@ function robustSelectionFitness(samples: number[], total: number, count: number)
   return 0.70 * mean + 0.30 * lowerQuartileMean;
 }
 
-function eliteSeedsForRole(role: 'chaser' | 'evader'): NeatGenomeData[] {
-  const archive = role === 'chaser' ? chaserHallOfFame : evaderHallOfFame;
-  // Display/generalist champions must never become immortal breeding seeds. NEAT already preserves
-  // within-species elites; the only external continuity seed is the newest generation champion.
-  // This keeps short-term evolutionary continuity without repeatedly re-injecting an old retained
-  // policy whose display score may reflect a different opponent landscape.
-  const newestRecent = archive.recent
-    .slice()
-    .sort((a, b) => b.generation - a.generation)[0];
-  return newestRecent?.genome?.role === role ? [newestRecent.genome] : [];
-}
+// NEAT already preserves species elites internally. Do not inject a separate generation champion
+// back into the next population: when a transient fitness exploit appears, external reinjection
+// makes that attractor unnecessarily sticky and duplicates the algorithm's own elitism.
 
 function finishGeneration() {
   const evaluatedGeneration = chaserPopulation.generation;
@@ -2780,6 +2852,11 @@ function finishGeneration() {
     runnerDirectionConflictShare: generationDirectionConflictCountEvader / Math.max(1, generationDecisionCountEvader),
     chaserPursuitBonusPerEpisode: generationChaserPursuitBonus / Math.max(1, generationPopulationMatches),
     chaserPursuitLandingsPerEpisode: generationChaserPursuitLandings / Math.max(1, generationPopulationMatches),
+    chaserTraversalBonusPerEpisode: generationChaserTraversalBonus / Math.max(1, generationPopulationMatches),
+    chaserTraversalShortfallPenaltyPerEpisode: generationChaserTraversalShortfallPenalty / Math.max(1, generationPopulationMatches),
+    chaserTraversalCompletion: generationChaserTraversalCompletion / Math.max(1, generationChaserTraversalRequiredEpisodes),
+    chaserTraversalWindowsSatisfiedPerEpisode: generationChaserTraversalWindowsSatisfied / Math.max(1, generationPopulationMatches),
+    chaserUsefulPlatformLandingsPerEpisode: generationChaserUsefulPlatformLandings / Math.max(1, generationPopulationMatches),
     runnerPlatformLandingsPerEpisode: generationRunnerPlatformLandings / Math.max(1, generationPopulationMatches),
     chaserPlatformLandingsPerEpisode: generationChaserPlatformLandings / Math.max(1, generationPopulationMatches),
     runnerBranchLandingsPerEpisode: generationRunnerBranchLandings / Math.max(1, generationPopulationMatches),
@@ -2813,16 +2890,14 @@ function finishGeneration() {
   // remains diagnostic, while a separate retained-generalist pass decides which policies are shown
   // and persisted as the visible champions. Population breeding is still based on training fitness.
   ensureBenchmarkSuite();
-  const chaserEliteSeeds = eliteSeedsForRole('chaser');
-  const runnerEliteSeeds = eliteSeedsForRole('evader');
-  const chaserResult = chaserPopulation.evolve(chaserEliteSeeds);
-  const evaderResult = evaderPopulation.evolve(runnerEliteSeeds);
+  const chaserResult = chaserPopulation.evolve();
+  const evaderResult = evaderPopulation.evolve();
   lastEliteSeedTelemetry = {
     generation: evaluatedGeneration + 1,
-    chaserSourceGenerations: chaserEliteSeeds.map(seed => seed.generation),
-    runnerSourceGenerations: runnerEliteSeeds.map(seed => seed.generation),
-    chaserInjected: chaserResult.injectedEliteSeeds,
-    runnerInjected: evaderResult.injectedEliteSeeds,
+    chaserSourceGenerations: [],
+    runnerSourceGenerations: [],
+    chaserInjected: 0,
+    runnerInjected: 0,
   };
   lastChaserMetrics = chaserResult.metrics;
   lastEvaderMetrics = evaderResult.metrics;
@@ -3049,7 +3124,7 @@ function buildAnalysisExport(historyStride = 1) {
     policyOutputSpace: [...POLICY_OUTPUT_SPACE],
     actionSchema: championChaser.getActionSchema(),
     horizontalControlResolution: 'signed-axis-v3-symmetric',
-    gameplayObjectiveVersion: 'clean-tags-traversal-v13',
+    gameplayObjectiveVersion: 'conditional-traversal-v14',
     stateSchema: 'world-relative-senses-v3',
     networkArchitecture: sanitizeNetworkArchitectureSuite(networkArchitecture),
     pursuitDesign: activePursuitDesign ? { ...activePursuitDesign } : null,

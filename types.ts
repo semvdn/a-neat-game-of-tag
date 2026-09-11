@@ -321,6 +321,11 @@ export interface BalanceTelemetry {
   runnerDirectionConflictShare?: number;
   chaserPursuitBonusPerEpisode?: number;
   chaserPursuitLandingsPerEpisode?: number;
+  chaserTraversalBonusPerEpisode?: number;
+  chaserTraversalShortfallPenaltyPerEpisode?: number;
+  chaserTraversalCompletion?: number;
+  chaserTraversalWindowsSatisfiedPerEpisode?: number;
+  chaserUsefulPlatformLandingsPerEpisode?: number;
   runnerPlatformLandingsPerEpisode?: number;
   chaserPlatformLandingsPerEpisode?: number;
   runnerBranchLandingsPerEpisode?: number;
@@ -381,7 +386,9 @@ export interface GeneralistChampionTelemetry {
   /** Chaser-only midgame traversal validation. */
   traversalScore?: number;
   traversalGatePassed?: boolean;
+  traversalCompletion?: number;
   traversalPlatformLandingsPerEpisode?: number;
+  traversalUsefulPlatformLandingsPerEpisode?: number;
   traversalPursuitLandingsPerEpisode?: number;
   traversalBranchLandingsPerEpisode?: number;
   traversalFailureEventsPerEpisode?: number;

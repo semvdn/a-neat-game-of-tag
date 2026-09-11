@@ -10,7 +10,7 @@ Both roles start from a neutral baseline of 100. Competitive events are worth 20
 
 For the Chaser:
 
-`fitness = 100 + 20 × (clean tags − own falls − escape failures) + pursuit shaping + proximity shaping − cohesion penalty`
+`fitness = 100 + 20 × (clean tags − own falls − escape failures) + pursuit shaping + proximity shaping + conditional traversal reward − traversal shortfall − cohesion penalty`
 
 For the Runner controller:
 
@@ -108,3 +108,13 @@ Held-out champion validation remains separate and never changes breeding fitness
 | `learning/encounters.ts` | close-pressure enter/exit hysteresis |
 | `learning/groupCohesion.ts` | bounded world-space separation cost |
 | `workers/trainingWorker.ts` | opponent panels and robust population-level fitness aggregation |
+
+## Chaser traversal: conditional requirement, not jump farming
+
+Chaser platforming is now part of **breeding fitness** whenever the chase actually moves across terrain. A 2-second traversal window becomes active when a Runner lands on a new platform, or when a midgame episode begins with the Chaser already separated from the Runners by platform geometry.
+
+Within an active window, the Chaser receives credit for **useful safe transitions**. A landing is useful when it either reaches terrain a Runner has occupied or moves the Chaser's platform materially closer to a Runner. This allows interception and alternate branches; it does not require copying the Runner's exact route. Re-visiting the same physical platform does not repeatedly earn useful-transition credit.
+
+A completed traversal window contributes a capped reward; failing to make useful terrain progress contributes a shortfall penalty. Windows with no terrain demand contribute neither. Outstanding demand is also settled when an episode terminates, so a Chaser cannot avoid the shortfall simply by letting the Runners escape before the next window boundary.
+
+This changes the incentive from “platforming is an optional +2.5 bonus” to “when continued pursuit requires terrain traversal, refusing to traverse is itself costly.” The existing strong fall penalty remains, so indiscriminate jumping is still a bad strategy. Proximity shaping is also reduced when Chaser and nearest Runner occupy different platforms, preventing flat pursuit distance from substituting for the missing transition.

@@ -38,6 +38,10 @@ import {
   DEFAULT_RUNNER_PACE_REWARD_PER_WINDOW,
   DEFAULT_CHASER_PURSUIT_REWARD_PER_PLATFORM,
   CHASER_PURSUIT_REWARD_CAP_PER_WINDOW,
+  CHASER_TRAVERSAL_REWARD_PER_WINDOW,
+  CHASER_TRAVERSAL_SHORTFALL_PENALTY_PER_WINDOW,
+  CHASER_TRAVERSAL_MAX_REQUIRED_TRANSITIONS_PER_WINDOW,
+  CHASER_USEFUL_LANDING_MIN_CLOSING_PX,
   RUNNER_PRESSURE_ESCAPE_REWARD,
   RUNNER_PRESSURE_ESCAPE_REWARD_CAP_PER_WINDOW,
   TAG_AFTER_RUNNER_FALL_WINDOW_MS,
@@ -106,6 +110,16 @@ export interface TrainingEpisodeResult {
   /** Small capped Chaser shaping for safely following Runner-visited platforms. */
   chaserPursuitFitnessBonus: number;
   chaserPursuitLandings: number;
+  /** Conditional reward for useful safe transitions while Runners are traversing terrain. */
+  chaserTraversalFitnessBonus: number;
+  /** Shortfall cost when terrain traversal is required but the Chaser does not make useful progress. */
+  chaserTraversalShortfallPenalty: number;
+  /** Mean completion of terrain-demand windows (0..1); zero when no window required traversal. */
+  chaserTraversalCompletion: number;
+  chaserTraversalWindowsRequired: number;
+  chaserTraversalWindowsSatisfied: number;
+  /** Safe first landings that either follow Runner terrain or materially close platform distance. */
+  chaserUsefulPlatformLandings: number;
   runnerPlatformLandings: number;
   chaserPlatformLandings: number;
   runnerBranchLandings: number;
@@ -160,6 +174,8 @@ export interface TrainingEpisodeTraceSample {
   runnerPressureEscapeFitnessBonus: number;
   chaserProximityFitnessBonus: number;
   chaserPursuitFitnessBonus: number;
+  chaserTraversalFitnessBonus: number;
+  chaserTraversalShortfallPenalty: number;
   closeEncounters: number;
   successfulEvades: number;
   tags: number;
@@ -825,10 +841,13 @@ export function runTrainingEpisode(
   let runnerPaceWindowsSatisfied = 0;
   let runnerPaceWindowsTotal = 0;
 
-  // Pursuit shaping rewards the Chaser only for first safe arrivals on terrain a Runner has already
-  // occupied. It is capped every pace window and can never compete numerically with repeated tags.
+  // Pursuit shaping rewards exact Runner-following, while traversal shaping below asks the broader
+  // question: when the chase genuinely moves across terrain, can the Chaser keep making useful safe
+  // transitions? The latter deliberately accepts alternate/interception routes instead of requiring
+  // the Chaser to step on the Runner's exact platform IDs.
   const runnerVisitedPlatformIds = new Set<number>();
   const chaserRewardedRunnerPlatformIds = new Set<number>();
+  const chaserUsefulVisitedPlatformIds = new Set<number>();
   for (const agent of gameState.agents) {
     if (agent.status !== AgentStatus.It && agent.lastPlatformId != null) runnerVisitedPlatformIds.add(agent.lastPlatformId);
   }
@@ -838,8 +857,56 @@ export function runTrainingEpisode(
   let chaserPursuitLandings = 0;
   let runnerPlatformLandings = 0;
   let chaserPlatformLandings = 0;
+  let chaserUsefulPlatformLandings = 0;
+  let chaserTraversalFitnessBonus = 0;
+  let chaserTraversalShortfallPenalty = 0;
+  let chaserTraversalCompletionSum = 0;
+  let chaserTraversalWindowsRequired = 0;
+  let chaserTraversalWindowsSatisfied = 0;
+  let chaserUsefulLandingsWindowStart = 0;
+  let traversalDemandThisWindow = 0;
   let runnerBranchLandings = 0;
   let chaserBranchLandings = 0;
+
+  // A runner-focused midgame snapshot can begin with the Chaser already one platform behind. Count
+  // that as an immediate traversal demand even before the first new Runner landing occurs.
+  const initialChaser = gameState.agents.find(agent => agent.status === AgentStatus.It);
+  if (initialChaser?.lastPlatformId != null) {
+    chaserUsefulVisitedPlatformIds.add(initialChaser.lastPlatformId);
+    const initialChaserPlatform = gameState.platforms.find(platform => platform.id === initialChaser.lastPlatformId);
+    const chaserPlatformCenterX = initialChaserPlatform
+      ? initialChaserPlatform.position.x + initialChaserPlatform.width * 0.5
+      : initialChaser.position.x + AGENT_WIDTH * 0.5;
+    const startsSeparatedByTerrain = gameState.agents.some(agent => {
+      if (agent.status === AgentStatus.It || agent.lastPlatformId == null || agent.lastPlatformId === initialChaser.lastPlatformId) return false;
+      const runnerPlatform = gameState.platforms.find(platform => platform.id === agent.lastPlatformId);
+      const runnerPlatformCenterX = runnerPlatform
+        ? runnerPlatform.position.x + runnerPlatform.width * 0.5
+        : agent.position.x + AGENT_WIDTH * 0.5;
+      return runnerPlatformCenterX >= chaserPlatformCenterX + CHASER_USEFUL_LANDING_MIN_CLOSING_PX;
+    });
+    if (startsSeparatedByTerrain) traversalDemandThisWindow = 1;
+  }
+
+  const settleChaserTraversalWindow = () => {
+    if (traversalDemandThisWindow <= 0) {
+      chaserUsefulLandingsWindowStart = chaserUsefulPlatformLandings;
+      return;
+    }
+    const requiredTransitions = Math.max(1, Math.min(
+      CHASER_TRAVERSAL_MAX_REQUIRED_TRANSITIONS_PER_WINDOW,
+      traversalDemandThisWindow
+    ));
+    const usefulTransitions = Math.max(0, chaserUsefulPlatformLandings - chaserUsefulLandingsWindowStart);
+    const completion = Math.min(1, usefulTransitions / requiredTransitions);
+    chaserTraversalFitnessBonus += completion * CHASER_TRAVERSAL_REWARD_PER_WINDOW;
+    chaserTraversalShortfallPenalty += (1 - completion) * CHASER_TRAVERSAL_SHORTFALL_PENALTY_PER_WINDOW;
+    chaserTraversalCompletionSum += completion;
+    chaserTraversalWindowsRequired++;
+    if (completion >= 0.999) chaserTraversalWindowsSatisfied++;
+    traversalDemandThisWindow = 0;
+    chaserUsefulLandingsWindowStart = chaserUsefulPlatformLandings;
+  };
 
   // Interaction diagnostics use distance hysteresis so one prolonged chase counts as one encounter.
   const encounterTracker = new EncounterTracker();
@@ -1028,10 +1095,43 @@ export function runTrainingEpisode(
         const isBranch = platform?.structureType === 'branch-upper' || platform?.structureType === 'branch-lower';
         if (physics.roleAtStep === 'evader') {
           runnerPlatformLandings++;
+          const activeChaser = gameState.agents.find(other => other.status === AgentStatus.It);
+          const activeChaserPlatform = activeChaser?.lastPlatformId != null
+            ? gameState.platforms.find(p => p.id === activeChaser.lastPlatformId)
+            : undefined;
+          const runnerPlatformCenterX = platform ? platform.position.x + platform.width * 0.5 : agent.position.x + AGENT_WIDTH * 0.5;
+          const chaserPlatformCenterX = activeChaserPlatform
+            ? activeChaserPlatform.position.x + activeChaserPlatform.width * 0.5
+            : (activeChaser?.position.x ?? agent.position.x) + AGENT_WIDTH * 0.5;
+          const opensTerrainGap = !runnerVisitedPlatformIds.has(landedPlatformId) &&
+            runnerPlatformCenterX >= chaserPlatformCenterX + CHASER_USEFUL_LANDING_MIN_CLOSING_PX;
+          if (opensTerrainGap) traversalDemandThisWindow++;
           if (isBranch) runnerBranchLandings++;
         } else {
           chaserPlatformLandings++;
           if (isBranch) chaserBranchLandings++;
+
+          const previousPlatform = gameState.platforms.find(p => p.id === previousPlatformIds[i]);
+          let usefulLanding = runnerVisitedPlatformIds.has(landedPlatformId);
+          if (!usefulLanding && platform && previousPlatform) {
+            const previousCenterX = previousPlatform.position.x + previousPlatform.width * 0.5;
+            const landedCenterX = platform.position.x + platform.width * 0.5;
+            let previousTargetGap = Infinity;
+            let landedTargetGap = Infinity;
+            for (const runner of gameState.agents) {
+              if (runner.status === AgentStatus.It) continue;
+              const runnerCenterX = runner.position.x + AGENT_WIDTH * 0.5;
+              previousTargetGap = Math.min(previousTargetGap, Math.abs(runnerCenterX - previousCenterX));
+              landedTargetGap = Math.min(landedTargetGap, Math.abs(runnerCenterX - landedCenterX));
+            }
+            usefulLanding = Number.isFinite(previousTargetGap) &&
+              landedTargetGap + CHASER_USEFUL_LANDING_MIN_CLOSING_PX <= previousTargetGap;
+          }
+          if (usefulLanding && !chaserUsefulVisitedPlatformIds.has(landedPlatformId)) {
+            chaserUsefulVisitedPlatformIds.add(landedPlatformId);
+            chaserUsefulPlatformLandings++;
+          }
+
           if (
             runnerVisitedPlatformIds.has(landedPlatformId) &&
             !chaserRewardedRunnerPlatformIds.has(landedPlatformId) &&
@@ -1107,6 +1207,7 @@ export function runTrainingEpisode(
     // Measure actual chase interaction before a tag can swap roles this frame.
     let chaserBody: AgentState | null = null;
     for (const agent of gameState.agents) if (agent.status === AgentStatus.It) { chaserBody = agent; break; }
+    let nearestRunnerBody: AgentState | null = null;
     let nearestRunnerDistance = Infinity;
     if (chaserBody) {
       const cx = chaserBody.position.x + AGENT_WIDTH / 2;
@@ -1115,7 +1216,11 @@ export function runTrainingEpisode(
         if (agent.status === AgentStatus.It || !canAgentsPhysicallyInteract(chaserBody, agent)) continue;
         const dx = agent.position.x + AGENT_WIDTH / 2 - cx;
         const dy = agent.position.y + AGENT_HEIGHT / 2 - cy;
-        nearestRunnerDistance = Math.min(nearestRunnerDistance, Math.hypot(dx, dy));
+        const distance = Math.hypot(dx, dy);
+        if (distance < nearestRunnerDistance) {
+          nearestRunnerDistance = distance;
+          nearestRunnerBody = agent;
+        }
       }
     }
     if (Number.isFinite(nearestRunnerDistance)) {
@@ -1132,8 +1237,13 @@ export function runTrainingEpisode(
         } else if (nearestRunnerDistance < proximitySegmentBestDistance) {
           proximitySegmentBestDistance = nearestRunnerDistance;
           const stepPx = Math.max(1, pursuitDesign.chaserProximityStepPx ?? 50);
-          const rewardPerStep = Math.max(0, pursuitDesign.chaserProximityRewardPerStep ?? 1);
-          const cap = Math.max(0, pursuitDesign.chaserProximityRewardCapPerSegment ?? 6);
+          // Proximity is a useful bootstrap on shared terrain, but it should not become an easier
+          // substitute for actually crossing the platform gap. Once target and Chaser occupy
+          // different platforms, only a small fraction of the proximity shaping remains.
+          const samePlatform = nearestRunnerBody?.lastPlatformId != null &&
+            nearestRunnerBody.lastPlatformId === chaserBody.lastPlatformId;
+          const rewardPerStep = Math.max(0, pursuitDesign.chaserProximityRewardPerStep ?? 1) * (samePlatform ? 1 : 0.25);
+          const cap = Math.max(0, pursuitDesign.chaserProximityRewardCapPerSegment ?? 6) * (samePlatform ? 1 : 0.25);
           const earnedTarget = Math.min(
             cap,
             Math.floor(Math.max(0, proximitySegmentStartDistance - proximitySegmentBestDistance) / stepPx) * rewardPerStep
@@ -1176,6 +1286,12 @@ export function runTrainingEpisode(
         // Attribute at most one subsequent tag to a particular fall/respawn.
         lastRunnerFallAtMs[taggedIndex] = -Infinity;
       }
+      // A tag successfully resolves the current pursuit segment. Do not carry an old terrain
+      // shortfall across the role swap onto the newly tagged Chaser body.
+      traversalDemandThisWindow = 0;
+      chaserUsefulLandingsWindowStart = chaserUsefulPlatformLandings;
+      const nextChaser = gameState.agents.find(agent => agent.status === AgentStatus.It);
+      if (nextChaser?.lastPlatformId != null) chaserUsefulVisitedPlatformIds.add(nextChaser.lastPlatformId);
       encounterTracker.reset();
     }
 
@@ -1201,6 +1317,7 @@ export function runTrainingEpisode(
       runnerPaceCompletionSum += completion;
       runnerPaceWindowsTotal++;
       if (completion >= 0.999) runnerPaceWindowsSatisfied++;
+      settleChaserTraversalWindow();
       pursuitBonusThisWindow = 0;
       pressureEscapeBonusThisWindow = 0;
       nextPaceWindowAtMs += RUNNER_PACE_WINDOW_MS;
@@ -1242,6 +1359,8 @@ export function runTrainingEpisode(
         runnerPressureEscapeFitnessBonus,
         chaserProximityFitnessBonus,
         chaserPursuitFitnessBonus,
+        chaserTraversalFitnessBonus,
+        chaserTraversalShortfallPenalty,
         closeEncounters,
         successfulEvades,
         tags,
@@ -1276,6 +1395,10 @@ export function runTrainingEpisode(
     }
   }
 
+  // A terminal escape can happen before the next 2-second boundary. Settle any outstanding terrain
+  // demand now so ending the episode early cannot dodge the traversal shortfall penalty.
+  settleChaserTraversalWindow();
+
   // Only clean contact tags count as competitive events. A tag shortly after a Runner fall is
   // usually created by the respawn geometry rather than earned pursuit, so counting it would let
   // Chasers profit from weak Runner platforming. The fall itself is already charged to the Runner.
@@ -1292,10 +1415,15 @@ export function runTrainingEpisode(
   const runnerExplorationFitnessBonus = 0;
   const runnerMaxFrontierExpansionPx = Math.max(0, ...runnerSafeRightExpansionByBody);
   const runnerPaceCompletion = runnerPaceWindowsTotal > 0 ? runnerPaceCompletionSum / runnerPaceWindowsTotal : 0;
+  const chaserTraversalCompletion = chaserTraversalWindowsRequired > 0
+    ? chaserTraversalCompletionSum / chaserTraversalWindowsRequired
+    : 0;
   const meanNearestRunnerDistancePx = nearestRunnerDistanceSamples > 0
     ? nearestRunnerDistanceAccum / nearestRunnerDistanceSamples
     : 0;
-  const chaserFitness = FITNESS_BASE + chaserEventScore * FITNESS_PER_EVENT + chaserPursuitFitnessBonus + chaserProximityFitnessBonus - chaserCohesionPenalty;
+  const chaserFitness = FITNESS_BASE + chaserEventScore * FITNESS_PER_EVENT +
+    chaserPursuitFitnessBonus + chaserProximityFitnessBonus + chaserTraversalFitnessBonus -
+    chaserTraversalShortfallPenalty - chaserCohesionPenalty;
   const evaderFitness = FITNESS_BASE + evaderEventScore * FITNESS_PER_EVENT + runnerPaceFitnessBonus - runnerPaceShortfallPenalty + runnerPressureEscapeFitnessBonus - runnerCohesionPenalty;
 
   return {
@@ -1339,6 +1467,12 @@ export function runTrainingEpisode(
     runnerPaceWindowsTotal,
     chaserPursuitFitnessBonus,
     chaserPursuitLandings,
+    chaserTraversalFitnessBonus,
+    chaserTraversalShortfallPenalty,
+    chaserTraversalCompletion,
+    chaserTraversalWindowsRequired,
+    chaserTraversalWindowsSatisfied,
+    chaserUsefulPlatformLandings,
     runnerPlatformLandings,
     chaserPlatformLandings,
     runnerBranchLandings,

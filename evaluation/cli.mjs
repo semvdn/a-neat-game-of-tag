@@ -9,6 +9,7 @@ import { DEFAULT_TERRAIN_VARIETY_CONFIG } from '../learning/terrainConfig.ts';
 import { fixture } from './fixtures.ts';
 import { verifyEncounterAccounting } from './regressions.mjs';
 import { verifyLandings } from './landingRegressions.mjs';
+import { verifyTraversalFitnessConstants } from './traversalFitnessRegressions.mjs';
 import { verifyBodyContacts } from './bodyRegressions.mjs';
 import { verifyCohesionControls } from './cohesionControls.mjs';
 import { verifyPolicyDecoders } from './policyRegressions.mjs';
@@ -30,6 +31,7 @@ for (let i = 0; i < args.length; i++) {
 const seeds = Number(option('--seeds', 8));
 if (args.includes('--verify')) verifyEncounterAccounting();
 if (args.includes('--verify')) verifyLandings();
+if (args.includes('--verify')) verifyTraversalFitnessConstants();
 if (args.includes('--verify')) verifyBodyContacts();
 if (args.includes('--verify')) verifyCohesionControls();
 if (args.includes('--verify')) verifyPolicyDecoders();
@@ -138,7 +140,7 @@ const summary = conditions.map(c => {
 });
 const report = { format: 'neat-tag-gameplay-lab-v1', source, revision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
   workingTreeDirty: !!execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim(),
-  gameplayObjectiveVersion: 'clean-tags-traversal-v13', stateSchema: 'world-relative-senses-v3', actionSchema: pairs[0]?.chaser?.getActionSchema?.() || 'signed-horizontal-controls-v3',
+  gameplayObjectiveVersion: 'conditional-traversal-v14', stateSchema: 'world-relative-senses-v3', actionSchema: pairs[0]?.chaser?.getActionSchema?.() || 'signed-horizontal-controls-v3',
   conditions, baseOptions, seeds, modes, verified: args.includes('--verify'), seconds: (performance.now() - started) / 1000,
   limitations: 'Fixed-policy mechanics comparison, not a training experiment or an aesthetic ranking. Report per-start results and inspect traces; do not promote defaults from a single aggregate.', summary, rows };
 const out = option('--out', 'evaluations/report.json');

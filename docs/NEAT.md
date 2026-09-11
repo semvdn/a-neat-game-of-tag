@@ -69,7 +69,7 @@ This separation prevents leakage: if validation results fed back into the same g
 
 The cross-generation benchmark remains frozen so long-run measurements have a stable reference, but it is no longer allowed to dominate Chaser retention. This avoids an old failure mode in which a policy could overfit weak early benchmark Runners, collect easy opening or post-fall tags, and retain the champion title after losing practical parkour ability. Post-fall tags are excluded from competitive episode fitness for the same reason.
 
-Retained display champions are also kept out of elite seeding. Normal NEAT species elitism remains intact, and the worker may carry forward the newest evolutionary generation champion as a continuity seed, but an old retained/display policy is not repeatedly injected into the breeding population.
+Retained display champions and generation champions are not externally re-injected into breeding. Normal NEAT within-species elitism remains intact, so strong genomes can persist without duplicating elitism in the worker. This avoids making a transient Chaser fitness exploit artificially sticky across generations.
 
 The live champion arena follows the retained role-wise champions. A separately curated showcase pair may draw from the Hall of Fame for demo/export purposes, but it cannot replace what the champion arena displays. Showcase pair evaluation uses a fixed scenario panel so unchanged historical candidates do not oscillate in and out merely because the generation number changed the test seeds.
 
@@ -82,3 +82,9 @@ The live champion arena follows the retained role-wise champions. A separately c
 | `learning/agent.ts` | policy execution and output decoding; detailed in `SENSES_AND_NETWORK.md` |
 | `workers/trainingWorker.ts` | co-evolution, common opponent panels, Hall of Fame, validation and champion retention |
 | `learning/trainingEpisode.ts` | deterministic scored matches used by the population worker |
+
+### Elitism and traversal retention
+
+NEAT's normal within-species elitism is the only breeding elitism. The training worker no longer injects an additional generation champion into the next population, because that duplicated elitism made transient Chaser strategies unusually sticky.
+
+Chaser breeding fitness now contains a conditional traversal requirement in addition to tags, falls, pursuit landings and proximity. Retained Champion validation uses a stricter traversal gate than breeding fitness, and the held-out candidate pool explicitly includes strong traversal performers as well as the top raw-fitness genomes.
