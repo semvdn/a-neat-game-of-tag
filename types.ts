@@ -370,12 +370,21 @@ export interface GeneralistChampionTelemetry {
   selectedAtGeneration: number;
   /** Frozen benchmark suite revision used for this score. */
   suiteRevision: number;
+  /** Retention-scoring revision; forces old checkpoints through current validation semantics. */
+  retentionVersion?: number;
   /** Generalization score used only for retention/display, never population selection. */
   score: number;
   benchmark: BenchmarkRoleTelemetry;
   /** Mean role fitness against the retained/Hall-of-Fame cross-play validation panel. */
   crossPlayMeanFitness?: number;
   crossPlayMatches?: number;
+  /** Chaser-only midgame traversal validation. */
+  traversalScore?: number;
+  traversalGatePassed?: boolean;
+  traversalPlatformLandingsPerEpisode?: number;
+  traversalPursuitLandingsPerEpisode?: number;
+  traversalBranchLandingsPerEpisode?: number;
+  traversalFailureEventsPerEpisode?: number;
   /** Direct matchup diagnostics against the current retained opposing champion. */
   contemporaryCleanTagsPerEpisode?: number;
   contemporaryPaceCompletion?: number;

@@ -138,7 +138,7 @@ const summary = conditions.map(c => {
 });
 const report = { format: 'neat-tag-gameplay-lab-v1', source, revision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
   workingTreeDirty: !!execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim(),
-  gameplayObjectiveVersion: 'solid-group-v12', stateSchema: 'world-relative-senses-v3', actionSchema: pairs[0]?.chaser?.getActionSchema?.() || 'signed-horizontal-controls-v3',
+  gameplayObjectiveVersion: 'clean-tags-traversal-v13', stateSchema: 'world-relative-senses-v3', actionSchema: pairs[0]?.chaser?.getActionSchema?.() || 'signed-horizontal-controls-v3',
   conditions, baseOptions, seeds, modes, verified: args.includes('--verify'), seconds: (performance.now() - started) / 1000,
   limitations: 'Fixed-policy mechanics comparison, not a training experiment or an aesthetic ranking. Report per-start results and inspect traces; do not promote defaults from a single aggregate.', summary, rows };
 const out = option('--out', 'evaluations/report.json');

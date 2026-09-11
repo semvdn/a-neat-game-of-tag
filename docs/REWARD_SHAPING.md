@@ -10,13 +10,13 @@ Both roles start from a neutral baseline of 100. Competitive events are worth 20
 
 For the Chaser:
 
-`fitness = 100 + 20 × (tags − own falls − escape failures) + pursuit shaping + proximity shaping − cohesion penalty`
+`fitness = 100 + 20 × (clean tags − own falls − escape failures) + pursuit shaping + proximity shaping − cohesion penalty`
 
 For the Runner controller:
 
-`fitness = 100 + 20 × (−tags − Runner falls) + pace shaping − pace shortfall + pressure-escape shaping − cohesion penalty`
+`fitness = 100 + 20 × (−clean tags − Runner falls) + pace shaping − pace shortfall + pressure-escape shaping − cohesion penalty`
 
-A tag is therefore directly good for the Chaser and bad for the Runner. A fall penalizes **only the controller responsible for the role that fell**; it does not reward the opponent.
+A **clean tag** is directly good for the Chaser and bad for the Runner. Tags occurring within the post-fall attribution window are excluded from competitive fitness because the Runner has already paid the fall penalty and respawn geometry can otherwise hand the Chaser a cheap second reward. A fall penalizes **only the controller responsible for the role that fell**; it does not reward the opponent.
 
 That last rule is deliberate. Earlier competitive reward designs can accidentally teach one population to "win" because the opponent fails at platforming. Here, the opponent receives no positive fitness when somebody else falls.
 
@@ -24,7 +24,7 @@ If the Chaser becomes so separated from every Runner that the chase has effectiv
 
 ## Why shaping is needed
 
-Tag is a sparse outcome in a difficult procedural movement task. With only `+tag / -tag / -fall`, early populations can spend most of their time falling, standing still or moving without ever reaching a meaningful chase. The shaping terms provide intermediate gradients for behaviors that are necessary to produce tags and escapes.
+A clean tag is a sparse outcome in a difficult procedural movement task. With only `+clean-tag / -clean-tag / -fall`, early populations can spend most of their time falling, standing still or moving without ever reaching a meaningful chase. The shaping terms provide intermediate gradients for behaviors that are necessary to produce tags and escapes.
 
 The design constraint is that shaping must not become an easier substitute objective. Every positive shaping signal is therefore capped, and most are defined in ways that explicitly reject teleport, fall or stationary exploits.
 
@@ -76,7 +76,7 @@ The project uses soft world-space distance bands rather than a positive "stay to
 
 For the two Runners, separation is comfortable up to 300 px and reaches maximum excess at 700 px. Chaser-to-Runner distance is comfortable up to 600 px and reaches maximum excess at 1,000 px. Excess is linearly interpolated between those bounds.
 
-The Runner cost uses the worse of teammate separation and Chaser separation. The Chaser cost uses only its farthest Runner distance. Each role's accumulated cohesion penalty is capped at 6 points per episode—well below one 20-point tag or fall event.
+The Runner cost uses the worse of teammate separation and Chaser separation. The Chaser cost uses only its farthest Runner distance. Each role's accumulated cohesion penalty is capped at 6 points per episode—well below one 20-point clean-tag or fall event.
 
 There is **no reward for touching, stacking or standing still**. Cohesion only removes fitness when the group becomes excessively fragmented.
 
@@ -84,7 +84,7 @@ Runner pace reward is additionally discounted by the mean cohesion excess in the
 
 ## Terms intentionally kept out of fitness
 
-Several useful diagnostics are recorded without becoming reward signals: raw left/right world envelopes, action shares, jump counts, close-distance time, branch landings, tag timing and tags occurring soon after Runner falls.
+Several useful diagnostics are recorded without becoming independent reward signals: raw left/right world envelopes, action shares, jump counts, close-distance time, branch landings and tag timing. Tags soon after Runner falls are also recorded so raw tags can be separated from the clean tags used by competitive fitness.
 
 Keeping telemetry separate from fitness is a deliberate defense against reward over-design. A metric can help diagnose behavior without giving evolution another quantity to exploit.
 

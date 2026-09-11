@@ -37,6 +37,8 @@ Each genome normally receives six opponent matches:
 - three against the current opposing population;
 - three against the historical league.
 
+For Chasers, both panels are deliberately **midgame-heavy**: two of the three current-population starts and two of the three historical starts begin from real generated midgame states. This keeps platform traversal under direct breeding pressure after flat-ground pursuit has become easy. Runner evaluation keeps the broader opening/varied/midgame curriculum.
+
 Across generations the intended opponent pressure is approximately **50% current, 20% strong recent, 15% strongest historical and 15% behaviorally diverse historical**.
 
 Historical opponents matter because pure current-population co-evolution can cycle: a new strategy beats today's opponent but forgets how to handle strategies that disappeared several generations earlier.
@@ -63,9 +65,13 @@ The lower-quartile component makes selection care about weak matchups instead of
 
 After common-panel evaluation, only the strongest few genomes are re-tested against held-out current opponents and historical policies. **Held-out validation does not change breeding fitness.** It is used to decide retained/generalist champions, not to rewrite the evolutionary competition that produced the generation.
 
-This separation prevents leakage: if validation results fed back into the same generation's fitness, the held-out set would no longer be held out.
+This separation prevents leakage: if validation results fed back into the same generation's fitness, the held-out set would no longer be held out. Retained Chaser selection additionally uses a midgame-heavy cross-play panel. Its score combines a minority fixed-benchmark anchor with current cross-play fitness, pursuit quality and an explicit traversal score. Once a retained Chaser has demonstrated basic midgame platforming, a flat-ground specialist that fails the traversal gate cannot replace it.
 
-The worker also freezes a cross-generation benchmark bank and keeps retained generalist champions separate from transient generation champions. The live champion arena follows those retained role-wise champions. A separately curated showcase pair may draw from the Hall of Fame for demo/export purposes, but it cannot replace what the champion arena displays. Showcase pair evaluation uses a fixed scenario panel so unchanged historical candidates do not oscillate in and out merely because the generation number changed the test seeds.
+The cross-generation benchmark remains frozen so long-run measurements have a stable reference, but it is no longer allowed to dominate Chaser retention. This avoids an old failure mode in which a policy could overfit weak early benchmark Runners, collect easy opening or post-fall tags, and retain the champion title after losing practical parkour ability. Post-fall tags are excluded from competitive episode fitness for the same reason.
+
+Retained display champions are also kept out of elite seeding. Normal NEAT species elitism remains intact, and the worker may carry forward the newest evolutionary generation champion as a continuity seed, but an old retained/display policy is not repeatedly injected into the breeding population.
+
+The live champion arena follows the retained role-wise champions. A separately curated showcase pair may draw from the Hall of Fame for demo/export purposes, but it cannot replace what the champion arena displays. Showcase pair evaluation uses a fixed scenario panel so unchanged historical candidates do not oscillate in and out merely because the generation number changed the test seeds.
 
 ## Key files
 

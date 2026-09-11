@@ -100,7 +100,7 @@ export const NEAT_HOF_MAX_SIZE = 12; // per role: recent champions + behaviorall
 export const NEAT_HOF_RECENT_SLOTS = 4;
 export const NEAT_HOF_SIMILARITY_THRESHOLD = 0.16; // descriptors closer than this are treated as the same behavioral niche
 export const NEAT_HOF_NOVELTY_WEIGHT = 0.75; // historical archive utility = novelty + fixed-benchmark strength
-export const NEAT_BENCHMARK_REFERENCES_PER_ROLE = 3; // frozen at the beginning of a run; never used for selection
+export const NEAT_BENCHMARK_REFERENCES_PER_ROLE = 3; // frozen anchor bank: diagnostic and a minority retained-champion component, never breeding fitness
 export const NEAT_BENCHMARK_START_MODES = 3; // exact visual, varied fresh, and true mid-game per frozen reference
 // Main population evaluation uses a common opponent panel: every candidate in a role is
 // compared against the same opponents/scenario seeds, eliminating most opponent-draw noise.
@@ -108,9 +108,8 @@ export const NEAT_BENCHMARK_START_MODES = 3; // exact visual, varied fresh, and 
 export const NEAT_CHAMPION_VALIDATION_CANDIDATES = 4;
 export const NEAT_CHAMPION_VALIDATION_CURRENT_OPPONENTS = 4;
 export const NEAT_CHAMPION_VALIDATION_HOF_OPPONENTS = 2;
-// Retained visible champions are chosen separately from evolutionary champions. Only the strongest
-// held-out candidates are re-run on the frozen benchmark, keeping the extra cost modest while
-// preventing a transient co-evolutionary matchup from replacing a broadly capable policy.
+// Retained visible champions are chosen separately from evolutionary champions. Chaser retention
+// combines the frozen anchor with dynamic cross-play, pursuit and a midgame traversal competence gate.
 export const NEAT_GENERALIST_VALIDATION_CANDIDATES = 2;
 export const NEAT_GENERALIST_REPLACEMENT_MARGIN = 1.5;
 export const NEAT_EPISODE_MAX_MS = 12000;
@@ -118,7 +117,7 @@ export const NEAT_EPISODE_MAX_MS = 12000;
 // Gameplay-interest shaping. Runner progression is a capped minimum-pace objective rather than an
 // unbounded distance race. Every 2-second window asks for modest SAFE rightward progress; going
 // faster than the target earns nothing extra, leaving room for dodging, reversing, route choice and
-// waiting for terrain. Chaser traversal shaping is deliberately much smaller than a +20 tag.
+// waiting for terrain. Chaser traversal shaping is deliberately much smaller than a +20 clean tag.
 export const RUNNER_PACE_WINDOW_MS = 2000;
 export const DEFAULT_RUNNER_PACE_TARGET_PX = 260;
 export const MIN_RUNNER_PACE_TARGET_PX = 100;

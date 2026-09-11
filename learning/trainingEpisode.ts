@@ -1276,11 +1276,12 @@ export function runTrainingEpisode(
     }
   }
 
-  // Tags are the only directly competitive event. A fall penalizes only the controller
-  // responsible for that role at the time of the fall; it never grants fitness to the opponent.
-  // This prevents either population from succeeding merely because its opponent platformed badly.
-  const chaserEventScore = tags - chaserFalls - chaserEscapePenaltyEvents;
-  const evaderEventScore = -tags - evaderFalls;
+  // Only clean contact tags count as competitive events. A tag shortly after a Runner fall is
+  // usually created by the respawn geometry rather than earned pursuit, so counting it would let
+  // Chasers profit from weak Runner platforming. The fall itself is already charged to the Runner.
+  const cleanTags = Math.max(0, tags - tagsSoonAfterRunnerFall);
+  const chaserEventScore = cleanTags - chaserFalls - chaserEscapePenaltyEvents;
+  const evaderEventScore = -cleanTags - evaderFalls;
   const FITNESS_BASE = 100;
   const FITNESS_PER_EVENT = 20;
   const safeRightTotalPx = runnerSafeRightExpansionByBody.reduce((sum, value) => sum + value, 0);
